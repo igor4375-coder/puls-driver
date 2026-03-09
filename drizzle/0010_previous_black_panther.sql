@@ -1,0 +1,2 @@
+ALTER TABLE `driver_profiles` ADD `notify_gate_pass_expiry` boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE `driver_profiles` ADD `notify_storage_expiry` boolean DEFAULT true NOT NULL;

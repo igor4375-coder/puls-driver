@@ -1,0 +1,20 @@
+{
+  "query": "\nSELECT u.id as userId, u.openId, u.name as userName, u.email as userEmail,\n       dp.id as profileId, dp.driver_code as driverCode, dp.name as driverName, dp.status\nFROM users u\nJOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.openId = 'demo-driver-autohaul';\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nSELECT u.id as userId, u.openId, u.name as userName, u.email as userEmail,\n       dp.id as profileId, dp.driver_code as driverCode, dp.name as driverName, dp.status\nFROM users u\nJOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.openId = 'demo-driver-autohaul';\n",
+  "rows": [
+    {
+      "userId": "1",
+      "openId": "demo-driver-autohaul",
+      "userName": "Demo Driver",
+      "userEmail": "demo@autohaul.app",
+      "profileId": "1",
+      "driverCode": "D-00001",
+      "driverName": "Demo Driver",
+      "status": "active"
+    }
+  ],
+  "messages": [],
+  "stdout": "userId\topenId\tuserName\tuserEmail\tprofileId\tdriverCode\tdriverName\tstatus\n1\tdemo-driver-autohaul\tDemo Driver\tdemo@autohaul.app\t1\tD-00001\tDemo Driver\tactive\n",
+  "stderr": "",
+  "execution_time_ms": 60
+}

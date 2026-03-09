@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO companies (ownerId, name, company_code) VALUES (0, 'Prairie Auto Transport', 'PAT-001') ON DUPLICATE KEY UPDATE name = 'Prairie Auto Transport';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute INSERT INTO companies (ownerId, name, company_code) VALUES (0, 'Prairie Auto Transport', 'PAT-001') ON DUPLICATE KEY UPDATE name = 'Prairie Auto Transport';",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 99
+}

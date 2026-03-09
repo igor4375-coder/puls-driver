@@ -1,0 +1,8 @@
+{
+  "query": "\nALTER TABLE driver_profiles \n  ADD COLUMN IF NOT EXISTS `driver_code` varchar(8) UNIQUE,\n  ADD COLUMN IF NOT EXISTS `pushToken` varchar(512),\n  ADD COLUMN IF NOT EXISTS `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nALTER TABLE driver_profiles \n  ADD COLUMN IF NOT EXISTS `driver_code` varchar(8) UNIQUE,\n  ADD COLUMN IF NOT EXISTS `pushToken` varchar(512),\n  ADD COLUMN IF NOT EXISTS `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP;\n",
+  "returncode": 1,
+  "logs": [
+    "ERROR 8200 (HY000) at line 2: unsupported add column 'driver_code' constraint UNIQUE KEY when altering 'jinuUp5AxR2spxeqN7vxCJ.driver_profiles'"
+  ]
+}

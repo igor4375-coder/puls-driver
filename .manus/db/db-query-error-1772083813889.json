@@ -1,0 +1,8 @@
+{
+  "query": "SELECT id, phone_number, name, driver_code, created_at FROM driver_profiles ORDER BY created_at DESC LIMIT 20;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute SELECT id, phone_number, name, driver_code, created_at FROM driver_profiles ORDER BY created_at DESC LIMIT 20;",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'phone_number' in 'field list'"
+  ]
+}

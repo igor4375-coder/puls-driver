@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `gate_pass_files` (\n  `id` int AUTO_INCREMENT NOT NULL,\n  `load_id` varchar(64) NOT NULL,\n  `company_code` varchar(16) NOT NULL,\n  `file_url` text NOT NULL,\n  `file_key` varchar(512) NOT NULL,\n  `file_name` varchar(255) NOT NULL,\n  `mime_type` varchar(64) NOT NULL,\n  `file_size_bytes` int,\n  `createdAt` timestamp NOT NULL DEFAULT (now()),\n  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n  CONSTRAINT `gate_pass_files_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute CREATE TABLE IF NOT EXISTS `gate_pass_files` (\n  `id` int AUTO_INCREMENT NOT NULL,\n  `load_id` varchar(64) NOT NULL,\n  `company_code` varchar(16) NOT NULL,\n  `file_url` text NOT NULL,\n  `file_key` varchar(512) NOT NULL,\n  `file_name` varchar(255) NOT NULL,\n  `mime_type` varchar(64) NOT NULL,\n  `file_size_bytes` int,\n  `createdAt` timestamp NOT NULL DEFAULT (now()),\n  `updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n  CONSTRAINT `gate_pass_files_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 141
+}

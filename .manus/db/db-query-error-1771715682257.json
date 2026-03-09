@@ -1,0 +1,8 @@
+{
+  "query": "\nSELECT u.open_id, u.name, u.email, u.login_method, dp.driver_code, dp.name as profile_name\nFROM users u\nLEFT JOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.login_method = 'demo' OR u.email LIKE '%demo%'\nORDER BY u.created_at DESC\nLIMIT 10;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nSELECT u.open_id, u.name, u.email, u.login_method, dp.driver_code, dp.name as profile_name\nFROM users u\nLEFT JOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.login_method = 'demo' OR u.email LIKE '%demo%'\nORDER BY u.created_at DESC\nLIMIT 10;\n",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 2: Unknown column 'u.created_at' in 'order clause'"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "query": "\nSELECT u.openId, u.name, u.email, u.loginMethod, dp.driver_code\nFROM users u\nLEFT JOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.loginMethod = 'demo' OR u.email LIKE '%demo%'\nLIMIT 10;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nSELECT u.openId, u.name, u.email, u.loginMethod, dp.driver_code\nFROM users u\nLEFT JOIN driver_profiles dp ON dp.userId = u.id\nWHERE u.loginMethod = 'demo' OR u.email LIKE '%demo%'\nLIMIT 10;\n",
+  "rows": [
+    {
+      "openId": "demo-driver-autohaul",
+      "name": "Demo Driver",
+      "email": "demo@autohaul.app",
+      "loginMethod": "demo",
+      "driver_code": "D-00001"
+    },
+    {
+      "openId": "demo-device:e5c55df2-f59f-036d-8594-810ad6d87078",
+      "name": "Carlos Rivera",
+      "email": "NULL",
+      "loginMethod": "demo",
+      "driver_code": "NULL"
+    },
+    {
+      "openId": "demo-device:9b35bf94-2391-0a91-3009-dd662d15987c",
+      "name": "Carlos Rivera",
+      "email": "NULL",
+      "loginMethod": "demo",
+      "driver_code": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "openId\tname\temail\tloginMethod\tdriver_code\ndemo-driver-autohaul\tDemo Driver\tdemo@autohaul.app\tdemo\tD-00001\ndemo-device:e5c55df2-f59f-036d-8594-810ad6d87078\tCarlos Rivera\tNULL\tdemo\tNULL\ndemo-device:9b35bf94-2391-0a91-3009-dd662d15987c\tCarlos Rivera\tNULL\tdemo\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 117
+}

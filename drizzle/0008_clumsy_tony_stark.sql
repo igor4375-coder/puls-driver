@@ -1,0 +1,1 @@
+ALTER TABLE `gate_pass_files` ADD `expires_at` datetime;

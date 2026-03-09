@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE companies ADD COLUMN IF NOT EXISTS company_code VARCHAR(8);\nCREATE UNIQUE INDEX IF NOT EXISTS idx_company_code ON companies(company_code);\nCREATE TABLE IF NOT EXISTS driver_company_links (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  driver_profile_id INT NOT NULL,\n  company_id INT NOT NULL,\n  status ENUM('pending', 'active', 'declined', 'removed') NOT NULL DEFAULT 'pending',\n  invited_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  responded_at TIMESTAMP NULL\n);\nCREATE UNIQUE INDEX IF NOT EXISTS idx_dcl_unique ON driver_company_links(driver_profile_id, company_id);\nCREATE INDEX IF NOT EXISTS idx_dcl_company ON driver_company_links(company_id);\nCREATE INDEX IF NOT EXISTS idx_dcl_driver ON driver_company_links(driver_profile_id);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nALTER TABLE companies ADD COLUMN IF NOT EXISTS company_code VARCHAR(8);\nCREATE UNIQUE INDEX IF NOT EXISTS idx_company_code ON companies(company_code);\nCREATE TABLE IF NOT EXISTS driver_company_links (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  driver_profile_id INT NOT NULL,\n  company_id INT NOT NULL,\n  status ENUM('pending', 'active', 'declined', 'removed') NOT NULL DEFAULT 'pending',\n  invited_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  responded_at TIMESTAMP NULL\n);\nCREATE UNIQUE INDEX IF NOT EXISTS idx_dcl_unique ON driver_company_links(driver_profile_id, company_id);\nCREATE INDEX IF NOT EXISTS idx_dcl_company ON driver_company_links(company_id);\nCREATE INDEX IF NOT EXISTS idx_dcl_driver ON driver_company_links(driver_profile_id);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1038
+}

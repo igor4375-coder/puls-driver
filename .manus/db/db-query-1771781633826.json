@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE driver_profiles \n  ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE;\n\nCREATE TABLE IF NOT EXISTS phone_auth_sessions (\n  id INT AUTO_INCREMENT NOT NULL,\n  phone_number VARCHAR(20) NOT NULL,\n  device_fingerprint VARCHAR(128),\n  driver_profile_id INT,\n  user_id INT,\n  created_at TIMESTAMP NOT NULL DEFAULT NOW(),\n  last_seen_at TIMESTAMP NOT NULL DEFAULT NOW() ON UPDATE NOW(),\n  CONSTRAINT phone_auth_sessions_id PRIMARY KEY(id),\n  CONSTRAINT phone_auth_sessions_phone_number_unique UNIQUE(phone_number)\n);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nALTER TABLE driver_profiles \n  ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT FALSE;\n\nCREATE TABLE IF NOT EXISTS phone_auth_sessions (\n  id INT AUTO_INCREMENT NOT NULL,\n  phone_number VARCHAR(20) NOT NULL,\n  device_fingerprint VARCHAR(128),\n  driver_profile_id INT,\n  user_id INT,\n  created_at TIMESTAMP NOT NULL DEFAULT NOW(),\n  last_seen_at TIMESTAMP NOT NULL DEFAULT NOW() ON UPDATE NOW(),\n  CONSTRAINT phone_auth_sessions_id PRIMARY KEY(id),\n  CONSTRAINT phone_auth_sessions_phone_number_unique UNIQUE(phone_number)\n);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 340
+}

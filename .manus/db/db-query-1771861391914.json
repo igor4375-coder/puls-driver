@@ -1,0 +1,50 @@
+{
+  "query": "SELECT name, driver_code, platform_driver_code FROM driver_profiles;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute SELECT name, driver_code, platform_driver_code FROM driver_profiles;",
+  "rows": [
+    {
+      "name": "Demo Driver",
+      "driver_code": "D-00001",
+      "platform_driver_code": "NULL"
+    },
+    {
+      "name": "Demo Driver",
+      "driver_code": "D-23260",
+      "platform_driver_code": "NULL"
+    },
+    {
+      "name": "Carlos Rivera",
+      "driver_code": "D-68560",
+      "platform_driver_code": "NULL"
+    },
+    {
+      "name": "Carlos Rivera",
+      "driver_code": "D-53019",
+      "platform_driver_code": "NULL"
+    },
+    {
+      "name": "Demo Driver",
+      "driver_code": "D-14898",
+      "platform_driver_code": "D-41907"
+    },
+    {
+      "name": "Demo Driver",
+      "driver_code": "D-97071",
+      "platform_driver_code": "NULL"
+    },
+    {
+      "name": "Martin",
+      "driver_code": "D-24386",
+      "platform_driver_code": "D-48133"
+    },
+    {
+      "name": "Artur",
+      "driver_code": "D-11903",
+      "platform_driver_code": "D-68544"
+    }
+  ],
+  "messages": [],
+  "stdout": "name\tdriver_code\tplatform_driver_code\nDemo Driver\tD-00001\tNULL\nDemo Driver\tD-23260\tNULL\nCarlos Rivera\tD-68560\tNULL\nCarlos Rivera\tD-53019\tNULL\nDemo Driver\tD-14898\tD-41907\nDemo Driver\tD-97071\tNULL\nMartin\tD-24386\tD-48133\nArtur\tD-11903\tD-68544\n",
+  "stderr": "",
+  "execution_time_ms": 58
+}

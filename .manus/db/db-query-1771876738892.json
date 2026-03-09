@@ -1,0 +1,20 @@
+{
+  "query": "\nSELECT dp.driver_code, dp.name, dcl.id, dcl.status, dcl.company_id, dcl.invited_at, c.name as company_name, c.company_code\nFROM driver_profiles dp\nLEFT JOIN driver_company_links dcl ON dcl.driver_profile_id = dp.id\nLEFT JOIN companies c ON c.id = dcl.company_id\nWHERE dp.driver_code = 'D-11903'\nORDER BY dcl.invited_at DESC;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nSELECT dp.driver_code, dp.name, dcl.id, dcl.status, dcl.company_id, dcl.invited_at, c.name as company_name, c.company_code\nFROM driver_profiles dp\nLEFT JOIN driver_company_links dcl ON dcl.driver_profile_id = dp.id\nLEFT JOIN companies c ON c.id = dcl.company_id\nWHERE dp.driver_code = 'D-11903'\nORDER BY dcl.invited_at DESC;\n",
+  "rows": [
+    {
+      "driver_code": "D-11903",
+      "name": "Artur",
+      "id": "NULL",
+      "status": "NULL",
+      "company_id": "NULL",
+      "invited_at": "NULL",
+      "company_name": "NULL",
+      "company_code": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "driver_code\tname\tid\tstatus\tcompany_id\tinvited_at\tcompany_name\tcompany_code\nD-11903\tArtur\tNULL\tNULL\tNULL\tNULL\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 60
+}

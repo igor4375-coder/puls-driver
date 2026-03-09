@@ -1,0 +1,66 @@
+{
+  "query": "SELECT id, name, driver_code, platform_driver_code, phone FROM driver_profiles ORDER BY id DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute SELECT id, name, driver_code, platform_driver_code, phone FROM driver_profiles ORDER BY id DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "120001",
+      "name": "Artur",
+      "driver_code": "D-11903",
+      "platform_driver_code": "D-68544",
+      "phone": "+12043321935"
+    },
+    {
+      "id": "90001",
+      "name": "Martin",
+      "driver_code": "D-24386",
+      "platform_driver_code": "D-48133",
+      "phone": "+12043846095"
+    },
+    {
+      "id": "60002",
+      "name": "Demo Driver",
+      "driver_code": "D-97071",
+      "platform_driver_code": "NULL",
+      "phone": "NULL"
+    },
+    {
+      "id": "60001",
+      "name": "Demo Driver",
+      "driver_code": "D-14898",
+      "platform_driver_code": "D-41907",
+      "phone": "NULL"
+    },
+    {
+      "id": "30003",
+      "name": "Carlos Rivera",
+      "driver_code": "D-53019",
+      "platform_driver_code": "NULL",
+      "phone": "NULL"
+    },
+    {
+      "id": "30002",
+      "name": "Carlos Rivera",
+      "driver_code": "D-68560",
+      "platform_driver_code": "NULL",
+      "phone": "NULL"
+    },
+    {
+      "id": "30001",
+      "name": "Demo Driver",
+      "driver_code": "D-23260",
+      "platform_driver_code": "NULL",
+      "phone": "NULL"
+    },
+    {
+      "id": "1",
+      "name": "Demo Driver",
+      "driver_code": "D-00001",
+      "platform_driver_code": "NULL",
+      "phone": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\tdriver_code\tplatform_driver_code\tphone\n120001\tArtur\tD-11903\tD-68544\t+12043321935\n90001\tMartin\tD-24386\tD-48133\t+12043846095\n60002\tDemo Driver\tD-97071\tNULL\tNULL\n60001\tDemo Driver\tD-14898\tD-41907\tNULL\n30003\tCarlos Rivera\tD-53019\tNULL\tNULL\n30002\tCarlos Rivera\tD-68560\tNULL\tNULL\n30001\tDemo Driver\tD-23260\tNULL\tNULL\n1\tDemo Driver\tD-00001\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 71
+}

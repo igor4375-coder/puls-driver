@@ -1,0 +1,1 @@
+ALTER TABLE `load_expenses` ADD `notes` text;

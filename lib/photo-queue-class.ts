@@ -1,0 +1,387 @@
+/**
+ * PhotoQueue class — exported separately for unit testing.
+ * The singleton `photoQueue` lives in photo-queue.ts and imports from here.
+ *
+ * Upload lifecycle:
+ * 1. Photos are enqueued as "pending" — NOT uploaded immediately.
+ * 2. flushForVehicle() is called on Save — uploads only the final set for that vehicle.
+ * 3. A background retry loop (startBackgroundRetry) runs every BACKGROUND_INTERVAL_MS
+ *    and retries any pending/failed photos that are ready for another attempt.
+ *    This ensures photos keep uploading even after the driver marks a vehicle as picked up.
+ */
+
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Network from "expo-network";
+import { Platform } from "react-native";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type PhotoStatus = "pending" | "uploading" | "done" | "failed";
+
+export interface PhotoQueueEntry {
+  clientId: string;
+  localUri: string;
+  remoteUrl: string | null;
+  status: PhotoStatus;
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+  loadId?: string;
+  vehicleId?: string;
+  createdAt: number;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const QUEUE_STORAGE_KEY = "@autohaul/photo_queue_v1";
+const PHOTOS_DIR = (FileSystem.documentDirectory ?? "") + "inspection_photos/";
+const MAX_RETRIES = 10; // Keep retrying until success (up to 10 attempts)
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000]; // escalating backoff
+const BACKGROUND_INTERVAL_MS = 20_000; // Check for pending uploads every 20 seconds
+
+// Allow overriding the API base in tests via env
+const API_BASE =
+  (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_BASE_URL) ||
+  "http://127.0.0.1:3000";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function uuid(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+async function ensurePhotosDir() {
+  if (Platform.OS === "web") return;
+  const info = await FileSystem.getInfoAsync(PHOTOS_DIR);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(PHOTOS_DIR, { intermediates: true });
+  }
+}
+
+async function isOnline(): Promise<boolean> {
+  try {
+    const state = await Network.getNetworkStateAsync();
+    return !!(state.isConnected && state.isInternetReachable);
+  } catch {
+    return false;
+  }
+}
+
+// ─── Queue Class ──────────────────────────────────────────────────────────────
+
+type Listener = (entries: PhotoQueueEntry[]) => void;
+
+export class PhotoQueue {
+  entries: PhotoQueueEntry[] = [];
+  private listeners: Set<Listener> = new Set();
+  private syncing = false;
+  private loaded = false;
+  private backgroundTimer: ReturnType<typeof setInterval> | null = null;
+
+  async load() {
+    if (this.loaded) return;
+    try {
+      const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
+      this.entries = raw ? JSON.parse(raw) : [];
+      // Reset any "uploading" entries to "pending" (app was killed mid-upload)
+      this.entries = this.entries.map((e) =>
+        e.status === "uploading" ? { ...e, status: "pending" as PhotoStatus } : e
+      );
+      this.loaded = true;
+      this.emit();
+    } catch {
+      this.entries = [];
+      this.loaded = true;
+    }
+  }
+
+  private async persist() {
+    try {
+      await AsyncStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(this.entries));
+    } catch {}
+  }
+
+  private emit() {
+    const snapshot = [...this.entries];
+    this.listeners.forEach((fn) => fn(snapshot));
+  }
+
+  subscribe(fn: Listener): () => void {
+    this.listeners.add(fn);
+    fn([...this.entries]);
+    return () => this.listeners.delete(fn);
+  }
+
+  getEntries(): PhotoQueueEntry[] {
+    return [...this.entries];
+  }
+
+  resolvedUri(clientId: string): string | null {
+    const entry = this.entries.find((e) => e.clientId === clientId);
+    if (!entry) return null;
+    return entry.remoteUrl ?? entry.localUri;
+  }
+
+  /**
+   * Start the background retry loop.
+   * Call once at app startup (in _layout.tsx or a top-level provider).
+   * The loop checks every BACKGROUND_INTERVAL_MS for any pending photos
+   * that are ready to upload (respecting backoff delays), and uploads them.
+   * This ensures photos keep uploading even after the driver navigates away
+   * or marks a vehicle as picked up.
+   */
+  startBackgroundRetry(): void {
+    if (this.backgroundTimer) return; // already running
+    // Run once immediately on start to catch any pending from a previous session
+    this.load().then(() => this.sync()).catch(() => {});
+    this.backgroundTimer = setInterval(() => {
+      this.sync().catch(() => {});
+    }, BACKGROUND_INTERVAL_MS);
+  }
+
+  stopBackgroundRetry(): void {
+    if (this.backgroundTimer) {
+      clearInterval(this.backgroundTimer);
+      this.backgroundTimer = null;
+    }
+  }
+
+  async enqueue(
+    tempUri: string,
+    meta?: { loadId?: string; vehicleId?: string }
+  ): Promise<PhotoQueueEntry> {
+    await this.load();
+
+    const clientId = uuid();
+    let localUri = tempUri;
+
+    if (Platform.OS !== "web") {
+      try {
+        await ensurePhotosDir();
+        const ext = tempUri.split(".").pop()?.split("?")[0] ?? "jpg";
+        const dest = `${PHOTOS_DIR}${clientId}.${ext}`;
+        await FileSystem.copyAsync({ from: tempUri, to: dest });
+        localUri = dest;
+      } catch {
+        localUri = tempUri;
+      }
+    }
+
+    const entry: PhotoQueueEntry = {
+      clientId,
+      localUri,
+      remoteUrl: null,
+      status: "pending",
+      attempts: 0,
+      lastAttemptAt: null,
+      lastError: null,
+      loadId: meta?.loadId,
+      vehicleId: meta?.vehicleId,
+      createdAt: Date.now(),
+    };
+
+    this.entries.push(entry);
+    await this.persist();
+    this.emit();
+    // NOTE: Upload is intentionally NOT triggered here.
+    // Photos are uploaded only when flushForVehicle() is called on Save.
+    // The background retry loop handles any remaining photos after that.
+    return entry;
+  }
+
+  /**
+   * Upload all pending photos for a specific vehicle immediately.
+   * Call this when the driver taps Save on the inspection screen.
+   * Photos deleted before Save are already removed from the queue and never uploaded.
+   * After this returns, the background retry loop will handle any that failed.
+   */
+  async flushForVehicle(loadId: string, vehicleId: string): Promise<void> {
+    await this.load();
+    const pending = this.entries.filter(
+      (e) =>
+        e.status === "pending" &&
+        e.attempts < MAX_RETRIES &&
+        e.loadId === loadId &&
+        e.vehicleId === vehicleId
+    );
+    if (pending.length === 0) return;
+    const online = await isOnline();
+    if (!online) return;
+    for (const entry of pending) {
+      await this.uploadEntry(entry);
+    }
+  }
+
+  /**
+   * Flush all pending uploads for a vehicle AND return the S3 URLs.
+   * This is the method to call before syncInspection to avoid the race condition
+   * where photos: [] is sent because uploads haven't completed yet.
+   *
+   * Returns an array of S3 URLs (http/https) for all successfully uploaded photos
+   * belonging to this vehicle. Local URIs for failed uploads are excluded.
+   */
+  async flushAndGetUrls(loadId: string, vehicleId: string): Promise<string[]> {
+    // First, flush all pending uploads (waits for each to complete)
+    await this.flushForVehicle(loadId, vehicleId);
+
+    // Now read back the entries — any that succeeded will have remoteUrl set
+    const vehicleEntries = this.entries.filter(
+      (e) => e.loadId === loadId && e.vehicleId === vehicleId
+    );
+    return vehicleEntries
+      .map((e) => e.remoteUrl)
+      .filter((url): url is string => url != null && url.startsWith("http"));
+  }
+
+  /**
+   * Sync all pending/failed photos that are ready for upload (respects backoff).
+   * Called by the background retry loop and by retryFailed().
+   */
+  async sync(): Promise<void> {
+    if (this.syncing) return;
+    await this.load();
+
+    const now = Date.now();
+    const ready = this.entries.filter((e) => {
+      if (e.status !== "pending" && e.status !== "failed") return false;
+      if (e.attempts >= MAX_RETRIES) return false;
+      if (!e.lastAttemptAt) return true; // never attempted
+      const delay = RETRY_DELAYS_MS[Math.min(e.attempts - 1, RETRY_DELAYS_MS.length - 1)] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
+      return now - e.lastAttemptAt >= delay;
+    });
+
+    if (ready.length === 0) return;
+
+    const online = await isOnline();
+    if (!online) return;
+
+    this.syncing = true;
+    try {
+      for (const entry of ready) {
+        await this.uploadEntry(entry);
+      }
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
+    this.updateEntry(entry.clientId, { status: "uploading" });
+
+    try {
+      let base64: string;
+
+      if (Platform.OS === "web") {
+        const resp = await fetch(entry.localUri);
+        const blob = await resp.blob();
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(",")[1] ?? result);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        base64 = await FileSystem.readAsStringAsync(entry.localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      const ext = entry.localUri.split(".").pop()?.toLowerCase() ?? "jpg";
+      const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+      const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || undefined;
+
+      // tRPC v11 batch mutation format: POST /api/trpc/photos.upload?batch=1
+      const body = JSON.stringify({
+        "0": {
+          json: {
+            base64,
+            mimeType,
+            groupKey,
+            clientId: entry.clientId,
+          },
+        },
+      });
+
+      const response = await fetch(`${API_BASE}/api/trpc/photos.upload?batch=1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+
+      // tRPC batch response is an array: [{ result: { data: { json: { url, key, clientId } } } }]
+      const jsonArr = await response.json();
+      const json = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
+      const url: string =
+        json?.result?.data?.json?.url ?? // tRPC v11 format
+        json?.result?.data?.url ??       // tRPC v10 format
+        json?.url;                        // direct format
+      if (!url) throw new Error(`Server returned no URL. Response: ${JSON.stringify(json).slice(0, 200)}`);
+
+      this.updateEntry(entry.clientId, {
+        status: "done",
+        remoteUrl: url,
+        lastError: null,
+        lastAttemptAt: Date.now(),
+        attempts: entry.attempts + 1,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      const attempts = entry.attempts + 1;
+      this.updateEntry(entry.clientId, {
+        // Keep as "pending" so the background loop retries it (up to MAX_RETRIES)
+        status: attempts >= MAX_RETRIES ? "failed" : "pending",
+        lastError: message,
+        lastAttemptAt: Date.now(),
+        attempts,
+      });
+    }
+  }
+
+  private updateEntry(clientId: string, patch: Partial<PhotoQueueEntry>) {
+    this.entries = this.entries.map((e) =>
+      e.clientId === clientId ? { ...e, ...patch } : e
+    );
+    this.persist();
+    this.emit();
+  }
+
+  async remove(clientId: string): Promise<void> {
+    const entry = this.entries.find((e) => e.clientId === clientId);
+    if (!entry) return;
+
+    if (Platform.OS !== "web" && entry.localUri.startsWith(PHOTOS_DIR)) {
+      try {
+        await FileSystem.deleteAsync(entry.localUri, { idempotent: true });
+      } catch {}
+    }
+
+    this.entries = this.entries.filter((e) => e.clientId !== clientId);
+    await this.persist();
+    this.emit();
+  }
+
+  async retryFailed(): Promise<void> {
+    this.entries = this.entries.map((e) =>
+      e.status === "failed" ? { ...e, status: "pending" as PhotoStatus, attempts: 0, lastAttemptAt: null } : e
+    );
+    await this.persist();
+    this.emit();
+    await this.sync();
+  }
+
+  get stats() {
+    const pending = this.entries.filter((e) => e.status === "pending").length;
+    const uploading = this.entries.filter((e) => e.status === "uploading").length;
+    const done = this.entries.filter((e) => e.status === "done").length;
+    const failed = this.entries.filter((e) => e.status === "failed").length;
+    return { pending, uploading, done, failed, total: this.entries.length };
+  }
+}

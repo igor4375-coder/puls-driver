@@ -1,0 +1,9 @@
+{
+  "query": "ALTER TABLE gate_pass_files ADD COLUMN driver_code VARCHAR(16) NULL AFTER company_code; ALTER TABLE gate_pass_files ADD COLUMN notified_expiry_at DATETIME NULL AFTER expires_at;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute ALTER TABLE gate_pass_files ADD COLUMN driver_code VARCHAR(16) NULL AFTER company_code; ALTER TABLE gate_pass_files ADD COLUMN notified_expiry_at DATETIME NULL AFTER expires_at;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 460
+}

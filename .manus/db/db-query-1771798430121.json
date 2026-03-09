@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `load_expenses` (\n  `id` int AUTO_INCREMENT NOT NULL,\n  `load_id` varchar(64) NOT NULL,\n  `driver_code` varchar(16) NOT NULL,\n  `label` varchar(128) NOT NULL,\n  `amount_cents` int NOT NULL,\n  `expense_date` varchar(10) NOT NULL,\n  `receipt_url` text,\n  `receipt_key` varchar(512),\n  `createdAt` timestamp NOT NULL DEFAULT (now()),\n  CONSTRAINT `load_expenses_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute CREATE TABLE IF NOT EXISTS `load_expenses` (\n  `id` int AUTO_INCREMENT NOT NULL,\n  `load_id` varchar(64) NOT NULL,\n  `driver_code` varchar(16) NOT NULL,\n  `label` varchar(128) NOT NULL,\n  `amount_cents` int NOT NULL,\n  `expense_date` varchar(10) NOT NULL,\n  `receipt_url` text,\n  `receipt_key` varchar(512),\n  `createdAt` timestamp NOT NULL DEFAULT (now()),\n  CONSTRAINT `load_expenses_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 164
+}

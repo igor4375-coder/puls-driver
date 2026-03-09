@@ -1,0 +1,28 @@
+{
+  "query": "SHOW TABLES;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute SHOW TABLES;",
+  "rows": [
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "__drizzle_migrations"
+    },
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "companies"
+    },
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "company_invitations"
+    },
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "driver_company_links"
+    },
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "driver_profiles"
+    },
+    {
+      "Tables_in_jinuUp5AxR2spxeqN7vxCJ": "users"
+    }
+  ],
+  "messages": [],
+  "stdout": "Tables_in_jinuUp5AxR2spxeqN7vxCJ\n__drizzle_migrations\ncompanies\ncompany_invitations\ndriver_company_links\ndriver_profiles\nusers\n",
+  "stderr": "",
+  "execution_time_ms": 52
+}

@@ -1,0 +1,22 @@
+{
+  "query": "\nSELECT \n  dp.id as profile_id,\n  dp.driver_code,\n  dp.platform_driver_code,\n  dp.name,\n  dp.phone,\n  dcl.id as link_id,\n  dcl.company_id,\n  dcl.status,\n  c.name as company_name,\n  c.company_code\nFROM driver_profiles dp\nLEFT JOIN driver_company_links dcl ON dcl.driver_profile_id = dp.id\nLEFT JOIN companies c ON c.id = dcl.company_id\nWHERE dp.phone = '+12043321935' OR dp.driver_code = 'D-11903' OR dp.platform_driver_code = 'D-68544'\nORDER BY dp.id, dcl.id;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute \nSELECT \n  dp.id as profile_id,\n  dp.driver_code,\n  dp.platform_driver_code,\n  dp.name,\n  dp.phone,\n  dcl.id as link_id,\n  dcl.company_id,\n  dcl.status,\n  c.name as company_name,\n  c.company_code\nFROM driver_profiles dp\nLEFT JOIN driver_company_links dcl ON dcl.driver_profile_id = dp.id\nLEFT JOIN companies c ON c.id = dcl.company_id\nWHERE dp.phone = '+12043321935' OR dp.driver_code = 'D-11903' OR dp.platform_driver_code = 'D-68544'\nORDER BY dp.id, dcl.id;\n",
+  "rows": [
+    {
+      "profile_id": "120001",
+      "driver_code": "D-11903",
+      "platform_driver_code": "D-68544",
+      "name": "Artur",
+      "phone": "+12043321935",
+      "link_id": "NULL",
+      "company_id": "NULL",
+      "status": "NULL",
+      "company_name": "NULL",
+      "company_code": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "profile_id\tdriver_code\tplatform_driver_code\tname\tphone\tlink_id\tcompany_id\tstatus\tcompany_name\tcompany_code\n120001\tD-11903\tD-68544\tArtur\t+12043321935\tNULL\tNULL\tNULL\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 148
+}

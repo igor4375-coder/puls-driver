@@ -1,0 +1,1 @@
+ALTER TABLE `driver_profiles` ADD `platform_driver_code` varchar(16);

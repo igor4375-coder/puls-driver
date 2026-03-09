@@ -1,0 +1,25 @@
+{
+  "query": "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE();",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user kds2o4PY16aagZv.298cf9816d2a --database jinuUp5AxR2spxeqN7vxCJ --execute SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE();",
+  "rows": [
+    {
+      "table_name": "users"
+    },
+    {
+      "table_name": "driver_profiles"
+    },
+    {
+      "table_name": "company_invitations"
+    },
+    {
+      "table_name": "companies"
+    },
+    {
+      "table_name": "__drizzle_migrations"
+    }
+  ],
+  "messages": [],
+  "stdout": "table_name\nusers\ndriver_profiles\ncompany_invitations\ncompanies\n__drizzle_migrations\n",
+  "stderr": "",
+  "execution_time_ms": 54
+}

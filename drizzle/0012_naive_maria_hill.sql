@@ -1,0 +1,1 @@
+ALTER TABLE `load_signatures` ADD `customer_name` varchar(128);

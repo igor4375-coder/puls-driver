@@ -1,0 +1,97 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1763372440610,
+      "tag": "0000_elite_eternals",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1771617492839,
+      "tag": "0001_conscious_puppet_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1771781591599,
+      "tag": "0002_clean_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1771788749179,
+      "tag": "0003_natural_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1771794181695,
+      "tag": "0004_jittery_kitty_pryde",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1771798419664,
+      "tag": "0005_smooth_night_thrasher",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1771800584560,
+      "tag": "0006_icy_purifiers",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1771904962942,
+      "tag": "0007_brief_nightshade",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1771943018931,
+      "tag": "0008_clumsy_tony_stark",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1771943537768,
+      "tag": "0009_sparkling_loa",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1771952084456,
+      "tag": "0010_previous_black_panther",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1771957200096,
+      "tag": "0011_past_ravenous",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1771964518032,
+      "tag": "0012_naive_maria_hill",
+      "breakpoints": true
+    }
+  ]
+}
