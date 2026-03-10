@@ -27,8 +27,9 @@ const DRIVER_DELIVERED_SNAPSHOTS_KEY = "@autohaul:driver_delivered_snapshots_v1"
 // ─── Helper: convert company platform load → driver app Load ─────────────────
 
 export interface PlatformLoad {
-  legId: number;
-  tripId?: number; // legacy field, may not be present
+  legId: number | string;
+  tripId?: number | string;
+
   loadNumber: string;
   vehicleCount: number;
   pickupLocation: {

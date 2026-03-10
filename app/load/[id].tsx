@@ -32,6 +32,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useSettings, type MapsApp } from "@/lib/settings-context";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { trpc } from "@/lib/trpc";
+import { useAction, useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
   type Load,
@@ -205,7 +207,7 @@ function VehicleCard({
 }) {
   const colors = useColors();
   const { revertVehicleToPickupPending } = useLoads();
-  const revertPickupMutation = trpc.loads.revertPickup.useMutation();
+  const revertPickupAction = useAction(api.platform.revertPickup);
   const { entries: queueEntries } = usePhotoQueue();
 
   // Count pending/uploading/failed photos for this specific vehicle
@@ -257,14 +259,13 @@ function VehicleCard({
             // Sync to company platform (platform loads only, non-blocking)
             const isPlatformLoad = loadId.startsWith("platform-");
             if (isPlatformLoad && platformTripId && driverCode) {
-              revertPickupMutation.mutate(
-                { loadNumber, legId: platformTripId, driverCode },
-                {
-                  onError: (err) => {
-                    console.warn("[VehicleCard] revertPickup platform sync failed:", err.message);
-                  },
-                }
-              );
+              revertPickupAction({
+                loadNumber,
+                legId: platformTripId,
+                driverCode,
+              }).catch((err) => {
+                console.warn("[VehicleCard] revertPickup platform sync failed:", err);
+              });
             }
             // Close load detail and return to loads list (vehicle now in Pending tab)
             router.back();
@@ -528,10 +529,9 @@ export default function LoadDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getLoad, updateLoadStatus } = useLoads();
   const { driver } = useAuth();
-  const updateStatusMutation = trpc.loads.updateStatus.useMutation();
-  const markAsDeliveredMutation = trpc.loads.markAsDelivered.useMutation();
-  const markAsPickedUpMutation = trpc.loads.markAsPickedUp.useMutation();
-  const saveSignatureMutation = trpc.loads.saveSignature.useMutation();
+  const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
+  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
+  const saveSignatureMutation = useMutation(api.signatures.save);
 
   // ─── Require customer signature toggle (per session, resets after pickup/delivery) ─────
   const [requireCustomerSignature, setRequireCustomerSignature] = useState(false);
@@ -694,7 +694,7 @@ export default function LoadDetailScreen() {
   // NOT from parsing load.id — the id string may contain a stale legId if the platform
   // recreated the load with a new legId after the app cached it.
   const platformTripId = isPlatformLoad
-    ? (load.platformTripId ?? parseInt(load.id.replace("platform-", ""), 10))
+    ? (load.platformTripId ?? load.id.replace("platform-", ""))
     : null;
 
   const handleMarkPickedUp = () => {
@@ -735,28 +735,24 @@ export default function LoadDetailScreen() {
                 ? savedSigPaths.map((p) => p.d).join(" ")
                 : undefined;
               if (driverCode) {
-                saveSignatureMutation
-                  .mutateAsync({
-                    loadId: load.loadNumber ?? load.id,
-                    driverCode,
-                    signatureType: "pickup",
-                    customerNotAvailable: true,
-                    driverSig: driverSigStr,
-                    capturedAt: new Date().toISOString(),
-                  })
-                  .catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
+                saveSignatureMutation({
+                  loadId: load.loadNumber ?? load.id,
+                  driverCode,
+                  signatureType: "pickup",
+                  customerNotAvailable: true,
+                  driverSig: driverSigStr,
+                  capturedAt: new Date().toISOString(),
+                }).catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
               }
               if (isPlatformLoad && platformTripId && driverCode) {
-                markAsPickedUpMutation
-                  .mutateAsync({
-                    loadNumber: load.loadNumber,
-                    legId: platformTripId,
-                    driverCode,
-                    pickupTime: new Date().toISOString(),
-                    pickupGPS: { lat: 0, lng: 0 },
-                    pickupPhotos: [],
-                  })
-                  .catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
+                markAsPickedUpAction({
+                  loadNumber: load.loadNumber,
+                  legId: platformTripId,
+                  driverCode,
+                  pickupTime: new Date().toISOString(),
+                  pickupGPS: { lat: 0, lng: 0 },
+                  pickupPhotos: [],
+                }).catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
               }
             },
           },
@@ -801,16 +797,14 @@ export default function LoadDetailScreen() {
       : undefined;
 
     if (driverCode) {
-      saveSignatureMutation
-        .mutateAsync({
-          loadId: load.loadNumber ?? load.id,
-          driverCode,
-          signatureType: "pickup",
-          customerNotAvailable: true,
-          driverSig: driverSigStr,
-          capturedAt: new Date().toISOString(),
-        })
-        .catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
+      saveSignatureMutation({
+        loadId: load.loadNumber ?? load.id,
+        driverCode,
+        signatureType: "pickup",
+        customerNotAvailable: true,
+        driverSig: driverSigStr,
+        capturedAt: new Date().toISOString(),
+      }).catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
     }
 
     // Fire-and-forget: sync to platform
@@ -818,16 +812,14 @@ export default function LoadDetailScreen() {
       const pickupPhotos = load.vehicles.flatMap(
         (v) => v.pickupInspection?.photos ?? []
       );
-      markAsPickedUpMutation
-        .mutateAsync({
-          loadNumber: load.loadNumber,
-          legId: platformTripId,
-          driverCode,
-          pickupTime: new Date().toISOString(),
-          pickupGPS: { lat: 0, lng: 0 },
-          pickupPhotos,
-        })
-        .catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
+      markAsPickedUpAction({
+        loadNumber: load.loadNumber,
+        legId: platformTripId,
+        driverCode,
+        pickupTime: new Date().toISOString(),
+        pickupGPS: { lat: 0, lng: 0 },
+        pickupPhotos,
+      }).catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
     }
   };
 
@@ -882,16 +874,14 @@ export default function LoadDetailScreen() {
                         : undefined;
 
                       if (driverCode) {
-                        saveSignatureMutation
-                          .mutateAsync({
-                            loadId: load.loadNumber ?? load.id,
-                            driverCode,
-                            signatureType: "delivery",
-                            customerNotAvailable: true,
-                            driverSig: driverSigStr2,
-                            capturedAt: new Date().toISOString(),
-                          })
-                          .catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
+                        saveSignatureMutation({
+                          loadId: load.loadNumber ?? load.id,
+                          driverCode,
+                          signatureType: "delivery",
+                          customerNotAvailable: true,
+                          driverSig: driverSigStr2,
+                          capturedAt: new Date().toISOString(),
+                        }).catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
                       }
 
                       // Fire-and-forget: sync to platform
@@ -899,16 +889,14 @@ export default function LoadDetailScreen() {
                         const deliveryPhotos2 = load.vehicles.flatMap(
                           (v) => v.deliveryInspection?.photos ?? []
                         );
-                        markAsDeliveredMutation
-                          .mutateAsync({
-                            loadNumber: load.loadNumber,
-                            legId: platformTripId,
-                            driverCode,
-                            deliveryTime: new Date().toISOString(),
-                            deliveryGPS: { lat: 0, lng: 0 },
-                            deliveryPhotos: deliveryPhotos2,
-                          })
-                          .catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
+                        markAsDeliveredAction({
+                          loadNumber: load.loadNumber,
+                          legId: platformTripId,
+                          driverCode,
+                          deliveryTime: new Date().toISOString(),
+                          deliveryGPS: { lat: 0, lng: 0 },
+                          deliveryPhotos: deliveryPhotos2,
+                        }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
                       }
                     }
                   },
@@ -944,16 +932,14 @@ export default function LoadDetailScreen() {
       : undefined;
 
     if (driverCode) {
-      saveSignatureMutation
-        .mutateAsync({
-          loadId: load.loadNumber ?? load.id,
-          driverCode,
-          signatureType: "delivery",
-          customerNotAvailable: true,
-          driverSig: driverSigStr,
-          capturedAt: new Date().toISOString(),
-        })
-        .catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
+      saveSignatureMutation({
+        loadId: load.loadNumber ?? load.id,
+        driverCode,
+        signatureType: "delivery",
+        customerNotAvailable: true,
+        driverSig: driverSigStr,
+        capturedAt: new Date().toISOString(),
+      }).catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
     }
 
     // Fire-and-forget: sync to platform
@@ -961,16 +947,14 @@ export default function LoadDetailScreen() {
       const deliveryPhotos = load.vehicles.flatMap(
         (v) => v.deliveryInspection?.photos ?? []
       );
-      markAsDeliveredMutation
-        .mutateAsync({
-          loadNumber: load.loadNumber,
-          legId: platformTripId,
-          driverCode,
-          deliveryTime: new Date().toISOString(),
-          deliveryGPS: { lat: 0, lng: 0 },
-          deliveryPhotos,
-        })
-        .catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
+      markAsDeliveredAction({
+        loadNumber: load.loadNumber,
+        legId: platformTripId,
+        driverCode,
+        deliveryTime: new Date().toISOString(),
+        deliveryGPS: { lat: 0, lng: 0 },
+        deliveryPhotos,
+      }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
     }
   };
 

@@ -33,7 +33,8 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
-import { trpc } from "@/lib/trpc";
+import { useAction, useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { useSettings } from "@/lib/settings-context";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 
@@ -252,8 +253,8 @@ export default function PickupSignatureScreen() {
   const { loadId } = useLocalSearchParams<{ loadId: string }>();
   const { loads, updateLoadStatus } = useLoads();
   const { driver } = useAuth();
-  const markAsPickedUpMutation = trpc.loads.markAsPickedUp.useMutation();
-  const saveSignatureMutation = trpc.loads.saveSignature.useMutation();
+  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
+  const saveSignatureMutation = useMutation(api.signatures.save);
   const { settings, setDriverSignaturePaths } = useSettings();
 
   // A saved driver signature exists if there are any stable (non-live) paths
@@ -298,44 +299,40 @@ export default function PickupSignatureScreen() {
     const driverSigStr = overrideDriverSig ?? (hasDriverSig ? serializePaths(driverPaths) : undefined);
 
     if (driverCode) {
-      saveSignatureMutation
-        .mutateAsync({
-          loadId: load.loadNumber ?? load.id,
-          driverCode,
-          signatureType: "pickup",
-          customerName: customerName.trim() || undefined,
-          customerSig: hasCustomerSig ? serializePaths(customerPaths) : undefined,
-          driverSig: driverSigStr,
-          customerNotAvailable: isNotAvailable,
-          capturedAt: new Date().toISOString(),
-        })
-        .catch((err) => console.warn("[PickupSignature] Signature save failed:", err));
+      saveSignatureMutation({
+        loadId: load.loadNumber ?? load.id,
+        driverCode,
+        signatureType: "pickup",
+        customerName: customerName.trim() || undefined,
+        customerSig: hasCustomerSig ? serializePaths(customerPaths) : undefined,
+        driverSig: driverSigStr,
+        customerNotAvailable: isNotAvailable,
+        capturedAt: new Date().toISOString(),
+      }).catch((err) => console.warn("[PickupSignature] Signature save failed:", err));
     }
 
     // Fire-and-forget platform sync
     const isPlatformLoad = load.id.startsWith("platform-");
     const platformTripId = isPlatformLoad
-      ? (load.platformTripId ?? parseInt(load.id.replace("platform-", ""), 10))
+      ? (load.platformTripId ?? load.id.replace("platform-", ""))
       : null;
 
     if (isPlatformLoad && platformTripId && driverCode) {
       const pickupPhotos = load.vehicles.flatMap(
         (v) => v.pickupInspection?.photos ?? []
       );
-      markAsPickedUpMutation
-        .mutateAsync({
-          loadNumber: load.loadNumber,
-          legId: platformTripId,
-          driverCode,
-          pickupTime: new Date().toISOString(),
-          pickupGPS: { lat: 0, lng: 0 },
-          pickupPhotos,
-        })
-        .catch((err) =>
-          console.warn("[PickupSignature] Platform sync failed:", err)
-        );
+      markAsPickedUpAction({
+        loadNumber: load.loadNumber,
+        legId: platformTripId,
+        driverCode,
+        pickupTime: new Date().toISOString(),
+        pickupGPS: { lat: 0, lng: 0 },
+        pickupPhotos,
+      }).catch((err) =>
+        console.warn("[PickupSignature] Platform sync failed:", err)
+      );
     }
-  }, [load, isConfirming, customerNotAvailable, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, driverCode, updateLoadStatus, saveSignatureMutation, markAsPickedUpMutation]);
+  }, [load, isConfirming, customerNotAvailable, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, driverCode, updateLoadStatus, saveSignatureMutation, markAsPickedUpAction]);
 
   /**
    * Called when driver confirms their signature on the driver_sig step.

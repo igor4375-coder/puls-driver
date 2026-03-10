@@ -96,7 +96,7 @@ export const getAssignedLoads = action({
 export const syncInspection = action({
   args: {
     loadNumber: v.string(),
-    legId: v.number(),
+    legId: v.union(v.number(), v.string()),
     driverCode: v.string(),
     inspectionType: v.union(v.literal("pickup"), v.literal("delivery")),
     vehicleVin: v.string(),
@@ -115,7 +115,7 @@ export const syncInspection = action({
 export const markAsPickedUp = action({
   args: {
     loadNumber: v.string(),
-    legId: v.number(),
+    legId: v.union(v.number(), v.string()),
     driverCode: v.string(),
     pickupTime: v.string(),
     pickupGPS: v.object({ lat: v.number(), lng: v.number() }),
@@ -138,7 +138,7 @@ export const markAsPickedUp = action({
 export const markAsDelivered = action({
   args: {
     loadNumber: v.string(),
-    legId: v.number(),
+    legId: v.union(v.number(), v.string()),
     driverCode: v.string(),
     deliveryTime: v.string(),
     deliveryGPS: v.object({ lat: v.number(), lng: v.number() }),
@@ -161,7 +161,7 @@ export const markAsDelivered = action({
 export const revertPickup = action({
   args: {
     loadNumber: v.string(),
-    legId: v.number(),
+    legId: v.union(v.number(), v.string()),
     driverCode: v.string(),
   },
   handler: async (_ctx, args) => {

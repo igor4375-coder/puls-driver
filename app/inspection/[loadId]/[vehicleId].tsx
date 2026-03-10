@@ -26,6 +26,8 @@ import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
 import { trpc } from "@/lib/trpc";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
@@ -668,8 +670,8 @@ export default function InspectionScreen() {
   const { loadId, vehicleId } = useLocalSearchParams<{ loadId: string; vehicleId: string }>();
   const { getLoad, savePickupInspection, saveDeliveryInspection, updateVehicleInfo, updateLoadStatus } = useLoads();
   const { driver } = useAuth();
-  const syncInspectionMutation = trpc.loads.syncInspection.useMutation();
-  const markAsPickedUpMutation = trpc.loads.markAsPickedUp.useMutation();
+  const syncInspectionAction = useAction(api.platform.syncInspection);
+  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
   const uploadPhotoMutation = trpc.photos.upload.useMutation();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
@@ -964,7 +966,7 @@ export default function InspectionScreen() {
     const isPlatformLoad = loadId.startsWith("platform-");
     // Read platformTripId from the load object (fresh from latest platform fetch),
     // NOT from parsing loadId which may contain a stale legId.
-    const platformTripId = isPlatformLoad ? (load?.platformTripId ?? parseInt(loadId.replace("platform-", ""), 10)) : null;
+    const platformTripId = isPlatformLoad ? (load?.platformTripId ?? loadId.replace("platform-", "")) : null;
     // Use platform-assigned driverCode, not local app code
     const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
     if (isPlatformLoad && platformTripId && driverCode && vehicle) {
@@ -980,7 +982,7 @@ export default function InspectionScreen() {
           diagramView: d.diagramView,
           note: d.description || undefined,
         }));
-        await syncInspectionMutation.mutateAsync({
+        await syncInspectionAction({
           loadNumber: load?.loadNumber || "",
           legId: platformTripId,
           driverCode,
@@ -1102,13 +1104,13 @@ export default function InspectionScreen() {
       const isPlatformLoad = loadId.startsWith("platform-");
       // Read platformTripId from the load object (fresh from latest platform fetch),
       // NOT from parsing load.id which may contain a stale legId.
-      const legId = isPlatformLoad ? (load?.platformTripId ?? parseInt(loadId.replace("platform-", ""), 10)) : null;
+      const legId = isPlatformLoad ? (load?.platformTripId ?? loadId.replace("platform-", "")) : null;
       // Use platform-assigned driverCode (D-68544 style), not local app code (D-11903 style)
       const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
 
       if (isPlatformLoad && legId && driverCode && load) {
         try {
-          await markAsPickedUpMutation.mutateAsync({
+          await markAsPickedUpAction({
             loadNumber: load.loadNumber,
             legId,
             driverCode,

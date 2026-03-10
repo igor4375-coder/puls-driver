@@ -141,7 +141,7 @@ export interface Load {
    * Only present on platform loads (id starts with "platform-").
    * Use this field instead of parsing load.id to avoid stale legId bugs.
    */
-  platformTripId?: number;
+  platformTripId?: number | string;
   /** URL to the gate pass file attached by the dispatcher on the platform, if any */
   gatePassUrl?: string | null;
   /** ISO 8601 date string for gate pass expiry, set by the dispatcher */
