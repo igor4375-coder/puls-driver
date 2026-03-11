@@ -152,6 +152,18 @@ export interface Load {
    * Used for 30-day auto-archive: loads delivered more than 30 days ago move to "archived".
    */
   deliveredAt?: string | null;
+  /** Company org ID from the platform — needed for getLocations filter */
+  orgId?: string;
+  /** True if this leg's dropoff IS the order's final destination */
+  isFinalLeg?: boolean;
+  /** The order's ultimate destination (may differ from this leg's delivery location) */
+  finalDestination?: {
+    id: string;
+    name: string;
+    address: string;
+    city: string;
+    province: string;
+  };
 }
 
 export interface Driver {

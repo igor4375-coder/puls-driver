@@ -11,7 +11,9 @@
 import type * as companies from "../companies.js";
 import type * as driverProfiles from "../driverProfiles.js";
 import type * as expenses from "../expenses.js";
+import type * as fieldPickups from "../fieldPickups.js";
 import type * as gatePasses from "../gatePasses.js";
+import type * as inspectionPhotos from "../inspectionPhotos.js";
 import type * as platform from "../platform.js";
 import type * as signatures from "../signatures.js";
 
@@ -25,7 +27,9 @@ declare const fullApi: ApiFromModules<{
   companies: typeof companies;
   driverProfiles: typeof driverProfiles;
   expenses: typeof expenses;
+  fieldPickups: typeof fieldPickups;
   gatePasses: typeof gatePasses;
+  inspectionPhotos: typeof inspectionPhotos;
   platform: typeof platform;
   signatures: typeof signatures;
 }>;

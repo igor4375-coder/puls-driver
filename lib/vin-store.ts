@@ -65,6 +65,18 @@ export function deliverVINResult(result: VINDecodeResult) {
   }
 }
 
+// ─── Exclusive Driver Flag ────────────────────────────────────────────────────
+
+let _isExclusiveDriver = false;
+
+export function setIsExclusiveDriver(val: boolean) {
+  _isExclusiveDriver = val;
+}
+
+export function getIsExclusiveDriver(): boolean {
+  return _isExclusiveDriver;
+}
+
 // ─── Pending Load VIN Match ───────────────────────────────────────────────────
 
 /**

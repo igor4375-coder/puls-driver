@@ -20,6 +20,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
   deliverVINResult,
   getVINLaunchContext,
+  getIsExclusiveDriver,
   matchPendingLoadByLast6,
   type VINDecodeResult,
 } from "@/lib/vin-store";
@@ -208,14 +209,56 @@ export default function VINScannerScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const ctx = getVINLaunchContext();
     if (ctx === "add-load") {
-      // ── VIN match check: look for a pending/picked-up load whose last-6 VIN matches ──
       const match = matchPendingLoadByLast6(result.vin);
       if (match) {
-        // Show toast then navigate to the matched load's detail screen
         showMatchToast(match.loadNumber, match.loadId);
         return;
       }
-      // No match — show amber toast then navigate to add-load with vehicle pre-filled
+
+      if (getIsExclusiveDriver()) {
+        const label = [result.year, result.make, result.model].filter(Boolean).join(" ") || result.vin;
+        Alert.alert(
+          "No Matching Load",
+          `"${label}" doesn't match any assigned load.\n\nWhat would you like to do?`,
+          [
+            {
+              text: "Report to Company",
+              onPress: () => {
+                router.replace({
+                  pathname: "/field-pickup-report" as any,
+                  params: {
+                    vin: result.vin,
+                    year: result.year,
+                    make: result.make,
+                    model: result.model,
+                    bodyType: result.bodyType,
+                    engineSize: result.engineSize,
+                    trim: result.trim,
+                  },
+                });
+              },
+            },
+            {
+              text: "Create Local Load",
+              onPress: () => {
+                showNoMatchToast({
+                  prefillVin: result.vin,
+                  prefillYear: result.year,
+                  prefillMake: result.make,
+                  prefillModel: result.model,
+                  prefillBodyType: result.bodyType,
+                  prefillEngineSize: result.engineSize,
+                  prefillTrim: result.trim,
+                  prefillIsPartial: result.isPartial ? "1" : "0",
+                });
+              },
+            },
+            { text: "Cancel", style: "cancel" },
+          ],
+        );
+        return;
+      }
+
       showNoMatchToast({
         prefillVin: result.vin,
         prefillYear: result.year,
@@ -227,7 +270,6 @@ export default function VINScannerScreen() {
         prefillIsPartial: result.isPartial ? "1" : "0",
       });
     } else {
-      // Return to existing screen (inspection or load detail)
       deliverVINResult(result);
       router.back();
     }

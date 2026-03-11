@@ -18,14 +18,12 @@ import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import * as FileSystem from "expo-file-system/legacy";
 import { photoQueue } from "@/lib/photo-queue";
 import type { PhotoQueueEntry } from "@/lib/photo-queue";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
-import { trpc } from "@/lib/trpc";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -672,7 +670,6 @@ export default function InspectionScreen() {
   const { driver } = useAuth();
   const syncInspectionAction = useAction(api.platform.syncInspection);
   const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
-  const uploadPhotoMutation = trpc.photos.upload.useMutation();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
 
@@ -1065,27 +1062,16 @@ export default function InspectionScreen() {
       };
       savePickupInspection(loadId, vehicleId, inspection);
 
-      // 3. Upload local photos to S3 (skip already-uploaded http URLs)
-      const localPhotos = photos.filter((p) => !p.startsWith("http"));
-      const alreadyUploaded = photos.filter((p) => p.startsWith("http"));
-      const uploadedUrls: string[] = [...alreadyUploaded];
-
-      for (const uri of localPhotos) {
-        try {
-          const base64 = await FileSystem.readAsStringAsync(uri, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          const result = await uploadPhotoMutation.mutateAsync({
-            base64,
-            mimeType: "image/jpeg",
-            groupKey: `pickups/${loadId}`,
-          });
-          uploadedUrls.push(result.url);
-        } catch (uploadErr) {
-          console.warn("[CompletePickup] Photo upload failed:", uploadErr);
-          // Continue — we'll send whatever we have
-        }
+      // 3. Upload photos via the unified photo queue (handles compression + retry)
+      let uploadedUrls: string[] = [];
+      try {
+        uploadedUrls = await photoQueue.flushAndGetUrls(loadId, vehicleId);
+      } catch (flushErr) {
+        console.warn("[CompletePickup] Photo flush failed, retrying in background:", flushErr);
+        photoQueue.flushForVehicle(loadId, vehicleId).catch(() => {});
       }
+      const existingS3Urls = photos.filter((p) => p.startsWith("http"));
+      uploadedUrls = [...new Set([...existingS3Urls, ...uploadedUrls])];
 
       if (uploadedUrls.length === 0) {
         Alert.alert(

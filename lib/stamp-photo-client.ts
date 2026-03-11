@@ -13,9 +13,17 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
 import { buildStampLines, type StampOptions } from "./photo-stamp";
 
-const API_BASE =
-  (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_BASE_URL) ||
-  "http://127.0.0.1:3000";
+function getStampApiBase(): string {
+  const fromEnv =
+    typeof process !== "undefined" ? process.env?.EXPO_PUBLIC_API_BASE_URL : undefined;
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  try {
+    const { getApiBaseUrl } = require("@/constants/oauth");
+    const url = getApiBaseUrl();
+    if (url) return url;
+  } catch {}
+  return "http://127.0.0.1:3000";
+}
 
 const PHOTOS_DIR = (FileSystem.documentDirectory ?? "") + "inspection_photos/";
 
@@ -62,7 +70,8 @@ export async function stampPhotoViaServer(
       },
     });
 
-    const response = await fetch(`${API_BASE}/api/trpc/photos.stampPhoto?batch=1`, {
+    const apiBase = getStampApiBase();
+    const response = await fetch(`${apiBase}/api/trpc/photos.stampPhoto?batch=1`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

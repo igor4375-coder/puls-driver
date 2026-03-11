@@ -824,6 +824,39 @@ export default function LoadDetailScreen() {
   };
 
   const handleMarkDelivered = async () => {
+    // ── Alternate delivery option for all platform loads ──────────────────
+    if (isPlatformLoad) {
+      const destName = load.finalDestination?.name ?? load.delivery.contact.company ?? "delivery location";
+      const message = load.isFinalLeg === false
+        ? `This vehicle's final destination is ${destName}. You can deliver here or choose an alternate location.`
+        : `Deliver to ${destName}, or choose an alternate drop-off location?`;
+      Alert.alert(
+        "Delivery Options",
+        message,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Deliver Here",
+            onPress: () => proceedWithDelivery(),
+          },
+          {
+            text: "Other Location",
+            onPress: () => {
+              router.push(`/alternate-delivery/${load.id}` as any);
+            },
+          },
+        ],
+      );
+      return;
+    }
+    proceedWithDelivery();
+  };
+
+  const deliveryToastMsg = load.isFinalLeg === false
+    ? "Vehicle dropped at terminal — dispatch will assign the next leg"
+    : "Vehicle delivered to final destination";
+
+  const proceedWithDelivery = async () => {
     // ── GPS Proximity Check ──────────────────────────────────────────────
     // If the delivery destination has coordinates, compare against the
     // driver's current position. If > threshold miles away, warn the driver.
@@ -863,8 +896,8 @@ export default function LoadDetailScreen() {
                       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                       updateLoadStatus(load.id, "delivered");
                       setRequireDeliverySignature(false);
-                      pickupHighlightStore.signal("delivered", "Vehicle delivered — moved to Delivered tab");
-                      showToast("Vehicle delivered — moved to Delivered tab");
+                      pickupHighlightStore.signal("delivered", deliveryToastMsg);
+                      showToast(deliveryToastMsg);
                       router.back();
 
                       // Fire-and-forget: save signature record
@@ -921,8 +954,8 @@ export default function LoadDetailScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     updateLoadStatus(load.id, "delivered");
     setRequireDeliverySignature(false);
-    pickupHighlightStore.signal("delivered", "Vehicle delivered — moved to Delivered tab");
-    showToast("Vehicle delivered — moved to Delivered tab");
+    pickupHighlightStore.signal("delivered", deliveryToastMsg);
+    showToast(deliveryToastMsg);
     router.back();
 
     // Fire-and-forget: save signature record

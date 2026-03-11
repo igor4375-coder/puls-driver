@@ -82,6 +82,7 @@ export const getMyCompaniesByClerkUserId = query({
           linkId: link._id,
           companyId: link.companyId,
           status: link.status,
+          exclusive: link.exclusive ?? false,
           company: {
             name: company.name,
             companyCode: company.companyCode,
@@ -92,6 +93,37 @@ export const getMyCompaniesByClerkUserId = query({
       }
     }
     return results;
+  },
+});
+
+export const hasExclusiveLink = query({
+  args: { clerkUserId: v.string() },
+  handler: async (ctx, args) => {
+    const profile = await ctx.db
+      .query("driverProfiles")
+      .withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", args.clerkUserId))
+      .unique();
+
+    if (!profile) return { hasExclusive: false };
+
+    const links = await ctx.db
+      .query("driverCompanyLinks")
+      .withIndex("by_driverProfileId", (q) =>
+        q.eq("driverProfileId", profile._id),
+      )
+      .collect();
+
+    const exclusiveLink = links.find(
+      (l) => l.status === "active" && l.exclusive === true,
+    );
+
+    if (!exclusiveLink) return { hasExclusive: false };
+
+    const company = await ctx.db.get(exclusiveLink.companyId);
+    return {
+      hasExclusive: true,
+      companyName: company?.name ?? "Unknown",
+    };
   },
 });
 
@@ -123,6 +155,7 @@ export const acceptInviteLocally = mutation({
     clerkUserId: v.string(),
     companyCode: v.string(),
     companyName: v.string(),
+    exclusive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const profile = await ctx.db
@@ -158,6 +191,7 @@ export const acceptInviteLocally = mutation({
       if (existingLink.status !== "active") {
         await ctx.db.patch(existingLink._id, {
           status: "active",
+          exclusive: args.exclusive ?? false,
           respondedAt: Date.now(),
         });
       }
@@ -168,6 +202,7 @@ export const acceptInviteLocally = mutation({
       driverProfileId: profile._id,
       companyId: company._id,
       status: "active",
+      exclusive: args.exclusive ?? false,
       respondedAt: Date.now(),
     });
 

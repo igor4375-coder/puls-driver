@@ -274,7 +274,10 @@ export default function DeliverySignatureScreen() {
 
     // Update local state immediately
     updateLoadStatus(load.id, "delivered");
-    pickupHighlightStore.signal("delivered", "Vehicle delivered — moved to Delivered tab");
+    const toastMsg = load.isFinalLeg === false
+      ? "Vehicle dropped at terminal — dispatch will assign the next leg"
+      : "Vehicle delivered to final destination";
+    pickupHighlightStore.signal("delivered", toastMsg);
 
     // Navigate back to loads list
     router.back();

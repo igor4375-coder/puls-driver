@@ -265,16 +265,43 @@ export default function ProfileScreen() {
   );
   const connectionsLoading = myConnections === undefined && !!clerkUserId;
 
+  const exclusiveStatus = useQuery(
+    api.companies.hasExclusiveLink,
+    clerkUserId ? { clerkUserId } : "skip",
+  );
+  const activeCompanyCount = myConnections?.length ?? 0;
+
   // ── Respond to invite ──────────────────────────────────────────────────────
   const respondToInvitePlatform = useAction(api.platform.respondToInvite);
   const acceptInviteLocally = useMutation(api.companies.acceptInviteLocally);
 
-  const handleRespond = (inviteId: number | string, accept: boolean, companyName: string, companyCode?: string) => {
+  const handleRespond = (inviteId: number | string, accept: boolean, companyName: string, companyCode?: string, isExclusive?: boolean) => {
     if (!inviteCode || !clerkUserId) return;
+
+    if (accept) {
+      if (exclusiveStatus?.hasExclusive) {
+        Alert.alert(
+          "Exclusive Link Active",
+          `You are exclusively linked to ${exclusiveStatus.companyName}. Unlink from them first to accept invites from other companies.`,
+        );
+        return;
+      }
+
+      if (isExclusive && activeCompanyCount > 0) {
+        Alert.alert(
+          "Exclusive Invite",
+          `${companyName} requires exclusive access. Please unlink from all other companies first before accepting this invite.`,
+        );
+        return;
+      }
+    }
+
     Alert.alert(
       accept ? `Join ${companyName}?` : `Decline ${companyName}?`,
       accept
-        ? `You will be added as an Active Driver for ${companyName} and can receive load assignments from them.`
+        ? isExclusive
+          ? `You will be added as an EXCLUSIVE driver for ${companyName}. You won't be able to accept invites from other companies while linked.`
+          : `You will be added as an Active Driver for ${companyName} and can receive load assignments from them.`
         : `You will decline the invitation from ${companyName}.`,
       [
         { text: "Cancel", style: "cancel" },
@@ -288,6 +315,7 @@ export default function ProfileScreen() {
                 inviteId,
                 accept,
                 driverCode: inviteCode,
+                exclusive: isExclusive ?? false,
               });
 
               if (accept && companyName) {
@@ -296,6 +324,7 @@ export default function ProfileScreen() {
                     clerkUserId,
                     companyCode: companyCode || "UNKNOWN",
                     companyName,
+                    exclusive: isExclusive ?? false,
                   });
                 } catch (linkErr) {
                   console.warn("[Profile] Failed to create local company link:", linkErr);
@@ -466,52 +495,71 @@ export default function ProfileScreen() {
                 <Text style={[styles.loadingText, { color: colors.muted }]}>Checking for invitations…</Text>
               </View>
             ) : (
-              pendingInvites.map((invite: any, index: number) => (
-                <View
-                  key={String(invite.inviteId)}
-                  style={[styles.inviteRow, { borderTopColor: colors.border }, index > 0 && { borderTopWidth: 0.5 }]}
-                >
-                  <View style={styles.inviteRowTop}>
-                    <View style={[styles.inviteIcon, { backgroundColor: colors.warning + "18" }]}>
-                      <IconSymbol name="envelope.fill" size={18} color={colors.warning} />
+              pendingInvites.map((invite: any, index: number) => {
+                const isBlocked =
+                  (exclusiveStatus?.hasExclusive === true) ||
+                  (invite.exclusive === true && activeCompanyCount > 0);
+                return (
+                  <View
+                    key={String(invite.inviteId)}
+                    style={[styles.inviteRow, { borderTopColor: colors.border }, index > 0 && { borderTopWidth: 0.5 }]}
+                  >
+                    <View style={styles.inviteRowTop}>
+                      <View style={[styles.inviteIcon, { backgroundColor: colors.warning + "18" }]}>
+                        <IconSymbol name="envelope.fill" size={18} color={colors.warning} />
+                      </View>
+                      <View style={styles.inviteInfo}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Text style={[styles.inviteCompanyName, { color: colors.foreground }]}>{invite.companyName}</Text>
+                          {invite.exclusive && (
+                            <View style={[styles.exclusiveBadge, { backgroundColor: "#E65100" }]}>
+                              <Text style={styles.exclusiveBadgeText}>Exclusive</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={[styles.inviteCompanyCode, { color: colors.muted }]}>{invite.companyCode}</Text>
+                      </View>
                     </View>
-                    <View style={styles.inviteInfo}>
-                      <Text style={[styles.inviteCompanyName, { color: colors.foreground }]}>{invite.companyName}</Text>
-                      <Text style={[styles.inviteCompanyCode, { color: colors.muted }]}>{invite.companyCode}</Text>
+                    {invite.message ? (
+                      <Text style={[styles.inviteMessage, { color: colors.muted }]}>"{invite.message}"</Text>
+                    ) : null}
+                    {isBlocked && (
+                      <Text style={[styles.inviteBlockedText, { color: colors.error }]}>
+                        {exclusiveStatus?.hasExclusive
+                          ? `You are exclusively linked to ${exclusiveStatus.companyName}. Unlink first to accept.`
+                          : `This company requires exclusive access. Unlink from all other companies first.`}
+                      </Text>
+                    )}
+                    <View style={styles.inviteActions}>
+                      <TouchableOpacity
+                        style={[styles.declineBtn, { borderColor: colors.error + "60" }]}
+                        onPress={() => handleRespond(invite.inviteId, false, invite.companyName, invite.companyCode, invite.exclusive)}
+                        activeOpacity={0.7}
+                        disabled={respondingId === invite.inviteId}
+                      >
+                        {respondingId === invite.inviteId ? (
+                          <ActivityIndicator size="small" color={colors.error} />
+                        ) : (
+                          <Text style={[styles.declineBtnText, { color: colors.error }]}>Decline</Text>
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.acceptBtn, { backgroundColor: isBlocked ? colors.border : colors.success, opacity: isBlocked ? 0.5 : 1 }]}
+                        onPress={() => handleRespond(invite.inviteId, true, invite.companyName, invite.companyCode, invite.exclusive)}
+                        activeOpacity={0.8}
+                        disabled={respondingId === invite.inviteId || isBlocked}
+                      >
+                        {respondingId === invite.inviteId ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.acceptBtnText}>Accept</Text>
+                        )}
+                      </TouchableOpacity>
                     </View>
                   </View>
-                  {invite.message ? (
-                    <Text style={[styles.inviteMessage, { color: colors.muted }]}>"{invite.message}"</Text>
-                  ) : null}
-                  <View style={styles.inviteActions}>
-                    <TouchableOpacity
-                      style={[styles.declineBtn, { borderColor: colors.error + "60" }]}
-                      onPress={() => handleRespond(invite.inviteId, false, invite.companyName, invite.companyCode)}
-                      activeOpacity={0.7}
-                      disabled={respondingId === invite.inviteId}
-                    >
-                      {respondingId === invite.inviteId ? (
-                        <ActivityIndicator size="small" color={colors.error} />
-                      ) : (
-                        <Text style={[styles.declineBtnText, { color: colors.error }]}>Decline</Text>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.acceptBtn, { backgroundColor: colors.success }]}
-                      onPress={() => handleRespond(invite.inviteId, true, invite.companyName, invite.companyCode)}
-                      activeOpacity={0.8}
-                      disabled={respondingId === invite.inviteId}
-                    >
-                      {respondingId === invite.inviteId ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <Text style={styles.acceptBtnText}>Accept</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
-            )}
+                );
+              }))
+            }
           </View>
         )}
 
@@ -1232,6 +1280,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontStyle: "italic",
+    paddingLeft: 52,
+  },
+  exclusiveBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  exclusiveBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  inviteBlockedText: {
+    fontSize: 12,
+    lineHeight: 17,
     paddingLeft: 52,
   },
   inviteActions: {

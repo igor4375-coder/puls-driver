@@ -34,7 +34,9 @@ import {
   formatDate,
   getPaymentLabel,
 } from "@/lib/data";
-import { setVINLaunchContext, setPendingLoadVINs } from "@/lib/vin-store";
+import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
+import { useQuery as useConvexQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { trpc } from "@/lib/trpc";
 import { useSettings } from "@/lib/settings-context";
@@ -429,6 +431,10 @@ export default function LoadsScreen() {
     );
   }, [deleteLoad]);
   const { driver } = useAuth();
+  const exclusiveStatus = useConvexQuery(
+    api.companies.hasExclusiveLink,
+    driver?.id ? { clerkUserId: driver.id } : "skip",
+  );
   const [activeTab, setActiveTab] = useState<TabFilter>("new");
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -589,8 +595,6 @@ export default function LoadsScreen() {
 
   const handleScanVIN = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Populate pending load VINs so the scanner can match against them
-    // Match against both pending (new) and in-transit (picked_up) loads
     const pendingLoads = loads.filter((l) => l.status === "new" || l.status === "picked_up");
     const pendingVINs = pendingLoads.flatMap((l) =>
       l.vehicles
@@ -598,7 +602,8 @@ export default function LoadsScreen() {
         .map((v) => ({ loadId: l.id, vin: v.vin!, loadNumber: l.loadNumber }))
     );
     setPendingLoadVINs(pendingVINs);
-    setVINLaunchContext("add-load"); // after confirm, navigate to add-load with prefill (fallback if no match)
+    setIsExclusiveDriver(exclusiveStatus?.hasExclusive === true);
+    setVINLaunchContext("add-load");
     router.push("/vin-scanner" as any);
   };
 

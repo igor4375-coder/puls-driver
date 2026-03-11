@@ -141,9 +141,16 @@ export default function MyCompaniesScreen() {
               <IconSymbol name="building.2.fill" size={24} color={colors.primary} />
             </View>
             <View style={styles.companyInfo}>
-              <Text style={[styles.companyName, { color: colors.foreground }]}>
-                {item.company?.name ?? "Unknown Company"}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={[styles.companyName, { color: colors.foreground }]}>
+                  {item.company?.name ?? "Unknown Company"}
+                </Text>
+                {item.exclusive && (
+                  <View style={[styles.exclusiveBadge, { backgroundColor: "#E65100" }]}>
+                    <Text style={styles.exclusiveBadgeText}>Exclusive</Text>
+                  </View>
+                )}
+              </View>
               <View style={styles.companyMeta}>
                 {item.company?.companyCode ? (
                   <View style={[styles.companyCodeBadge, { backgroundColor: colors.primary + "15" }]}>
@@ -319,6 +326,17 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 12,
     fontWeight: "600",
+  },
+  exclusiveBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  exclusiveBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
   },
   leaveBtn: {
     paddingHorizontal: 14,

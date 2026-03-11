@@ -91,6 +91,8 @@ function AppContent() {
             <Stack.Screen name="vin-scanner" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="add-load" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="camera-session" options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }} />
+            <Stack.Screen name="alternate-delivery/[loadId]" options={{ presentation: "modal" }} />
+            <Stack.Screen name="field-pickup-report" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="oauth/callback" />
           </Stack>
           <SyncStatusBanner />

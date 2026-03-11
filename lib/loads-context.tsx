@@ -67,6 +67,18 @@ export interface PlatformLoad {
   gatePassUrl?: string | null;
   /** ISO 8601 date string for storage expiry / gate pass expiry */
   storageExpiryDate?: string | null;
+  /** Company org ID — needed for getLocations filter */
+  orgId?: string;
+  /** True if this leg's dropoff IS the order's final destination */
+  isFinalLeg?: boolean;
+  /** The order's ultimate destination */
+  finalDestination?: {
+    id: string;
+    name: string;
+    address: string;
+    city: string;
+    province: string;
+  };
 }
 
 /**
@@ -232,7 +244,10 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
     gatePassUrl: pl.gatePassUrl ?? null,
     gatePassExpiresAt: pl.storageExpiryDate ? parsePlatformDate(pl.storageExpiryDate) || pl.storageExpiryDate : null,
     storageExpiryDate: pl.storageExpiryDate ? parsePlatformDate(pl.storageExpiryDate) || pl.storageExpiryDate : null,
-  } as Load & { platformTripId: number };
+    orgId: pl.orgId,
+    isFinalLeg: pl.isFinalLeg,
+    finalDestination: pl.finalDestination,
+  } as Load & { platformTripId: number | string };
 }
 
 // ─── Context types ────────────────────────────────────────────────────────────

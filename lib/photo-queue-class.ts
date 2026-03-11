@@ -14,6 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Network from "expo-network";
 import { Platform } from "react-native";
+import { compressImage } from "./image-compress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,10 +41,17 @@ const MAX_RETRIES = 10; // Keep retrying until success (up to 10 attempts)
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000]; // escalating backoff
 const BACKGROUND_INTERVAL_MS = 20_000; // Check for pending uploads every 20 seconds
 
-// Allow overriding the API base in tests via env
-const API_BASE =
-  (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_API_BASE_URL) ||
-  "http://127.0.0.1:3000";
+function getUploadApiBase(): string {
+  const fromEnv =
+    typeof process !== "undefined" ? process.env?.EXPO_PUBLIC_API_BASE_URL : undefined;
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  try {
+    const { getApiBaseUrl } = require("@/constants/oauth");
+    const url = getApiBaseUrl();
+    if (url) return url;
+  } catch {}
+  return "http://127.0.0.1:3000";
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -270,10 +278,13 @@ export class PhotoQueue {
     this.updateEntry(entry.clientId, { status: "uploading" });
 
     try {
+      // Compress before reading as base64 (reduces payload ~10-15x)
+      const compressedUri = await compressImage(entry.localUri);
+
       let base64: string;
 
       if (Platform.OS === "web") {
-        const resp = await fetch(entry.localUri);
+        const resp = await fetch(compressedUri);
         const blob = await resp.blob();
         base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -285,16 +296,15 @@ export class PhotoQueue {
           reader.readAsDataURL(blob);
         });
       } else {
-        base64 = await FileSystem.readAsStringAsync(entry.localUri, {
+        base64 = await FileSystem.readAsStringAsync(compressedUri, {
           encoding: FileSystem.EncodingType.Base64,
         });
       }
 
-      const ext = entry.localUri.split(".").pop()?.toLowerCase() ?? "jpg";
-      const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+      const mimeType = "image/jpeg";
       const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || undefined;
+      const apiBase = getUploadApiBase();
 
-      // tRPC v11 batch mutation format: POST /api/trpc/photos.upload?batch=1
       const body = JSON.stringify({
         "0": {
           json: {
@@ -306,7 +316,7 @@ export class PhotoQueue {
         },
       });
 
-      const response = await fetch(`${API_BASE}/api/trpc/photos.upload?batch=1`, {
+      const response = await fetch(`${apiBase}/api/trpc/photos.upload?batch=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,

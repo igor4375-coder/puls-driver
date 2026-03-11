@@ -143,9 +143,20 @@ export const markAsDelivered = action({
     deliveryTime: v.string(),
     deliveryGPS: v.object({ lat: v.number(), lng: v.number() }),
     deliveryPhotos: v.array(v.string()),
+    alternateDropLocationId: v.optional(v.string()),
+    newLocation: v.optional(
+      v.object({
+        name: v.string(),
+        address: v.optional(v.string()),
+        city: v.string(),
+        province: v.string(),
+        lat: v.optional(v.number()),
+        lng: v.optional(v.number()),
+      }),
+    ),
   },
   handler: async (_ctx, args) => {
-    const payload = {
+    const payload: Record<string, unknown> = {
       loadId: args.loadNumber,
       legId: args.legId,
       driverCode: args.driverCode,
@@ -154,6 +165,12 @@ export const markAsDelivered = action({
       gpsLongitude: args.deliveryGPS.lng,
       photos: args.deliveryPhotos,
     };
+    if (args.alternateDropLocationId) {
+      payload.alternateDropLocationId = args.alternateDropLocationId;
+    }
+    if (args.newLocation) {
+      payload.newLocation = args.newLocation;
+    }
     return await callTRPC("driversApi.markAsDelivered", payload, "mutation");
   },
 });
@@ -210,6 +227,7 @@ export const respondToInvite = action({
     inviteId: v.union(v.number(), v.string()),
     accept: v.boolean(),
     driverCode: v.string(),
+    exclusive: v.optional(v.boolean()),
   },
   handler: async (_ctx, args) => {
     return await callTRPC("driversApi.respondToInvite", args, "mutation");
@@ -280,13 +298,38 @@ export const registerPushToken = action({
 });
 
 export const getLocations = action({
-  handler: async () => {
+  args: { orgId: v.optional(v.string()) },
+  handler: async (_ctx, args) => {
     if (!BASE_URL) return [];
     try {
-      return await callTRPC<unknown[]>("driversApi.getLocations", {}, "query");
+      const input: Record<string, string> = {};
+      if (args.orgId) input.orgId = args.orgId;
+      return await callTRPC<unknown[]>("driversApi.getLocations", input, "query");
     } catch {
       return [];
     }
+  },
+});
+
+export const reportFieldPickup = action({
+  args: {
+    driverCode: v.string(),
+    vin: v.string(),
+    year: v.optional(v.string()),
+    make: v.optional(v.string()),
+    model: v.optional(v.string()),
+    bodyType: v.optional(v.string()),
+    color: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    photoUrls: v.optional(v.array(v.string())),
+    gpsLat: v.optional(v.number()),
+    gpsLng: v.optional(v.number()),
+    gpsAddress: v.optional(v.string()),
+    reportedAt: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    if (!BASE_URL) throw new Error("Company platform URL not configured");
+    return await callTRPC("driversApi.reportFieldPickup", args, "mutation");
   },
 });
 

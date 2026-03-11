@@ -53,6 +53,7 @@ export default defineSchema({
       v.literal("declined"),
       v.literal("removed"),
     ),
+    exclusive: v.optional(v.boolean()),
     respondedAt: v.optional(v.number()),
   })
     .index("by_driverProfileId", ["driverProfileId"])
@@ -99,4 +100,57 @@ export default defineSchema({
   })
     .index("by_loadId", ["loadId"])
     .index("by_driverCode", ["driverCode"]),
+
+  inspectionPhotos: defineTable({
+    loadId: v.string(),
+    vehicleId: v.string(),
+    driverCode: v.string(),
+    inspectionType: v.union(v.literal("pickup"), v.literal("delivery")),
+    zone: v.optional(v.string()),
+    damageId: v.optional(v.string()),
+    storageKey: v.string(),
+    thumbnailKey: v.optional(v.string()),
+    url: v.string(),
+    thumbnailUrl: v.optional(v.string()),
+    fileSizeBytes: v.optional(v.number()),
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
+    gpsLat: v.optional(v.float64()),
+    gpsLng: v.optional(v.float64()),
+    capturedAt: v.string(),
+    uploadedAt: v.string(),
+    clientId: v.string(),
+  })
+    .index("by_load_vehicle", ["loadId", "vehicleId"])
+    .index("by_load_type", ["loadId", "inspectionType"])
+    .index("by_clientId", ["clientId"])
+    .index("by_driverCode", ["driverCode"]),
+
+  fieldPickups: defineTable({
+    driverCode: v.string(),
+    clerkUserId: v.string(),
+    vin: v.string(),
+    year: v.optional(v.string()),
+    make: v.optional(v.string()),
+    model: v.optional(v.string()),
+    bodyType: v.optional(v.string()),
+    color: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    photoUrls: v.optional(v.array(v.string())),
+    gpsLat: v.optional(v.float64()),
+    gpsLng: v.optional(v.float64()),
+    gpsAddress: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending_sync"),
+      v.literal("synced"),
+      v.literal("failed"),
+    ),
+    platformResponse: v.optional(v.string()),
+    reportedAt: v.string(),
+    syncedAt: v.optional(v.string()),
+  })
+    .index("by_driverCode", ["driverCode"])
+    .index("by_clerkUserId", ["clerkUserId"])
+    .index("by_vin", ["vin"])
+    .index("by_status", ["status"]),
 });
