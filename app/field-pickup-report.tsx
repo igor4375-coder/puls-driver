@@ -10,8 +10,8 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Image,
 } from "react-native";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { useFocusEffect } from "expo-router";
 import { LocationsMapModal, type MapPin } from "@/components/locations-map-modal";
 import {
@@ -35,6 +35,7 @@ import {
   getPaymentLabel,
 } from "@/lib/data";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
+import { usePermissions } from "@/lib/permissions-context";
 import { useQuery as useConvexQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -75,18 +76,12 @@ function StatusBadge({ status }: { status: LoadStatus }) {
 
 // ─── Load Card ────────────────────────────────────────────────────────────────
 
-function LoadCard({ load, onPress, onDelete }: { load: Load; onPress: () => void; onDelete?: () => void }) {
+const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchive, pendingCount = 0, failedCount = 0 }: {
+  load: Load; onPress: () => void; onDelete?: () => void; onArchive?: () => void; pendingCount?: number; failedCount?: number;
+}) {
   const colors = useColors();
+  const { canViewRates } = usePermissions();
   const { settings } = useSettings();
-  const { entries: queueEntries } = usePhotoQueue();
-
-  // Count pending/uploading photos for this specific load
-  const pendingCount = queueEntries.filter(
-    (e) => e.loadId === load.id && (e.status === "pending" || e.status === "uploading")
-  ).length;
-  const failedCount = queueEntries.filter(
-    (e) => e.loadId === load.id && e.status === "failed"
-  ).length;
   const vehicleCount = load.vehicles.length;
   const isPlatformLoad = load.id.startsWith("platform-");
 
@@ -110,8 +105,8 @@ function LoadCard({ load, onPress, onDelete }: { load: Load; onPress: () => void
     load.status === "delivered" ? colors.success :
     colors.muted;
 
-  // Only non-platform loads can be deleted
   const isDeletable = onDelete && !load.id.startsWith("platform-");
+  const isArchivable = onArchive && load.status === "delivered";
 
   const renderRightActions = () => (
     <TouchableOpacity
@@ -121,6 +116,17 @@ function LoadCard({ load, onPress, onDelete }: { load: Load; onPress: () => void
     >
       <IconSymbol name="trash.fill" size={22} color="#FFFFFF" />
       <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700", marginTop: 4 }}>Delete</Text>
+    </TouchableOpacity>
+  );
+
+  const renderArchiveAction = () => (
+    <TouchableOpacity
+      style={[styles.deleteAction, { backgroundColor: "#607D8B" }]}
+      onPress={onArchive}
+      activeOpacity={0.85}
+    >
+      <IconSymbol name="archivebox.fill" size={22} color="#FFFFFF" />
+      <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700", marginTop: 4 }}>Archive</Text>
     </TouchableOpacity>
   );
 
@@ -181,9 +187,13 @@ function LoadCard({ load, onPress, onDelete }: { load: Load; onPress: () => void
         )}
 
         <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
-          <Text style={[styles.payAmount, { color: colors.primary }]}>
-            {formatCurrency(load.driverPay)}
-          </Text>
+          {canViewRates ? (
+            <Text style={[styles.payAmount, { color: colors.primary }]}>
+              {formatCurrency(load.driverPay)}
+            </Text>
+          ) : (
+            <View />
+          )}
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {load.gatePassUrl ? (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.primary + "18", borderRadius: 10, paddingHorizontal: 7, paddingVertical: 3 }}>
@@ -235,8 +245,21 @@ function LoadCard({ load, onPress, onDelete }: { load: Load; onPress: () => void
     );
   }
 
+  if (isArchivable) {
+    return (
+      <ReanimatedSwipeable
+        renderRightActions={renderArchiveAction}
+        rightThreshold={60}
+        overshootRight={false}
+        friction={2}
+      >
+        {card}
+      </ReanimatedSwipeable>
+    );
+  }
+
   return card;
-}
+});
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
@@ -405,7 +428,8 @@ function FAB({ onAddLoad, onScanVIN }: { onAddLoad: () => void; onScanVIN: () =>
 
 export default function LoadsScreen() {
   const colors = useColors();
-  const { loads, isLoadingPlatformLoads, refreshPlatformLoads, deleteLoad, clearNonPlatformLoads } = useLoads();
+  const { canViewRates } = usePermissions();
+  const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived } = useLoads();
 
   const handleDeleteLoad = useCallback((load: Load) => {
     if (load.id.startsWith("platform-")) return; // safety guard
@@ -431,6 +455,17 @@ export default function LoadsScreen() {
     );
   }, [deleteLoad]);
   const { driver } = useAuth();
+  const { entries: queueEntries } = usePhotoQueue();
+  const queueCountsByLoad = useMemo(() => {
+    const map: Record<string, { pending: number; failed: number }> = {};
+    for (const e of queueEntries) {
+      if (!e.loadId) continue;
+      if (!map[e.loadId]) map[e.loadId] = { pending: 0, failed: 0 };
+      if (e.status === "pending" || e.status === "uploading") map[e.loadId].pending++;
+      else if (e.status === "failed") map[e.loadId].failed++;
+    }
+    return map;
+  }, [queueEntries]);
   const exclusiveStatus = useConvexQuery(
     api.companies.hasExclusiveLink,
     driver?.id ? { clerkUserId: driver.id } : "skip",
@@ -599,7 +634,7 @@ export default function LoadsScreen() {
     const pendingVINs = pendingLoads.flatMap((l) =>
       l.vehicles
         .filter((v) => v.vin && v.vin.trim().length >= 6)
-        .map((v) => ({ loadId: l.id, vin: v.vin!, loadNumber: l.loadNumber }))
+        .map((v) => ({ loadId: l.id, vin: v.vin as string, loadNumber: l.loadNumber }))
     );
     setPendingLoadVINs(pendingVINs);
     setIsExclusiveDriver(exclusiveStatus?.hasExclusive === true);
@@ -924,6 +959,69 @@ export default function LoadsScreen() {
           </View>
         )}
 
+        {/* Action bar for Delivered / Archived tabs */}
+        {activeTab === "delivered" && baseFilteredLoads.length > 0 && (
+          <View style={[styles.tabActionBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text style={[styles.tabActionCount, { color: colors.muted }]}>
+              {baseFilteredLoads.length} delivered load{baseFilteredLoads.length !== 1 ? "s" : ""}
+            </Text>
+            <TouchableOpacity
+              style={[styles.tabActionBtn, { backgroundColor: "#607D8B18" }]}
+              activeOpacity={0.7}
+              onPress={() => {
+                Alert.alert(
+                  "Archive All Delivered",
+                  `Move ${baseFilteredLoads.length} delivered load${baseFilteredLoads.length !== 1 ? "s" : ""} to the Archived tab?`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Archive All",
+                      onPress: () => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        archiveAllDelivered();
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <IconSymbol name="archivebox.fill" size={14} color="#607D8B" />
+              <Text style={[styles.tabActionBtnText, { color: "#607D8B" }]}>Archive All</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {activeTab === "archived" && baseFilteredLoads.length > 0 && (
+          <View style={[styles.tabActionBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <Text style={[styles.tabActionCount, { color: colors.muted }]}>
+              {baseFilteredLoads.length} archived load{baseFilteredLoads.length !== 1 ? "s" : ""}
+            </Text>
+            <TouchableOpacity
+              style={[styles.tabActionBtn, { backgroundColor: colors.error + "14" }]}
+              activeOpacity={0.7}
+              onPress={() => {
+                Alert.alert(
+                  "Clear All Archived",
+                  `Permanently remove ${baseFilteredLoads.length} archived load${baseFilteredLoads.length !== 1 ? "s" : ""} from this device?\n\nThis only clears your local history — it does not affect the company platform.`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Clear All",
+                      style: "destructive",
+                      onPress: () => {
+                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                        clearAllArchived();
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <IconSymbol name="trash.fill" size={14} color={colors.error} />
+              <Text style={[styles.tabActionBtnText, { color: colors.error }]}>Clear All</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Swipe indicator dots — shows current tab position and hints at swipe navigation */}
         <View style={styles.swipeDots}>
           {TAB_ORDER.map((tab) => (
@@ -998,6 +1096,16 @@ export default function LoadsScreen() {
           dropoffPins={tabStats.dropoffPins ?? []}
           initialMode={mapModal?.type ?? "pickup"}
         />
+        {/* Offline / stale data banner */}
+        {platformLoadError && !isLoadingPlatformLoads && (
+          <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
+            <Text style={[styles.offlineBannerText, { color: colors.warning }]}>
+              {lastSyncedAt
+                ? `Offline — showing cached data from ${lastSyncedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                : "Unable to reach server — showing cached data"}
+            </Text>
+          </View>
+        )}
         {/* Loads List — wrapped in swipe gesture handler */}
         <Animated.View
           style={{ flex: 1, transform: [{ translateX: slideAnim }] }}
@@ -1006,14 +1114,26 @@ export default function LoadsScreen() {
           <FlatList
             data={filteredLoads}
             keyExtractor={(item) => item.id}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
             contentContainerStyle={[styles.listContent, { paddingBottom: 120 }]}
-            renderItem={({ item }) => (
-              <LoadCard
-                load={item}
-                onPress={() => handleLoadPress(item)}
-                onDelete={!item.id.startsWith("platform-") ? () => handleDeleteLoad(item) : undefined}
-              />
-            )}
+            renderItem={({ item }) => {
+              const counts = queueCountsByLoad[item.id];
+              return (
+                <LoadCard
+                  load={item}
+                  onPress={() => handleLoadPress(item)}
+                  onDelete={!item.id.startsWith("platform-") ? () => handleDeleteLoad(item) : undefined}
+                  onArchive={item.status === "delivered" ? () => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    archiveSingleLoad(item.id);
+                  } : undefined}
+                  pendingCount={counts?.pending ?? 0}
+                  failedCount={counts?.failed ?? 0}
+                />
+              );
+            }}
             ListEmptyComponent={
               searchQuery.trim() && (activeTab === "delivered" || activeTab === "archived") ? (
                 <View style={styles.emptyState}>
@@ -1098,6 +1218,19 @@ export default function LoadsScreen() {
 }
 
 const styles = StyleSheet.create({
+  offlineBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+  },
+  offlineBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
   header: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -1545,5 +1678,29 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     lineHeight: 12,
+  },
+  tabActionBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  tabActionCount: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  tabActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  tabActionBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
 });

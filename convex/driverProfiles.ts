@@ -95,6 +95,7 @@ export const updateProfile = mutation({
     notifyStorageExpiry: v.optional(v.boolean()),
     pushToken: v.optional(v.string()),
     platformDriverCode: v.optional(v.string()),
+    monthlyRevenueGoal: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const profile = await ctx.db

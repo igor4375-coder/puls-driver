@@ -51,8 +51,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="drivers"
         options={{
-          title: "Drivers",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.fill" color={color} />,
+          title: "Dashboard",
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="chart.bar.fill" color={color} />,
         }}
       />
       <Tabs.Screen

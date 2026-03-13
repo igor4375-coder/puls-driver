@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Platform } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
@@ -17,7 +18,6 @@ export default function WelcomeScreen() {
   const [error, setError] = useState("");
 
   if (isSignedIn) {
-    while (router.canGoBack()) router.back();
     router.replace("/(tabs)");
     return null;
   }
@@ -78,7 +78,7 @@ export default function WelcomeScreen() {
           <Image
             source={require("@/assets/images/icon.png")}
             style={styles.logo}
-            resizeMode="contain"
+            contentFit="contain"
           />
         </View>
         <Text style={styles.appName}>AutoHaul Driver</Text>

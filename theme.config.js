@@ -11,6 +11,7 @@ const themeColors = {
   error: { light: '#DC2626', dark: '#EF4444' },
   accent: { light: '#F97316', dark: '#FB923C' },
   tint: { light: '#1A3C5E', dark: '#2563EB' },
+  card: { light: '#FFFFFF', dark: '#1A2535' },
 };
 
 module.exports = { themeColors };

@@ -2,7 +2,6 @@ import React, { useState, useRef } from "react";
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
@@ -504,7 +504,7 @@ export default function AddLoadScreen() {
       mediaTypes: ["images"],
       quality: 0.8,
     });
-    if (!result.canceled) {
+    if (!result.canceled && result.assets?.[0]) {
       setAttachments((prev) => [...prev, result.assets[0].uri]);
     }
   };

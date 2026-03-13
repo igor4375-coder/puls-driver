@@ -42,6 +42,9 @@ export default function NotificationsScreen() {
       <FlatList
         data={MOCK_NOTIFICATIONS}
         keyExtractor={(item) => item.id}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <View style={[

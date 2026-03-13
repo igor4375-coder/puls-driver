@@ -106,6 +106,8 @@ export const syncInspection = action({
     gps: v.object({ lat: v.number(), lng: v.number() }),
     timestamp: v.string(),
     notes: v.optional(v.string()),
+    handoffNote: v.optional(v.string()),
+    additionalInspection: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
     return await callTRPC("driversApi.syncInspection", args, "mutation");
@@ -330,6 +332,26 @@ export const reportFieldPickup = action({
   handler: async (_ctx, args) => {
     if (!BASE_URL) throw new Error("Company platform URL not configured");
     return await callTRPC("driversApi.reportFieldPickup", args, "mutation");
+  },
+});
+
+export const getDriverPermissions = action({
+  args: { driverCode: v.string() },
+  handler: async (_ctx, args) => {
+    if (!BASE_URL) return { canViewRates: true, exclusive: false };
+    try {
+      const result = await callTRPC<{ canViewRates?: boolean; exclusive?: boolean }>(
+        "driversApi.getDriverPermissions",
+        { driverCode: args.driverCode },
+        "query",
+      );
+      return {
+        canViewRates: result?.canViewRates !== false,
+        exclusive: result?.exclusive === true,
+      };
+    } catch {
+      return { canViewRates: true, exclusive: false };
+    }
   },
 });
 

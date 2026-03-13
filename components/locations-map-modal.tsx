@@ -312,6 +312,9 @@ export function LocationsMapModal({
               <FlatList
                 data={selectedCluster.vehicles}
                 keyExtractor={(item, i) => item.vehicleKey ?? `v-${i}`}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
                 style={styles.vehicleScroll}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item, index }) => (

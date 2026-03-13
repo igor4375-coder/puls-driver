@@ -8,13 +8,13 @@ import {
   TouchableOpacity,
   TextInput,
   StyleSheet,
-  Image,
   Dimensions,
   FlatList,
   Alert,
   Modal,
   Platform,
 } from "react-native";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
@@ -336,7 +336,7 @@ function DamageModal({
     setPickingPhoto(true);
     try {
       const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 1 });  // No compression
-      if (!result.canceled) {
+      if (!result.canceled && result.assets?.[0]) {
         setDamagePhotos((prev) => [...prev, result.assets[0].uri]);
       }
     } finally {
@@ -736,6 +736,9 @@ export default function InspectionReviewScreen() {
                   ref={mainListRef}
                   data={photos}
                   keyExtractor={(_, i) => `main-${i}`}
+                  initialNumToRender={10}
+                  maxToRenderPerBatch={10}
+                  windowSize={5}
                   horizontal
                   pagingEnabled
                   showsHorizontalScrollIndicator={false}
@@ -743,7 +746,7 @@ export default function InspectionReviewScreen() {
                   getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
                   renderItem={({ item }) => (
                     <View style={{ width: SCREEN_WIDTH, height: MAIN_IMAGE_HEIGHT }}>
-                      <Image source={{ uri: item }} style={s.mainImage} resizeMode="cover" />
+                      <Image source={{ uri: item }} style={s.mainImage} contentFit="cover" />
                     </View>
                   )}
                 />
@@ -759,6 +762,9 @@ export default function InspectionReviewScreen() {
                 ref={thumbListRef}
                 data={photos}
                 keyExtractor={(_, i) => `thumb-${i}`}
+                initialNumToRender={15}
+                maxToRenderPerBatch={10}
+                windowSize={5}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={s.thumbStrip}
@@ -768,7 +774,7 @@ export default function InspectionReviewScreen() {
                     activeOpacity={0.85}
                     style={[s.thumbWrap, index === selectedIndex && { borderColor: colors.primary, borderWidth: 2.5 }]}
                   >
-                    <Image source={{ uri: item }} style={s.thumbImage} resizeMode="cover" />
+                    <Image source={{ uri: item }} style={s.thumbImage} contentFit="cover" />
                   </TouchableOpacity>
                 )}
               />

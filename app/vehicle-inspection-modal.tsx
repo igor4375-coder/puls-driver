@@ -8,9 +8,9 @@ import {
   StyleSheet,
   Modal,
   Alert,
-  Image,
   Platform,
 } from "react-native";
+import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/use-colors";

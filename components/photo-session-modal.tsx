@@ -212,7 +212,7 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
         style: "destructive",
         onPress: () => {
           setItems((prev) => prev.filter((i) => i.uri !== item.uri));
-          if (item.clientId) photoQueue.remove(item.clientId).catch(() => {});
+          if (item.clientId) photoQueue.remove(item.clientId).catch((err) => console.warn("[PhotoSession]", err));
         },
       },
     ]);
@@ -355,6 +355,9 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
         <FlatList
           data={[...items].reverse()}
           keyExtractor={(item, idx) => item.uri + idx}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           style={s.thumbScroll}
           contentContainerStyle={s.thumbScrollContent}
           showsVerticalScrollIndicator={false}

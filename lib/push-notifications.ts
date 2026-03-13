@@ -82,17 +82,20 @@ export function setupNotificationResponseListener(): () => void {
     const data = response.notification.request.content.data as Record<string, unknown>;
     const type = data?.type as string | undefined;
 
-    if (type === "invite") {
-      // Navigate to profile tab where pending invites are shown
-      router.push("/(tabs)/profile");
-    } else if (type === "load_assigned") {
-      const loadId = data?.loadId as string | undefined;
-      if (loadId) {
-        router.push("/(tabs)" as any);
-      } else {
-        router.push("/(tabs)");
+    // Delay navigation to allow the stack to initialize when app was cold-started from notification
+    setTimeout(() => {
+      if (type === "invite") {
+        // Navigate to profile tab where pending invites are shown
+        router.push("/(tabs)/profile");
+      } else if (type === "load_assigned") {
+        const loadId = data?.loadId as string | undefined;
+        if (loadId) {
+          router.push("/(tabs)" as any);
+        } else {
+          router.push("/(tabs)");
+        }
       }
-    }
+    }, 500);
   });
 
   return () => subscription.remove();

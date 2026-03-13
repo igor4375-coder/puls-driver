@@ -82,6 +82,8 @@ export interface VehicleInspection {
   locationLng?: number;
   /** Reverse-geocoded location string (e.g., "Reinfeld, MB") */
   locationLabel?: string;
+  /** Driver's note for the next leg's driver (delivery inspections only) */
+  handoffNote?: string;
 }
 
 export interface Vehicle {
@@ -101,6 +103,8 @@ export interface Vehicle {
   hasKeys?: boolean | null;
   starts?: boolean | null;
   drives?: boolean | null;
+  /** Note from the previous leg's delivery driver (e.g., "Key under driver mat") */
+  previousLegNotes?: string | null;
 }
 
 export interface ContactInfo {

@@ -54,6 +54,8 @@ export interface CompanyPlatformLoad {
   gatePassUrl?: string | null;
   /** ISO 8601 date string for gate pass expiry, if set by the dispatcher */
   storageExpiryDate?: string | null;
+  /** Note from the previous leg's delivery driver for this leg's pickup driver */
+  previousLegNotes?: string | null;
 }
 
 export interface SyncInspectionDamage {
@@ -65,6 +67,25 @@ export interface SyncInspectionDamage {
   y: number;  // normalized 0-1
   diagramView?: string;
   note?: string;
+}
+
+export interface SyncInspectionAdditional {
+  odometer?: string;
+  drivable?: boolean;
+  windscreen?: boolean;
+  glassesIntact?: boolean;
+  titlePresent?: boolean;
+  billOfSale?: boolean;
+  keys?: number;
+  remotes?: number;
+  headrests?: number;
+  cargoCover?: boolean;
+  spareTire?: boolean;
+  radio?: boolean;
+  manuals?: boolean;
+  navigationDisk?: boolean;
+  pluginChargerCable?: boolean;
+  headphones?: boolean;
 }
 
 export interface SyncInspectionInput {
@@ -79,6 +100,9 @@ export interface SyncInspectionInput {
   gps: { lat: number; lng: number };
   timestamp: string;  // ISO 8601
   notes?: string;
+  additionalInspection?: SyncInspectionAdditional;
+  /** Driver's note for the next leg's driver (delivery inspections only) */
+  handoffNote?: string;
 }
 
 export interface SyncInspectionResult {

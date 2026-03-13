@@ -3,12 +3,13 @@ import * as Api from "@/lib/_core/api";
 import * as Auth from "@/lib/_core/auth";
 import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function OAuthCallback() {
   const router = useRouter();
+  const mountedRef = useRef(true);
   const params = useLocalSearchParams<{
     code?: string;
     state?: string;
@@ -18,6 +19,13 @@ export default function OAuthCallback() {
   }>();
   const [status, setStatus] = useState<"processing" | "success" | "error">("processing");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const handleCallback = async () => {
@@ -62,7 +70,7 @@ export default function OAuthCallback() {
           setStatus("success");
           console.log("[OAuth] Web authentication successful, redirecting to home...");
           setTimeout(() => {
-            router.replace("/(tabs)");
+            if (mountedRef.current) router.replace("/(tabs)");
           }, 1000);
           return;
         }
@@ -159,7 +167,7 @@ export default function OAuthCallback() {
           setStatus("success");
           console.log("[OAuth] Redirecting to home...");
           setTimeout(() => {
-            router.replace("/(tabs)");
+            if (mountedRef.current) router.replace("/(tabs)");
           }, 1000);
           return;
         }
@@ -214,8 +222,10 @@ export default function OAuthCallback() {
 
           // Redirect to home after a short delay
           setTimeout(() => {
-            console.log("[OAuth] Executing redirect...");
-            router.replace("/(tabs)");
+            if (mountedRef.current) {
+              console.log("[OAuth] Executing redirect...");
+              router.replace("/(tabs)");
+            }
           }, 1000);
         } else {
           console.error("[OAuth] No session token in result:", result);

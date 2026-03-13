@@ -500,6 +500,25 @@ export const appRouter = router({
           gps: z.object({ lat: z.number(), lng: z.number() }),
           timestamp: z.string(),
           notes: z.string().optional(),
+          handoffNote: z.string().optional(),
+          additionalInspection: z.object({
+            odometer: z.string().optional(),
+            drivable: z.boolean().optional(),
+            windscreen: z.boolean().optional(),
+            glassesIntact: z.boolean().optional(),
+            titlePresent: z.boolean().optional(),
+            billOfSale: z.boolean().optional(),
+            keys: z.number().optional(),
+            remotes: z.number().optional(),
+            headrests: z.number().optional(),
+            cargoCover: z.boolean().optional(),
+            spareTire: z.boolean().optional(),
+            radio: z.boolean().optional(),
+            manuals: z.boolean().optional(),
+            navigationDisk: z.boolean().optional(),
+            pluginChargerCable: z.boolean().optional(),
+            headphones: z.boolean().optional(),
+          }).optional(),
         })
       )
       .mutation(async ({ input }) => {
@@ -512,6 +531,7 @@ export const appRouter = router({
           photosCount: input.photos.length,
           damagesCount: input.damages.length,
           noDamage: input.noDamage,
+          hasAdditionalInspection: !!input.additionalInspection,
         }));
         return companyPlatform.syncInspection(input);
       }),

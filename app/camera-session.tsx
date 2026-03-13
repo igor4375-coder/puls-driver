@@ -26,13 +26,13 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Image,
   FlatList,
   Alert,
   Platform,
   Dimensions,
   ActivityIndicator,
 } from "react-native";
+import { Image } from "expo-image";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
@@ -77,6 +77,7 @@ export default function CameraSessionScreen() {
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const meta = cameraSessionStore.getMeta();
+  const pendingStampsRef = useRef(0);
 
   // ── Fetch GPS once when screen mounts ────────────────────────────────────
   useEffect(() => {
@@ -107,19 +108,32 @@ export default function CameraSessionScreen() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleDone = useCallback(() => {
+  const handleDone = useCallback(async () => {
+    // Wait for any in-flight stamps to finish (max 8s)
+    if (pendingStampsRef.current > 0) {
+      await new Promise<void>((resolve) => {
+        const start = Date.now();
+        const check = () => {
+          if (pendingStampsRef.current <= 0 || Date.now() - start > 8000) {
+            resolve();
+            return;
+          }
+          setTimeout(check, 100);
+        };
+        check();
+      });
+    }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const resolvedUris = items.map(({ uri, clientId }) => {
-      if (clientId) return photoQueue.resolvedUri(clientId) ?? uri;
+      if (clientId && !clientId.startsWith("pending-")) {
+        return photoQueue.resolvedUri(clientId) ?? uri;
+      }
       return uri;
     });
-    // Read nextRoute BEFORE complete() clears meta
     const { nextRoute } = cameraSessionStore.getMeta();
-    // Complete stores photos in pendingPhotos and fires optional legacy callback
     cameraSessionStore.complete(resolvedUris);
     cameraSessionStore.clearMeta();
-    // If a nextRoute is set (camera-first inspection flow), replace this screen
-    // with the inspection screen directly — no router.back() race condition.
     if (nextRoute) {
       router.replace(nextRoute as any);
     } else {
@@ -157,39 +171,66 @@ export default function CameraSessionScreen() {
     setTimeout(() => setShutterFlash(false), 80);
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 1,      // No compression — preserve full camera sensor quality
+        quality: 1,
         skipProcessing: true,
-        exif: true,      // Keep EXIF so GPS/timestamp metadata is retained
+        exif: true,
         base64: false,
         shutterSound: false,
       });
+      // Release shutter as soon as we have the raw image
+      setTaking(false);
       if (photo?.uri) {
-        // ── Burn GPS + timestamp stamp onto the photo ──────────────────────
-        const inspType = meta?.inspectionType === "delivery" ? "Delivery Condition" : "Pickup Condition";
-        const stampOpts = {
-          coords: gpsCoords,
-          locationLabel,
-          capturedAt: new Date().toISOString(),
-          driverCode: driver?.driverCode,
-          companyName: "AutoHaul",
-          inspectionType: inspType,
-        };
-        // Stamp via server-side Sharp (full resolution, no ViewShot off-screen issues)
-        const finalUri = await stampPhotoViaServer(photo.uri, stampOpts);
-        // ── Enqueue for upload ─────────────────────────────────────────────
-        const entry = await photoQueue.enqueue(finalUri, meta);
+        // Show raw thumbnail immediately so the driver sees it
+        const tempId = `pending-${Date.now()}`;
         setItems((prev) => [
           ...prev,
-          { uri: entry.localUri, clientId: entry.clientId, type: "photo" },
+          { uri: photo.uri, clientId: tempId, type: "photo" },
         ]);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+        // Stamp + enqueue in background (non-blocking)
+        pendingStampsRef.current += 1;
+        (async () => {
+          try {
+            const inspType = meta?.inspectionType === "delivery" ? "Delivery Condition" : "Pickup Condition";
+            const stampOpts = {
+              coords: gpsCoords,
+              locationLabel,
+              capturedAt: new Date().toISOString(),
+              driverCode: driver?.driverCode,
+              companyName: "AutoHaul",
+              inspectionType: inspType,
+            };
+            const finalUri = await stampPhotoViaServer(photo.uri, stampOpts);
+            const entry = await photoQueue.enqueue(finalUri, meta);
+            setItems((prev) =>
+              prev.map((item) =>
+                item.clientId === tempId
+                  ? { ...item, uri: entry.localUri, clientId: entry.clientId }
+                  : item
+              )
+            );
+          } catch {
+            // Stamp failed — enqueue raw photo so we don't lose it
+            try {
+              const entry = await photoQueue.enqueue(photo.uri, meta);
+              setItems((prev) =>
+                prev.map((item) =>
+                  item.clientId === tempId
+                    ? { ...item, clientId: entry.clientId }
+                    : item
+                )
+              );
+            } catch {}
+          } finally {
+            pendingStampsRef.current -= 1;
+          }
+        })();
       }
     } catch {
-      // camera stays open
-    } finally {
       setTaking(false);
     }
-  }, [taking, meta, gpsCoords, driver]);
+  }, [taking, meta, gpsCoords, locationLabel, driver]);
 
   const handleStartRecording = useCallback(async () => {
     if (recording || !cameraRef.current || Platform.OS === "web") return;
@@ -414,6 +455,9 @@ export default function CameraSessionScreen() {
         <FlatList
           data={[...items].reverse()}
           keyExtractor={(item, idx) => item.uri + idx}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={5}
           style={s.thumbList}
           contentContainerStyle={s.thumbListContent}
           showsVerticalScrollIndicator={false}
@@ -432,7 +476,7 @@ export default function CameraSessionScreen() {
                 onPress={() => handleDeleteItem(item)}
                 activeOpacity={0.8}
               >
-                <Image source={{ uri: displayUri }} style={s.thumbImg} resizeMode="cover" />
+                <Image source={{ uri: displayUri }} style={s.thumbImg} contentFit="cover" />
                 {item.type === "video" && (
                   <View style={s.videoBadge}>
                     <IconSymbol name="video.fill" size={10} color="#fff" />

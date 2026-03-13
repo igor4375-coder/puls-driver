@@ -28,6 +28,7 @@ export default defineSchema({
     notifyStorageExpiry: v.boolean(),
     status: v.union(v.literal("active"), v.literal("inactive"), v.literal("suspended")),
     pushToken: v.optional(v.string()),
+    monthlyRevenueGoal: v.optional(v.number()),
   })
     .index("by_clerkUserId", ["clerkUserId"])
     .index("by_driverCode", ["driverCode"])

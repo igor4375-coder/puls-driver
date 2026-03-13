@@ -36,6 +36,7 @@ type RuntimePalette = SchemePaletteItem & {
   tabIconDefault: string;
   tabIconSelected: string;
   border: string;
+  card: string;
 };
 
 function buildRuntimePalette(scheme: ColorScheme): RuntimePalette {

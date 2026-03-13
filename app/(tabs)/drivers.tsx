@@ -1,500 +1,963 @@
-import { useState } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
+  Pressable,
   ScrollView,
   StyleSheet,
-  Alert,
-  TextInput,
   Modal,
-  ActivityIndicator,
-  FlatList,
-  Share,
   Platform,
+  TextInput,
+  Alert,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import * as Clipboard from "expo-clipboard";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { trpc } from "@/lib/trpc";
+import { useLoads } from "@/lib/loads-context";
+import { useAuth } from "@/lib/auth-context";
+import { usePermissions } from "@/lib/permissions-context";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
-type TabType = "fleet" | "invitations";
+// ─── Date Range Helpers ──────────────────────────────────────────────────────
 
-function EmptyState({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
-  const colors = useColors();
+interface DateRange {
+  label: string;
+  start: Date;
+  end: Date;
+}
+
+function getWeekStart(d: Date): Date {
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.getFullYear(), d.getMonth(), diff, 0, 0, 0, 0);
+}
+
+function buildMonthRange(year: number, month: number): DateRange {
+  const now = new Date();
+  const start = new Date(year, month, 1);
+  const isCurrentMonth = year === now.getFullYear() && month === now.getMonth();
+  const end = isCurrentMonth ? now : new Date(year, month + 1, 0, 23, 59, 59, 999);
+  const label = start.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  return { label, start, end };
+}
+
+function getMonthOptions(count: number = 12): { year: number; month: number; label: string }[] {
+  const now = new Date();
+  const options: { year: number; month: number; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    options.push({
+      year: d.getFullYear(),
+      month: d.getMonth(),
+      label: d.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    });
+  }
+  return options;
+}
+
+type SubTab = "earnings" | "stats";
+type ChartGranularity = "day" | "week" | "month";
+
+// ─── Formatting ──────────────────────────────────────────────────────────────
+
+function fmtCurrency(cents: number): string {
+  const dollars = Math.abs(cents) / 100;
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${dollars.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtDollars(dollars: number): string {
+  const sign = dollars < 0 ? "-" : "";
+  const abs = Math.abs(dollars);
+  if (abs >= 1000) {
+    return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  }
+  return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtShortDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function fmtCompact(n: number): string {
+  if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return n.toLocaleString();
+}
+
+// ─── Haversine Distance (miles) ───────────────────────────────────────────────
+
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  if (!lat1 || !lng1 || !lat2 || !lng2) return 0;
+  const R = 3958.8; // Earth radius in miles
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ─── Memoized Earning Row ────────────────────────────────────────────────────
+
+type DeliveredLoad = { id: string; loadNumber: string; vehicles: { year?: string; make?: string; model?: string }[]; deliveredAt?: string | null; driverPay: number };
+
+const EarningRowItem = React.memo(function EarningRowItem({
+  load, colors, showPay,
+}: {
+  load: DeliveredLoad;
+  colors: Record<string, string>;
+  showPay: boolean;
+}) {
   return (
-    <View style={styles.emptyState}>
-      <View style={[styles.emptyIcon, { backgroundColor: colors.surface }]}>
-        <IconSymbol name={icon as any} size={32} color={colors.muted} />
+    <View style={[styles.earningRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={styles.earningLeft}>
+        <Text style={[styles.earningLoad, { color: colors.text }]}>{load.loadNumber || "Local Load"}</Text>
+        <Text style={[styles.earningDetail, { color: colors.muted }]}>
+          {load.vehicles.length} vehicle{load.vehicles.length !== 1 ? "s" : ""}
+          {load.deliveredAt ? ` · ${fmtShortDate(load.deliveredAt)}` : ""}
+        </Text>
+        {load.vehicles.length > 0 && (
+          <Text style={[styles.earningVehicles, { color: colors.muted }]} numberOfLines={1}>
+            {load.vehicles.map((v) => [v.year, v.make, v.model].filter(Boolean).join(" ")).join(", ")}
+          </Text>
+        )}
       </View>
-      <Text style={[styles.emptyTitle, { color: colors.foreground }]}>{title}</Text>
-      <Text style={[styles.emptySubtitle, { color: colors.muted }]}>{subtitle}</Text>
+      {showPay && (
+        <Text style={[styles.earningAmount, { color: load.driverPay > 0 ? "#4CAF50" : colors.muted }]}>
+          {load.driverPay > 0 ? fmtDollars(load.driverPay) : "—"}
+        </Text>
+      )}
     </View>
   );
-}
+});
 
-function StatusBadge({ status }: { status: string }) {
+// ─── Component ───────────────────────────────────────────────────────────────
+
+export default function DashboardScreen() {
   const colors = useColors();
-  const config: Record<string, { bg: string; text: string; label: string }> = {
-    active: { bg: colors.success + "18", text: colors.success, label: "Active" },
-    inactive: { bg: colors.muted + "18", text: colors.muted, label: "Inactive" },
-    suspended: { bg: colors.error + "18", text: colors.error, label: "Suspended" },
-    pending: { bg: colors.warning + "18", text: colors.warning, label: "Pending" },
-    accepted: { bg: colors.success + "18", text: colors.success, label: "Accepted" },
-    expired: { bg: colors.muted + "18", text: colors.muted, label: "Expired" },
-    revoked: { bg: colors.error + "18", text: colors.error, label: "Revoked" },
-  };
-  const c = config[status] ?? config.inactive;
-  return (
-    <View style={[styles.badge, { backgroundColor: c.bg }]}>
-      <Text style={[styles.badgeText, { color: c.text }]}>{c.label}</Text>
-    </View>
+  const { loads } = useLoads();
+  const { driver } = useAuth();
+  const { canViewRates } = usePermissions();
+  const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
+
+  const allExpenses = useQuery(
+    api.expenses.getByDriver,
+    driverCode ? { driverCode } : "skip",
   );
-}
 
-export default function DriversScreen() {
-  const colors = useColors();
-  const [activeTab, setActiveTab] = useState<TabType>("fleet");
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteName, setInviteName] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
-  const [codeCopied, setCodeCopied] = useState(false);
+  const convexProfile = useQuery(
+    api.driverProfiles.getByClerkUserId,
+    driver?.id ? { clerkUserId: driver.id } : "skip",
+  );
+  const updateProfile = useMutation(api.driverProfiles.updateProfile);
+  const monthlyGoal = convexProfile?.monthlyRevenueGoal ?? 0;
 
-  // Fetch fleet drivers
-  const { data: drivers, isLoading: driversLoading, refetch: refetchDrivers } = trpc.company.getDrivers.useQuery(undefined, {
-    retry: false,
-  });
+  const now = new Date();
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalInput, setGoalInput] = useState("");
+  const [subTab, setSubTab] = useState<SubTab>("earnings");
+  const [chartGranularity, setChartGranularity] = useState<ChartGranularity>("day");
 
-  // Fetch invitations
-  const { data: invitations, isLoading: invitationsLoading, refetch: refetchInvitations } = trpc.company.getInvitations.useQuery(undefined, {
-    retry: false,
-  });
+  const range = useMemo(() => buildMonthRange(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
+  const monthOptions = useMemo(() => getMonthOptions(12), []);
 
-  const generateInviteMutation = trpc.company.generateInvitation.useMutation({
-    onSuccess: (data) => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setGeneratedCode(data.code);
-      refetchInvitations();
-    },
-    onError: (err) => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert("Error", err.message ?? "Could not generate invitation.");
-    },
-  });
+  // ── Filter loads by date range ────────────────────────────────────────────
 
-  const revokeInviteMutation = trpc.company.revokeInvitation.useMutation({
-    onSuccess: () => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      refetchInvitations();
-    },
-    onError: (err) => {
-      Alert.alert("Error", err.message ?? "Could not revoke invitation.");
-    },
-  });
+  const deliveredLoads = useMemo(() => {
+    return loads.filter((l) => {
+      if (l.status !== "delivered" && l.status !== "archived") return false;
+      const ts = l.deliveredAt ?? l.delivery?.date;
+      if (!ts) return false;
+      const d = new Date(ts);
+      return d >= range.start && d <= range.end;
+    });
+  }, [loads, range]);
 
-  const removeDriverMutation = trpc.company.removeDriver.useMutation({
-    onSuccess: () => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      refetchDrivers();
-    },
-    onError: (err) => {
-      Alert.alert("Error", err.message ?? "Could not remove driver.");
-    },
-  });
+  const pickedUpLoads = useMemo(() => {
+    return loads.filter((l) => {
+      if (l.status !== "picked_up") return false;
+      const ts = l.assignedAt ?? l.pickup?.date;
+      if (!ts) return false;
+      const d = new Date(ts);
+      return d >= range.start && d <= range.end;
+    });
+  }, [loads, range]);
 
-  const handleGenerateInvite = () => {
-    if (!inviteName.trim() && !inviteEmail.trim()) {
-      Alert.alert("Add Details", "Please enter at least the driver's name or email.");
+  const filteredExpenses = useMemo(() => {
+    if (!allExpenses) return [];
+    return allExpenses.filter((e) => {
+      const d = new Date(e.expenseDate);
+      return d >= range.start && d <= range.end;
+    });
+  }, [allExpenses, range]);
+
+  // ── Compute stats ─────────────────────────────────────────────────────────
+
+  const stats = useMemo(() => {
+    const totalRevenue = deliveredLoads.reduce((s, l) => s + (l.driverPay || 0), 0);
+    const totalVehicles = deliveredLoads.reduce((s, l) => s + l.vehicles.length, 0);
+    const totalLoads = deliveredLoads.length;
+    const inTransitVehicles = pickedUpLoads.reduce((s, l) => s + l.vehicles.length, 0);
+    const totalExpenseCents = filteredExpenses.reduce((s, e) => s + e.amountCents, 0);
+    const netProfit = totalRevenue - totalExpenseCents / 100;
+    const avgPerLoad = totalLoads > 0 ? totalRevenue / totalLoads : 0;
+    const avgPerVehicle = totalVehicles > 0 ? totalRevenue / totalVehicles : 0;
+
+    // Compute previous period for comparison
+    const rangeDuration = range.end.getTime() - range.start.getTime();
+    const prevStart = new Date(range.start.getTime() - rangeDuration);
+    const prevEnd = new Date(range.start.getTime() - 1);
+    const prevDelivered = loads.filter((l) => {
+      if (l.status !== "delivered" && l.status !== "archived") return false;
+      const ts = l.deliveredAt ?? l.delivery?.date;
+      if (!ts) return false;
+      const d = new Date(ts);
+      return d >= prevStart && d <= prevEnd;
+    });
+    const prevRevenue = prevDelivered.reduce((s, l) => s + (l.driverPay || 0), 0);
+    const revenueDelta = prevRevenue > 0 ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0;
+
+    // Activity buckets — adapts to chartGranularity
+    const activityBuckets: { label: string; value: number }[] = [];
+
+    const countVehiclesInRange = (bStart: Date, bEnd: Date) =>
+      deliveredLoads.filter((l) => {
+        const ts = l.deliveredAt ?? l.delivery?.date;
+        if (!ts) return false;
+        const d = new Date(ts);
+        return d >= bStart && d <= bEnd;
+      }).reduce((s, l) => s + l.vehicles.length, 0);
+
+    if (chartGranularity === "day") {
+      for (let i = 6; i >= 0; i--) {
+        const day = new Date(range.end);
+        day.setDate(day.getDate() - i);
+        day.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(day);
+        dayEnd.setHours(23, 59, 59, 999);
+        activityBuckets.push({
+          label: day.toLocaleDateString("en-US", { weekday: "short" }),
+          value: countVehiclesInRange(day, dayEnd),
+        });
+      }
+    } else if (chartGranularity === "week") {
+      const weeksToShow = 6;
+      const currentWeekStart = getWeekStart(range.end);
+      for (let i = weeksToShow - 1; i >= 0; i--) {
+        const wStart = new Date(currentWeekStart);
+        wStart.setDate(wStart.getDate() - i * 7);
+        const wEnd = new Date(wStart);
+        wEnd.setDate(wEnd.getDate() + 6);
+        wEnd.setHours(23, 59, 59, 999);
+        activityBuckets.push({
+          label: wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          value: countVehiclesInRange(wStart, wEnd),
+        });
+      }
+    } else {
+      const monthsToShow = 6;
+      for (let i = monthsToShow - 1; i >= 0; i--) {
+        const mStart = new Date(range.end.getFullYear(), range.end.getMonth() - i, 1);
+        const mEnd = new Date(mStart.getFullYear(), mStart.getMonth() + 1, 0, 23, 59, 59, 999);
+        activityBuckets.push({
+          label: mStart.toLocaleDateString("en-US", { month: "short" }),
+          value: countVehiclesInRange(mStart, mEnd),
+        });
+      }
+    }
+
+    // Expense breakdown by category
+    const expenseByCategory: Record<string, number> = {};
+    for (const e of filteredExpenses) {
+      const cat = e.label || "Other";
+      expenseByCategory[cat] = (expenseByCategory[cat] ?? 0) + e.amountCents;
+    }
+
+    return {
+      totalRevenue,
+      totalVehicles,
+      totalLoads,
+      inTransitVehicles,
+      totalExpenseCents,
+      netProfit,
+      avgPerLoad,
+      avgPerVehicle,
+      revenueDelta,
+      activityBuckets,
+      expenseByCategory,
+    };
+  }, [deliveredLoads, pickedUpLoads, filteredExpenses, loads, range, chartGranularity]);
+
+  // ── Insights: turnaround, mileage, best period ─────────────────────────
+
+  const insights = useMemo(() => {
+    // Avg turnaround time (pickup to delivery) for loads in current range
+    let turnaroundDays = 0;
+    let turnaroundCount = 0;
+    for (const l of deliveredLoads) {
+      const pickupTs = l.assignedAt ?? l.pickup?.date;
+      const deliverTs = l.deliveredAt ?? l.delivery?.date;
+      if (!pickupTs || !deliverTs) continue;
+      const diff = new Date(deliverTs).getTime() - new Date(pickupTs).getTime();
+      if (diff > 0) {
+        turnaroundDays += diff / (1000 * 60 * 60 * 24);
+        turnaroundCount++;
+      }
+    }
+    const avgTurnaroundDays = turnaroundCount > 0 ? turnaroundDays / turnaroundCount : 0;
+
+    // Mileage estimate (straight-line haversine from pickup to delivery GPS)
+    let totalMiles = 0;
+    for (const l of deliveredLoads) {
+      const pLat = l.pickup?.lat;
+      const pLng = l.pickup?.lng;
+      const dLat = l.delivery?.lat;
+      const dLng = l.delivery?.lng;
+      if (pLat && pLng && dLat && dLng) {
+        totalMiles += haversineMiles(pLat, pLng, dLat, dLng);
+      }
+    }
+    const costPerMile = totalMiles > 0 ? stats.totalRevenue / totalMiles : 0;
+
+    // Best week and best month (across ALL delivered loads, not just current range)
+    const allDelivered = loads.filter(
+      (l) => (l.status === "delivered" || l.status === "archived") && (l.deliveredAt ?? l.delivery?.date),
+    );
+
+    // Best week
+    const weekBuckets: Record<string, { revenue: number; start: Date }> = {};
+    for (const l of allDelivered) {
+      const ts = l.deliveredAt ?? l.delivery?.date;
+      if (!ts) continue;
+      const d = new Date(ts);
+      const ws = getWeekStart(d);
+      const key = ws.toISOString();
+      if (!weekBuckets[key]) weekBuckets[key] = { revenue: 0, start: ws };
+      weekBuckets[key].revenue += l.driverPay || 0;
+    }
+    let bestWeek: { revenue: number; label: string } | null = null;
+    for (const b of Object.values(weekBuckets)) {
+      if (!bestWeek || b.revenue > bestWeek.revenue) {
+        const wEnd = new Date(b.start);
+        wEnd.setDate(wEnd.getDate() + 6);
+        bestWeek = {
+          revenue: b.revenue,
+          label: `${b.start.toLocaleDateString("en-US", { month: "short", day: "numeric" })}–${wEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+        };
+      }
+    }
+
+    // Best month
+    const monthBuckets: Record<string, { revenue: number; month: Date }> = {};
+    for (const l of allDelivered) {
+      const ts = l.deliveredAt ?? l.delivery?.date;
+      if (!ts) continue;
+      const d = new Date(ts);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!monthBuckets[key]) monthBuckets[key] = { revenue: 0, month: new Date(d.getFullYear(), d.getMonth(), 1) };
+      monthBuckets[key].revenue += l.driverPay || 0;
+    }
+    let bestMonth: { revenue: number; label: string } | null = null;
+    for (const b of Object.values(monthBuckets)) {
+      if (!bestMonth || b.revenue > bestMonth.revenue) {
+        bestMonth = {
+          revenue: b.revenue,
+          label: b.month.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+        };
+      }
+    }
+
+    // Revenue goal progress (this month only, regardless of selected range)
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const thisMonthRevenue = loads
+      .filter((l) => {
+        if (l.status !== "delivered" && l.status !== "archived") return false;
+        const ts = l.deliveredAt ?? l.delivery?.date;
+        if (!ts) return false;
+        return new Date(ts) >= thisMonthStart;
+      })
+      .reduce((s, l) => s + (l.driverPay || 0), 0);
+    const goalPct = monthlyGoal > 0 ? Math.min((thisMonthRevenue / monthlyGoal) * 100, 100) : 0;
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayOfMonth = now.getDate();
+    const projectedRevenue = dayOfMonth > 0 ? (thisMonthRevenue / dayOfMonth) * daysInMonth : 0;
+
+    return {
+      avgTurnaroundDays,
+      turnaroundCount,
+      totalMiles: Math.round(totalMiles),
+      costPerMile,
+      bestWeek,
+      bestMonth,
+      thisMonthRevenue,
+      goalPct,
+      projectedRevenue,
+    };
+  }, [deliveredLoads, loads, stats.totalRevenue, monthlyGoal]);
+
+  // ── Sorted delivered loads for earnings list ──────────────────────────────
+
+  const sortedDelivered = useMemo(() => {
+    return [...deliveredLoads].sort((a, b) => {
+      const da = new Date(a.deliveredAt ?? a.delivery?.date ?? 0).getTime();
+      const db = new Date(b.deliveredAt ?? b.delivery?.date ?? 0).getTime();
+      return db - da;
+    });
+  }, [deliveredLoads]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleSelectMonth = useCallback((year: number, month: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedYear(year);
+    setSelectedMonth(month);
+    setShowMonthPicker(false);
+  }, []);
+
+  const handleSaveGoal = useCallback(async () => {
+    const val = parseFloat(goalInput.replace(/[^0-9.]/g, ""));
+    if (!val || val <= 0) {
+      Alert.alert("Invalid Amount", "Please enter a valid dollar amount.");
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    generateInviteMutation.mutate({
-      driverName: inviteName.trim() || undefined,
-      driverEmail: inviteEmail.trim() || undefined,
-    });
-  };
-
-  const handleCopyCode = async (code: string) => {
-    await Clipboard.setStringAsync(code);
-    setCodeCopied(true);
+    if (!driver?.id) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setTimeout(() => setCodeCopied(false), 2000);
-  };
+    await updateProfile({ clerkUserId: driver.id, monthlyRevenueGoal: val });
+    setShowGoalModal(false);
+    setGoalInput("");
+  }, [goalInput, driver?.id, updateProfile]);
 
-  const handleShareCode = async (code: string, driverName?: string | null) => {
-    const name = driverName ? ` for ${driverName}` : "";
-    await Share.share({
-      message: `You've been invited to join our fleet on AutoHaul Driver${name}.\n\nYour invitation code is: ${code}\n\nDownload AutoHaul Driver and enter this code to get started.`,
-      title: "AutoHaul Driver Invitation",
-    });
-  };
+  const handleClearGoal = useCallback(async () => {
+    if (!driver?.id) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await updateProfile({ clerkUserId: driver.id, monthlyRevenueGoal: 0 });
+    setShowGoalModal(false);
+    setGoalInput("");
+  }, [driver?.id, updateProfile]);
 
-  const handleRevokeInvite = (invitationId: number) => {
-    Alert.alert(
-      "Revoke Invitation",
-      "Are you sure you want to revoke this invitation? The driver will no longer be able to use this code.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Revoke",
-          style: "destructive",
-          onPress: () => revokeInviteMutation.mutate({ invitationId }),
-        },
-      ]
-    );
-  };
+  // ── Mini bar chart ────────────────────────────────────────────────────────
 
-  const handleRemoveDriver = (driverProfileId: number, driverName: string) => {
-    Alert.alert(
-      "Remove Driver",
-      `Remove ${driverName} from your fleet? They will no longer see their assigned loads.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: () => removeDriverMutation.mutate({ driverProfileId }),
-        },
-      ]
-    );
-  };
-
-  const handleCloseModal = () => {
-    setShowInviteModal(false);
-    setInviteName("");
-    setInviteEmail("");
-    setGeneratedCode(null);
-    setCodeCopied(false);
-  };
-
-  const pendingInvitations = invitations?.filter((i) => i.status === "pending") ?? [];
-  const pastInvitations = invitations?.filter((i) => i.status !== "pending") ?? [];
+  const maxBucket = Math.max(...stats.activityBuckets.map((b) => b.value), 1);
 
   return (
     <ScreenContainer containerClassName="bg-background">
       {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.primary }]}>
-        <Text style={styles.headerTitle}>Drivers</Text>
+        <View>
+          <Text style={styles.headerTitle}>Dashboard</Text>
+          <Text style={styles.headerSubtitle}>{driver?.name ?? "Driver"}</Text>
+        </View>
         <TouchableOpacity
-          style={[styles.inviteBtn, { backgroundColor: "#FFFFFF20" }]}
-          onPress={() => setShowInviteModal(true)}
+          style={[styles.rangePill, { backgroundColor: "#FFFFFF22" }]}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowMonthPicker((v) => !v); }}
           activeOpacity={0.8}
         >
-          <IconSymbol name="plus" size={16} color="#FFFFFF" />
-          <Text style={styles.inviteBtnText}>Invite Driver</Text>
+          <IconSymbol name="calendar" size={14} color="#fff" />
+          <Text style={styles.rangePillText}>{range.label}</Text>
+          <IconSymbol name={showMonthPicker ? "chevron.up" : "chevron.down"} size={12} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* Tab Bar */}
-      <View style={[styles.tabBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        {(["fleet", "invitations"] as TabType[]).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && [styles.activeTab, { borderBottomColor: colors.primary }]]}
-            onPress={() => setActiveTab(tab)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, { color: activeTab === tab ? colors.primary : colors.muted }]}>
-              {tab === "fleet" ? `Fleet (${drivers?.length ?? 0})` : `Invitations (${pendingInvitations.length})`}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Fleet Tab */}
-      {activeTab === "fleet" && (
-        driversLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* ── Hero Stats ─────────────────────────────────────────────────── */}
+        <View style={[styles.heroCard, { backgroundColor: colors.primary }]}>
+          <View style={styles.heroRow}>
+            {canViewRates && (
+              <>
+                <View style={styles.heroStat}>
+                  <Text style={styles.heroValue}>{fmtDollars(stats.totalRevenue)}</Text>
+                  <Text style={styles.heroLabel}>Revenue</Text>
+                </View>
+                <View style={[styles.heroDivider, { backgroundColor: "#FFFFFF30" }]} />
+              </>
+            )}
+            <View style={styles.heroStat}>
+              <Text style={styles.heroValue}>{stats.totalVehicles}</Text>
+              <Text style={styles.heroLabel}>Vehicles</Text>
+            </View>
+            <View style={[styles.heroDivider, { backgroundColor: "#FFFFFF30" }]} />
+            <View style={styles.heroStat}>
+              <Text style={styles.heroValue}>{stats.totalLoads}</Text>
+              <Text style={styles.heroLabel}>Loads</Text>
+            </View>
+            {!canViewRates && (
+              <>
+                <View style={[styles.heroDivider, { backgroundColor: "#FFFFFF30" }]} />
+                <View style={styles.heroStat}>
+                  <Text style={styles.heroValue}>{stats.inTransitVehicles}</Text>
+                  <Text style={styles.heroLabel}>In Transit</Text>
+                </View>
+              </>
+            )}
           </View>
-        ) : !drivers || drivers.length === 0 ? (
-          <EmptyState
-            icon="truck.box.fill"
-            title="No Drivers Yet"
-            subtitle="Invite drivers to join your fleet. They'll appear here once they accept your invitation."
-          />
-        ) : (
-          <FlatList
-            data={drivers}
-            keyExtractor={(item) => (item?.id ?? Math.random()).toString()}
-            contentContainerStyle={{ padding: 16, gap: 10 }}
-            renderItem={({ item: rawItem }) => {
-              if (!rawItem) return null;
-              const item = rawItem;
-              const initials = (item.name ?? "D")
-                .split(" ")
-                .map((n: string) => n[0])
-                .join("")
-                .toUpperCase()
-                .slice(0, 2);
-              const joinedDate = item.createdAt
-                ? new Date(item.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                : "Unknown";
 
+          {canViewRates && stats.revenueDelta !== 0 && (
+            <View style={styles.deltaRow}>
+              <IconSymbol
+                name={stats.revenueDelta >= 0 ? "arrow.up.right" : "arrow.down.right"}
+                size={12}
+                color={stats.revenueDelta >= 0 ? "#A5D6A7" : "#EF9A9A"}
+              />
+              <Text style={[styles.deltaText, { color: stats.revenueDelta >= 0 ? "#A5D6A7" : "#EF9A9A" }]}>
+                {Math.abs(stats.revenueDelta).toFixed(1)}% vs previous period
+              </Text>
+            </View>
+          )}
+
+          {/* Revenue Goal Progress — only when rates visible */}
+          {canViewRates && monthlyGoal > 0 && (
+            <TouchableOpacity
+              style={styles.goalSection}
+              onPress={() => { setGoalInput(String(monthlyGoal)); setShowGoalModal(true); }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.goalLabelRow}>
+                <Text style={styles.goalLabel}>Monthly Goal</Text>
+                <Text style={styles.goalLabel}>
+                  {fmtDollars(insights.thisMonthRevenue)} / {fmtDollars(monthlyGoal)}
+                </Text>
+              </View>
+              <View style={styles.goalBarTrack}>
+                <View style={[styles.goalBarFill, { width: `${insights.goalPct}%` }]} />
+              </View>
+              <Text style={styles.goalProjection}>
+                {insights.goalPct >= 100
+                  ? "Goal reached!"
+                  : `${insights.goalPct.toFixed(0)}% — On pace for ${fmtDollars(insights.projectedRevenue)}`}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {canViewRates && monthlyGoal === 0 && (
+            <TouchableOpacity
+              style={styles.goalSetBtn}
+              onPress={() => { setGoalInput(""); setShowGoalModal(true); }}
+              activeOpacity={0.8}
+            >
+              <IconSymbol name="target" size={14} color="#FFFFFFCC" />
+              <Text style={styles.goalSetText}>Set a monthly revenue goal</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* ── Quick Stats Row ────────────────────────────────────────────── */}
+        <View style={styles.quickStatsRow}>
+          {canViewRates ? (
+            <>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: "#4CAF5018" }]}>
+                  <IconSymbol name="dollarsign.circle.fill" size={20} color="#4CAF50" />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>{fmtDollars(stats.netProfit)}</Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>Net Profit</Text>
+              </View>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: colors.primary + "18" }]}>
+                  <IconSymbol name="car.fill" size={20} color={colors.primary} />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>{fmtDollars(stats.avgPerVehicle)}</Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>Avg / Vehicle</Text>
+              </View>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: "#FF980018" }]}>
+                  <IconSymbol name="shippingbox.fill" size={20} color="#FF9800" />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>{stats.inTransitVehicles}</Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>In Transit</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: "#9C27B018" }]}>
+                  <IconSymbol name="clock.fill" size={20} color="#9C27B0" />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>
+                  {insights.turnaroundCount > 0
+                    ? insights.avgTurnaroundDays < 1
+                      ? `${Math.round(insights.avgTurnaroundDays * 24)}h`
+                      : `${insights.avgTurnaroundDays.toFixed(1)}d`
+                    : "—"}
+                </Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>Avg Turnaround</Text>
+              </View>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: "#00897B18" }]}>
+                  <IconSymbol name="road.lanes" size={20} color="#00897B" />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>
+                  {insights.totalMiles > 0 ? fmtCompact(insights.totalMiles) : "—"}
+                </Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>Miles (est.)</Text>
+              </View>
+              <View style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={[styles.quickIcon, { backgroundColor: "#FF980018" }]}>
+                  <IconSymbol name="shippingbox.fill" size={20} color="#FF9800" />
+                </View>
+                <Text style={[styles.quickValue, { color: colors.text }]}>{stats.inTransitVehicles}</Text>
+                <Text style={[styles.quickLabel, { color: colors.muted }]}>In Transit</Text>
+              </View>
+            </>
+          )}
+        </View>
+
+        {/* ── Insights Row — only when rates visible ────────────────────── */}
+        {canViewRates && (
+          <View style={styles.insightsRow}>
+            <View style={[styles.insightCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <IconSymbol name="clock.fill" size={18} color="#9C27B0" />
+              <Text style={[styles.insightValue, { color: colors.text }]}>
+                {insights.turnaroundCount > 0
+                  ? insights.avgTurnaroundDays < 1
+                    ? `${Math.round(insights.avgTurnaroundDays * 24)}h`
+                    : `${insights.avgTurnaroundDays.toFixed(1)}d`
+                  : "—"}
+              </Text>
+              <Text style={[styles.insightLabel, { color: colors.muted }]}>Avg Turnaround</Text>
+            </View>
+            <View style={[styles.insightCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <IconSymbol name="road.lanes" size={18} color="#00897B" />
+              <Text style={[styles.insightValue, { color: colors.text }]}>
+                {insights.totalMiles > 0 ? fmtCompact(insights.totalMiles) : "—"}
+              </Text>
+              <Text style={[styles.insightLabel, { color: colors.muted }]}>Miles (est.)</Text>
+            </View>
+            <View style={[styles.insightCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <IconSymbol name="gauge.with.needle.fill" size={18} color="#E65100" />
+              <Text style={[styles.insightValue, { color: colors.text }]}>
+                {insights.costPerMile > 0 ? `$${insights.costPerMile.toFixed(2)}` : "—"}
+              </Text>
+              <Text style={[styles.insightLabel, { color: colors.muted }]}>Rev / Mile</Text>
+            </View>
+          </View>
+        )}
+
+        {/* ── Best Period Highlights — only when rates visible ────────────── */}
+        {canViewRates && (insights.bestWeek || insights.bestMonth) && (
+          <View style={[styles.bestPeriodCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.bestPeriodHeader}>
+              <IconSymbol name="trophy.fill" size={16} color="#FFB300" />
+              <Text style={[styles.bestPeriodTitle, { color: colors.text }]}>Personal Bests</Text>
+            </View>
+            {insights.bestWeek && insights.bestWeek.revenue > 0 && (
+              <View style={styles.bestPeriodRow}>
+                <Text style={[styles.bestPeriodLabel, { color: colors.muted }]}>Best Week</Text>
+                <View style={styles.bestPeriodRight}>
+                  <Text style={[styles.bestPeriodValue, { color: "#4CAF50" }]}>
+                    {fmtDollars(insights.bestWeek.revenue)}
+                  </Text>
+                  <Text style={[styles.bestPeriodDate, { color: colors.muted }]}>
+                    {insights.bestWeek.label}
+                  </Text>
+                </View>
+              </View>
+            )}
+            {insights.bestMonth && insights.bestMonth.revenue > 0 && (
+              <View style={styles.bestPeriodRow}>
+                <Text style={[styles.bestPeriodLabel, { color: colors.muted }]}>Best Month</Text>
+                <View style={styles.bestPeriodRight}>
+                  <Text style={[styles.bestPeriodValue, { color: "#4CAF50" }]}>
+                    {fmtDollars(insights.bestMonth.revenue)}
+                  </Text>
+                  <Text style={[styles.bestPeriodDate, { color: colors.muted }]}>
+                    {insights.bestMonth.label}
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── Activity Chart ─────────────────────────────────────────────── */}
+        <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.chartHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.chartTitle, { color: colors.text }]}>Delivery Activity</Text>
+              <Text style={[styles.chartSubtitle, { color: colors.muted }]}>
+                {chartGranularity === "day"
+                  ? "Vehicles per day (last 7 days)"
+                  : chartGranularity === "week"
+                    ? "Vehicles per week (last 6 weeks)"
+                    : "Vehicles per month (last 6 months)"}
+              </Text>
+            </View>
+          </View>
+          {/* Granularity toggle */}
+          <View style={[styles.granularityRow, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            {(["day", "week", "month"] as ChartGranularity[]).map((g) => (
+              <TouchableOpacity
+                key={g}
+                style={[
+                  styles.granularityBtn,
+                  chartGranularity === g && { backgroundColor: colors.primary },
+                ]}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setChartGranularity(g); }}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.granularityText,
+                    { color: chartGranularity === g ? "#fff" : colors.muted },
+                  ]}
+                >
+                  {g === "day" ? "Day" : g === "week" ? "Week" : "Month"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={styles.chartBars}>
+            {stats.activityBuckets.map((b, i) => {
+              const heightPct = maxBucket > 0 ? (b.value / maxBucket) * 100 : 0;
               return (
-                <View style={[styles.driverCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <View style={[styles.driverAvatar, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.driverAvatarText}>{initials}</Text>
+                <View key={i} style={styles.chartBarCol}>
+                  <View style={styles.chartBarTrack}>
+                    {b.value > 0 && (
+                      <Text style={[styles.chartBarValue, { color: colors.primary }]}>{b.value}</Text>
+                    )}
+                    <View
+                      style={[
+                        styles.chartBar,
+                        {
+                          height: `${Math.max(heightPct, 4)}%`,
+                          backgroundColor: b.value > 0 ? colors.primary : colors.border,
+                          borderRadius: 4,
+                        },
+                      ]}
+                    />
                   </View>
-                  <View style={styles.driverCardInfo}>
-                    <View style={styles.driverCardTop}>
-                      <Text style={[styles.driverCardName, { color: colors.foreground }]}>{item.name}</Text>
-                      <StatusBadge status={item.status} />
-                    </View>
-                    {item.driverCode && (
-                      <Text style={[styles.driverCardDetail, { color: colors.primary, fontWeight: "600" }]}>{item.driverCode}</Text>
-                    )}
-                    {item.email && (
-                      <Text style={[styles.driverCardDetail, { color: colors.muted }]}>{item.email}</Text>
-                    )}
-                    {item.phone && (
-                      <Text style={[styles.driverCardDetail, { color: colors.muted }]}>{item.phone}</Text>
-                    )}
-                    <Text style={[styles.driverCardJoined, { color: colors.muted }]}>Joined {joinedDate}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.removeBtn}
-                    onPress={() => handleRemoveDriver(item.id, item.name ?? "Driver")}
-                    activeOpacity={0.7}
-                  >
-                    <IconSymbol name="xmark" size={16} color={colors.error} />
-                  </TouchableOpacity>
+                  <Text style={[styles.chartBarLabel, { color: colors.muted }]}>{b.label}</Text>
                 </View>
               );
-            }}
-          />
-        )
-      )}
-
-      {/* Invitations Tab */}
-      {activeTab === "invitations" && (
-        invitationsLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
+            })}
           </View>
-        ) : !invitations || invitations.length === 0 ? (
-          <EmptyState
-            icon="envelope.fill"
-            title="No Invitations Sent"
-            subtitle="Tap 'Invite Driver' to generate an invitation code and share it with a driver."
-          />
+        </View>
+
+        {/* ── Sub Tabs ───────────────────────────────────────────────────── */}
+        {canViewRates ? (
+          <View style={[styles.subTabBar, { borderBottomColor: colors.border }]}>
+            {(["earnings", "stats"] as SubTab[]).map((tab) => (
+              <TouchableOpacity
+                key={tab}
+                style={[styles.subTab, subTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSubTab(tab); }}
+              >
+                <Text style={[styles.subTabText, { color: subTab === tab ? colors.primary : colors.muted }]}>
+                  {tab === "earnings" ? "Earnings" : "Breakdown"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         ) : (
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 10 }}>
-            {pendingInvitations.length > 0 && (
-              <>
-                <Text style={[styles.inviteGroupTitle, { color: colors.muted }]}>PENDING</Text>
-                {pendingInvitations.map((inv) => {
-                  const expiresDate = new Date(inv.expiresAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-                  return (
-                    <View key={inv.id} style={[styles.inviteCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                      <View style={styles.inviteCardTop}>
-                        <View style={styles.inviteCardLeft}>
-                          <Text style={[styles.inviteCode, { color: colors.primary }]}>{inv.code}</Text>
-                          {inv.driverName && (
-                            <Text style={[styles.inviteDriver, { color: colors.foreground }]}>{inv.driverName}</Text>
-                          )}
-                          {inv.driverEmail && (
-                            <Text style={[styles.inviteEmail, { color: colors.muted }]}>{inv.driverEmail}</Text>
-                          )}
-                          <Text style={[styles.inviteExpiry, { color: colors.muted }]}>Expires {expiresDate}</Text>
-                        </View>
-                        <StatusBadge status={inv.status} />
-                      </View>
-                      <View style={[styles.inviteActions, { borderTopColor: colors.border }]}>
-                        <TouchableOpacity
-                          style={styles.inviteAction}
-                          onPress={() => handleCopyCode(inv.code)}
-                          activeOpacity={0.7}
-                        >
-                          <IconSymbol name={codeCopied ? "checkmark" : "square.and.arrow.up"} size={15} color={colors.primary} />
-                          <Text style={[styles.inviteActionText, { color: colors.primary }]}>
-                            {codeCopied ? "Copied!" : "Copy Code"}
-                          </Text>
-                        </TouchableOpacity>
-                        <View style={[styles.actionDivider, { backgroundColor: colors.border }]} />
-                        <TouchableOpacity
-                          style={styles.inviteAction}
-                          onPress={() => handleShareCode(inv.code, inv.driverName)}
-                          activeOpacity={0.7}
-                        >
-                          <IconSymbol name="square.and.arrow.up" size={15} color={colors.primary} />
-                          <Text style={[styles.inviteActionText, { color: colors.primary }]}>Share</Text>
-                        </TouchableOpacity>
-                        <View style={[styles.actionDivider, { backgroundColor: colors.border }]} />
-                        <TouchableOpacity
-                          style={styles.inviteAction}
-                          onPress={() => handleRevokeInvite(inv.id)}
-                          activeOpacity={0.7}
-                        >
-                          <IconSymbol name="xmark" size={15} color={colors.error} />
-                          <Text style={[styles.inviteActionText, { color: colors.error }]}>Revoke</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })}
-              </>
-            )}
-
-            {pastInvitations.length > 0 && (
-              <>
-                <Text style={[styles.inviteGroupTitle, { color: colors.muted, marginTop: 16 }]}>PAST</Text>
-                {pastInvitations.map((inv) => (
-                  <View key={inv.id} style={[styles.inviteCard, { backgroundColor: colors.surface, borderColor: colors.border, opacity: 0.7 }]}>
-                    <View style={styles.inviteCardTop}>
-                      <View style={styles.inviteCardLeft}>
-                        <Text style={[styles.inviteCode, { color: colors.muted }]}>{inv.code}</Text>
-                        {inv.driverName && (
-                          <Text style={[styles.inviteDriver, { color: colors.foreground }]}>{inv.driverName}</Text>
-                        )}
-                        {inv.driverEmail && (
-                          <Text style={[styles.inviteEmail, { color: colors.muted }]}>{inv.driverEmail}</Text>
-                        )}
-                      </View>
-                      <StatusBadge status={inv.status} />
-                    </View>
-                  </View>
-                ))}
-              </>
-            )}
-          </ScrollView>
-        )
-      )}
-
-      {/* Invite Modal */}
-      <Modal
-        visible={showInviteModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={handleCloseModal}
-      >
-        <View style={[styles.modal, { backgroundColor: colors.background }]}>
-          {/* Modal Header */}
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.modalTitle, { color: colors.foreground }]}>
-              {generatedCode ? "Invitation Created" : "Invite a Driver"}
-            </Text>
-            <TouchableOpacity onPress={handleCloseModal} activeOpacity={0.7}>
-              <IconSymbol name="xmark" size={20} color={colors.muted} />
-            </TouchableOpacity>
+          <View style={[styles.subTabBar, { borderBottomColor: colors.border }]}>
+            <View style={[styles.subTab, { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}>
+              <Text style={[styles.subTabText, { color: colors.primary }]}>Deliveries</Text>
+            </View>
           </View>
+        )}
 
-          <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-            {!generatedCode ? (
-              <>
-                <Text style={[styles.modalSubtitle, { color: colors.muted }]}>
-                  Enter the driver's details to generate a unique invitation code. Share the code with the driver so they can join your fleet in the AutoHaul Driver app.
-                </Text>
+        {canViewRates && subTab === "earnings" ? (
+          /* ── Earnings List ──────────────────────────────────────────────── */
+          sortedDelivered.length === 0 ? (
+            <View style={styles.emptyState}>
+              <IconSymbol name="tray" size={36} color={colors.muted} />
+              <Text style={[styles.emptyText, { color: colors.muted }]}>No deliveries in this period</Text>
+            </View>
+          ) : (
+            sortedDelivered.map((load) => (
+              <EarningRowItem key={load.id} load={load} colors={colors} showPay />
+            ))
+          )
+        ) : canViewRates && subTab === "stats" ? (
+          /* ── Stats / Breakdown ──────────────────────────────────────────── */
+          <View style={styles.statsContainer}>
+            <View style={[styles.statsSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.statsSectionTitle, { color: colors.muted }]}>PERFORMANCE</Text>
+              <StatRow label="Total Revenue" value={fmtDollars(stats.totalRevenue)} colors={colors} />
+              <StatRow label="Total Loads" value={String(stats.totalLoads)} colors={colors} />
+              <StatRow label="Total Vehicles" value={String(stats.totalVehicles)} colors={colors} />
+              <StatRow label="Avg Revenue / Load" value={fmtDollars(stats.avgPerLoad)} colors={colors} />
+              <StatRow label="Avg Revenue / Vehicle" value={fmtDollars(stats.avgPerVehicle)} colors={colors} />
+              {deliveredLoads.length > 0 && (
+                <StatRow
+                  label="Avg Vehicles / Load"
+                  value={(stats.totalVehicles / stats.totalLoads).toFixed(1)}
+                  colors={colors}
+                />
+              )}
+              {insights.turnaroundCount > 0 && (
+                <StatRow
+                  label="Avg Turnaround"
+                  value={insights.avgTurnaroundDays < 1
+                    ? `${Math.round(insights.avgTurnaroundDays * 24)} hours`
+                    : `${insights.avgTurnaroundDays.toFixed(1)} days`}
+                  colors={colors}
+                />
+              )}
+              {insights.totalMiles > 0 && (
+                <>
+                  <StatRow label="Est. Miles Driven" value={`${insights.totalMiles.toLocaleString()} mi`} colors={colors} />
+                  <StatRow label="Revenue / Mile" value={`$${insights.costPerMile.toFixed(2)}`} colors={colors} />
+                </>
+              )}
+            </View>
 
-                <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: colors.muted }]}>DRIVER NAME</Text>
-                  <TextInput
-                    style={[styles.formInput, { backgroundColor: colors.surface, color: colors.foreground, borderColor: colors.border }]}
-                    placeholder="e.g. John Smith"
-                    placeholderTextColor={colors.muted}
-                    value={inviteName}
-                    onChangeText={setInviteName}
-                    autoCapitalize="words"
-                    returnKeyType="next"
-                  />
-                </View>
+            <View style={[styles.statsSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.statsSectionTitle, { color: colors.muted }]}>EXPENSES</Text>
+              {Object.keys(stats.expenseByCategory).length === 0 ? (
+                <Text style={[styles.noExpenses, { color: colors.muted }]}>No expenses recorded</Text>
+              ) : (
+                <>
+                  {Object.entries(stats.expenseByCategory)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([cat, cents]) => (
+                      <StatRow key={cat} label={cat} value={fmtCurrency(cents)} colors={colors} valueColor="#EF5350" />
+                    ))}
+                  <View style={[styles.statTotalRow, { borderTopColor: colors.border }]}>
+                    <Text style={[styles.statTotalLabel, { color: colors.text }]}>Total Expenses</Text>
+                    <Text style={[styles.statTotalValue, { color: "#EF5350" }]}>
+                      {fmtCurrency(stats.totalExpenseCents)}
+                    </Text>
+                  </View>
+                </>
+              )}
+            </View>
 
-                <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: colors.muted }]}>DRIVER EMAIL (OPTIONAL)</Text>
-                  <TextInput
-                    style={[styles.formInput, { backgroundColor: colors.surface, color: colors.foreground, borderColor: colors.border }]}
-                    placeholder="driver@email.com"
-                    placeholderTextColor={colors.muted}
-                    value={inviteEmail}
-                    onChangeText={setInviteEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    returnKeyType="done"
-                    onSubmitEditing={handleGenerateInvite}
-                  />
-                </View>
+            <View style={[styles.netCard, { backgroundColor: stats.netProfit >= 0 ? "#4CAF5010" : "#EF535010", borderColor: stats.netProfit >= 0 ? "#4CAF5040" : "#EF535040" }]}>
+              <Text style={[styles.netLabel, { color: colors.muted }]}>Net Profit</Text>
+              <Text style={[styles.netValue, { color: stats.netProfit >= 0 ? "#4CAF50" : "#EF5350" }]}>
+                {fmtDollars(stats.netProfit)}
+              </Text>
+              <Text style={[styles.netSub, { color: colors.muted }]}>Revenue minus expenses</Text>
+            </View>
+          </View>
+        ) : !canViewRates ? (
+          /* ── Deliveries list (no dollar amounts) ────────────────────────── */
+          sortedDelivered.length === 0 ? (
+            <View style={styles.emptyState}>
+              <IconSymbol name="tray" size={36} color={colors.muted} />
+              <Text style={[styles.emptyText, { color: colors.muted }]}>No deliveries in this period</Text>
+            </View>
+          ) : (
+            sortedDelivered.map((load) => (
+              <EarningRowItem key={load.id} load={load} colors={colors} showPay={false} />
+            ))
+          )
+        ) : null}
 
-                <TouchableOpacity
-                  style={[
-                    styles.generateBtn,
-                    { backgroundColor: colors.primary },
-                    (generateInviteMutation.isPending || (!inviteName.trim() && !inviteEmail.trim())) && { opacity: 0.5 },
-                  ]}
-                  onPress={handleGenerateInvite}
-                  disabled={generateInviteMutation.isPending || (!inviteName.trim() && !inviteEmail.trim())}
-                  activeOpacity={0.85}
-                >
-                  {generateInviteMutation.isPending ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.generateBtnText}>Generate Invitation Code</Text>
-                  )}
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                {/* Success State */}
-                <View style={[styles.codeCard, { backgroundColor: colors.primary + "0E", borderColor: colors.primary + "30" }]}>
-                  <Text style={[styles.codeCardLabel, { color: colors.muted }]}>Invitation Code</Text>
-                  <Text style={[styles.codeCardCode, { color: colors.primary }]}>{generatedCode}</Text>
-                  <Text style={[styles.codeCardExpiry, { color: colors.muted }]}>Valid for 7 days</Text>
-                </View>
+        <View style={{ height: 40 }} />
+      </ScrollView>
 
-                <Text style={[styles.codeInstructions, { color: colors.muted }]}>
-                  Share this code with {inviteName || "the driver"}. They will enter it in the AutoHaul Driver app under "Join with Invitation Code" on the login screen.
-                </Text>
+      {/* ── Month Picker Modal ───────────────────────────────────────────────── */}
+      <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
+        <View style={{ flex: 1 }}>
+          <Pressable style={styles.monthPickerBackdrop} onPress={() => setShowMonthPicker(false)} />
+          <View style={[styles.monthPickerDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ maxHeight: 300 }}>
+              {monthOptions.map((opt) => {
+                const isActive = opt.year === selectedYear && opt.month === selectedMonth;
+                return (
+                  <TouchableOpacity
+                    key={`${opt.year}-${opt.month}`}
+                    style={[styles.monthPickerRow, isActive && { backgroundColor: colors.primary + "12" }]}
+                    onPress={() => handleSelectMonth(opt.year, opt.month)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.monthPickerRowText, { color: isActive ? colors.primary : colors.text, fontWeight: isActive ? "700" : "500" }]}>
+                      {opt.label}
+                    </Text>
+                    {isActive && <IconSymbol name="checkmark" size={16} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
-                <TouchableOpacity
-                  style={[styles.generateBtn, { backgroundColor: colors.primary }]}
-                  onPress={() => handleCopyCode(generatedCode)}
-                  activeOpacity={0.85}
-                >
-                  <IconSymbol name={codeCopied ? "checkmark" : "square.and.arrow.up"} size={18} color="#FFFFFF" />
-                  <Text style={styles.generateBtnText}>{codeCopied ? "Copied to Clipboard!" : "Copy Code"}</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.shareBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                  onPress={() => handleShareCode(generatedCode, inviteName)}
-                  activeOpacity={0.85}
-                >
-                  <IconSymbol name="square.and.arrow.up" size={18} color={colors.primary} />
-                  <Text style={[styles.shareBtnText, { color: colors.primary }]}>Share via SMS / Email</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.doneBtn}
-                  onPress={handleCloseModal}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.doneBtnText, { color: colors.muted }]}>Done</Text>
-                </TouchableOpacity>
-              </>
+      {/* ── Goal Setting Modal — drops from top to avoid keyboard ────────────── */}
+      <Modal visible={canViewRates && showGoalModal} transparent animationType="fade" onRequestClose={() => setShowGoalModal(false)}>
+        <View style={{ flex: 1 }}>
+          <Pressable style={styles.monthPickerBackdrop} onPress={() => setShowGoalModal(false)} />
+          <View style={[styles.goalDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={[styles.pickerTitle, { color: colors.text }]}>Monthly Revenue Goal</Text>
+            <Text style={[styles.goalModalSub, { color: colors.muted }]}>
+              Set a target to track your progress throughout the month.
+            </Text>
+            <View style={[styles.goalInputRow, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <Text style={[styles.goalInputPrefix, { color: colors.muted }]}>$</Text>
+              <TextInput
+                style={[styles.goalInputField, { color: colors.text }]}
+                value={goalInput}
+                onChangeText={setGoalInput}
+                placeholder="e.g. 12000"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleSaveGoal}
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.goalSaveBtn, { backgroundColor: colors.primary }]}
+              onPress={handleSaveGoal}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.goalSaveBtnText}>Save Goal</Text>
+            </TouchableOpacity>
+            {monthlyGoal > 0 && (
+              <TouchableOpacity style={styles.goalClearBtn} onPress={handleClearGoal} activeOpacity={0.7}>
+                <Text style={[styles.goalClearText, { color: colors.error }]}>Remove Goal</Text>
+              </TouchableOpacity>
             )}
-          </ScrollView>
+          </View>
         </View>
       </Modal>
     </ScreenContainer>
   );
 }
 
+// ─── Stat Row Sub-component ──────────────────────────────────────────────────
+
+function StatRow({ label, value, colors, valueColor }: { label: string; value: string; colors: any; valueColor?: string }) {
+  return (
+    <View style={styles.statRow}>
+      <Text style={[styles.statLabel, { color: colors.muted }]}>{label}</Text>
+      <Text style={[styles.statValue, { color: valueColor ?? colors.text }]}>{value}</Text>
+    </View>
+  );
+}
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
+    fontSize: 22,
+    fontWeight: "800",
     color: "#FFFFFF",
   },
-  inviteBtn: {
+  headerSubtitle: {
+    fontSize: 13,
+    color: "#FFFFFFAA",
+    marginTop: 2,
+  },
+  rangePill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -502,273 +965,537 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
   },
-  inviteBtnText: {
+  rangePillText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
   },
-  tabBar: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
+  monthPickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 13,
-    alignItems: "center",
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  activeTab: {},
-  tabText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 40,
-    gap: 12,
-  },
-  emptyIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
-  },
-  // Driver card
-  driverCard: {
-    borderRadius: 14,
+  monthPickerDropdown: {
+    position: "absolute",
+    top: 100,
+    right: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 2,
+    paddingVertical: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    width: 220,
+    overflow: "hidden",
   },
-  driverAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  driverAvatarText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  driverCardInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  driverCardTop: {
+  monthPickerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  driverCardName: {
+  monthPickerRowText: {
     fontSize: 15,
-    fontWeight: "700",
+  },
+  scrollContent: {
+    paddingBottom: 20,
+  },
+
+  // Hero
+  heroCard: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 20,
+  },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  heroStat: {
     flex: 1,
+    alignItems: "center",
   },
-  driverCardDetail: {
-    fontSize: 13,
+  heroValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
-  driverCardJoined: {
+  heroLabel: {
     fontSize: 12,
-    marginTop: 2,
+    color: "#FFFFFFAA",
+    marginTop: 4,
+    fontWeight: "500",
   },
-  removeBtn: {
-    padding: 8,
+  heroDivider: {
+    width: 1,
+    height: 36,
   },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+  deltaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#FFFFFF20",
   },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: "700",
+  deltaText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
-  // Invitation cards
-  inviteGroupTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
+
+  // Goal
+  goalSection: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#FFFFFF20",
+  },
+  goalLabelRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 8,
   },
-  inviteCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 2,
+  goalLabel: {
+    fontSize: 12,
+    color: "#FFFFFFBB",
+    fontWeight: "500",
+  },
+  goalBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#FFFFFF25",
     overflow: "hidden",
   },
-  inviteCardTop: {
+  goalBarFill: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#A5D6A7",
+  },
+  goalProjection: {
+    fontSize: 11,
+    color: "#FFFFFF99",
+    marginTop: 6,
+    textAlign: "center",
+    fontWeight: "500",
+  },
+  goalSetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#FFFFFF20",
+  },
+  goalSetText: {
+    fontSize: 13,
+    color: "#FFFFFFCC",
+    fontWeight: "500",
+  },
+
+  // Insights Row
+  insightsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: 12,
+  },
+  insightCard: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    gap: 4,
+  },
+  insightValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  insightLabel: {
+    fontSize: 10,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+
+  // Best Period
+  bestPeriodCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: 1,
     padding: 14,
+  },
+  bestPeriodHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  bestPeriodTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  bestPeriodRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  bestPeriodLabel: {
+    fontSize: 13,
+  },
+  bestPeriodRight: {
+    alignItems: "flex-end",
+  },
+  bestPeriodValue: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  bestPeriodDate: {
+    fontSize: 11,
+    marginTop: 1,
+  },
+
+  // Goal Modal
+  goalDropdown: {
+    position: "absolute",
+    top: 100,
+    left: 16,
+    right: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  goalModalSub: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  goalInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    height: 52,
+    marginBottom: 16,
+  },
+  goalInputPrefix: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginRight: 4,
+  },
+  goalInputField: {
+    flex: 1,
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  goalSaveBtn: {
+    height: 50,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  goalSaveBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  goalClearBtn: {
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  goalClearText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+
+  // Quick Stats
+  quickStatsRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: 14,
+  },
+  quickCard: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    gap: 6,
+  },
+  quickIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  quickLabel: {
+    fontSize: 10,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+
+  // Chart
+  chartCard: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 16,
+  },
+  chartHeader: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 8,
   },
-  inviteCardLeft: {
+  chartTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  chartSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    marginBottom: 12,
+  },
+  granularityRow: {
+    flexDirection: "row",
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 3,
+    marginBottom: 14,
+  },
+  granularityBtn: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  granularityText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  chartBars: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    height: 100,
+    gap: 6,
+  },
+  chartBarCol: {
+    flex: 1,
+    alignItems: "center",
+  },
+  chartBarTrack: {
+    width: "100%",
+    height: 80,
+    justifyContent: "flex-end",
+    alignItems: "center",
+  },
+  chartBar: {
+    width: "70%",
+    minHeight: 3,
+  },
+  chartBarValue: {
+    fontSize: 10,
+    fontWeight: "700",
+    marginBottom: 3,
+  },
+  chartBarLabel: {
+    fontSize: 10,
+    marginTop: 6,
+    fontWeight: "500",
+  },
+
+  // Sub tabs
+  subTabBar: {
+    flexDirection: "row",
+    marginTop: 18,
+    marginHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  subTab: {
+    flex: 1,
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  subTabText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
+  // Empty
+  emptyState: {
+    alignItems: "center",
+    paddingTop: 50,
+    gap: 10,
+  },
+  emptyText: {
+    fontSize: 14,
+  },
+
+  // Earnings rows
+  earningRow: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  earningLeft: {
     flex: 1,
     gap: 2,
   },
-  inviteCode: {
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: 3,
+  earningLoad: {
+    fontSize: 15,
+    fontWeight: "700",
   },
-  inviteDriver: {
-    fontSize: 14,
-    fontWeight: "600",
+  earningDetail: {
+    fontSize: 12,
   },
-  inviteEmail: {
-    fontSize: 13,
-  },
-  inviteExpiry: {
+  earningVehicles: {
     fontSize: 12,
     marginTop: 2,
   },
-  inviteActions: {
-    flexDirection: "row",
-    borderTopWidth: 1,
-  },
-  inviteAction: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    paddingVertical: 10,
-  },
-  inviteActionText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  actionDivider: {
-    width: 1,
-    alignSelf: "stretch",
-  },
-  // Modal
-  modal: {
-    flex: 1,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 24,
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-  },
-  modalTitle: {
+  earningAmount: {
     fontSize: 18,
-    fontWeight: "700",
+    fontWeight: "800",
+    marginLeft: 12,
   },
-  modalSubtitle: {
-    fontSize: 14,
-    lineHeight: 21,
-    marginBottom: 28,
+
+  // Stats
+  statsContainer: {
+    paddingHorizontal: 16,
+    marginTop: 10,
+    gap: 12,
   },
-  formGroup: {
-    marginBottom: 20,
+  statsSection: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 16,
   },
-  formLabel: {
+  statsSectionTitle: {
     fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.8,
-    marginBottom: 8,
-  },
-  formInput: {
-    height: 50,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    paddingHorizontal: 14,
-    fontSize: 15,
-  },
-  generateBtn: {
-    height: 52,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 8,
     marginBottom: 12,
   },
-  generateBtnText: {
-    color: "#FFFFFF",
-    fontSize: 16,
+  statRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  statLabel: {
+    fontSize: 14,
+  },
+  statValue: {
+    fontSize: 14,
     fontWeight: "700",
   },
-  codeCard: {
-    borderRadius: 20,
-    borderWidth: 1.5,
-    padding: 28,
+  statTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
   },
-  codeCardLabel: {
+  statTotalLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  statTotalValue: {
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  noExpenses: {
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 12,
+  },
+
+  // Net profit card
+  netCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 20,
+    alignItems: "center",
+    gap: 4,
+  },
+  netLabel: {
     fontSize: 12,
     fontWeight: "600",
     letterSpacing: 0.5,
-    marginBottom: 10,
   },
-  codeCardCode: {
-    fontSize: 36,
+  netValue: {
+    fontSize: 28,
     fontWeight: "900",
-    letterSpacing: 6,
-    marginBottom: 8,
   },
-  codeCardExpiry: {
-    fontSize: 13,
+  netSub: {
+    fontSize: 12,
+    marginTop: 2,
   },
-  codeInstructions: {
-    fontSize: 14,
-    lineHeight: 21,
-    textAlign: "center",
-    marginBottom: 24,
+
+  // Shared bottom-sheet modal
+  sheetWrapper: {
+    flex: 1,
+    justifyContent: "flex-end",
   },
-  shareBtn: {
-    height: 52,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 8,
-    borderWidth: 1.5,
-    marginBottom: 12,
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.85)",
   },
-  shareBtnText: {
-    fontSize: 16,
-    fontWeight: "600",
+  sheetContainer: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === "ios" ? 40 : 24,
+    paddingTop: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
   },
-  doneBtn: {
-    alignItems: "center",
-    paddingVertical: 14,
+  pickerHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 16,
   },
-  doneBtnText: {
-    fontSize: 15,
-    fontWeight: "500",
+  pickerTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    marginBottom: 16,
   },
 });

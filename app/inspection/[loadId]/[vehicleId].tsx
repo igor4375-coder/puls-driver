@@ -5,19 +5,21 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   TextInput,
   StyleSheet,
   Alert,
-  Image,
   Modal,
   Platform,
   ActivityIndicator,
+  Dimensions,
 } from "react-native";
+import { Image } from "expo-image";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
-import * as Location from "expo-location";
+
 import { photoQueue } from "@/lib/photo-queue";
 import type { PhotoQueueEntry } from "@/lib/photo-queue";
 import { ScreenContainer } from "@/components/screen-container";
@@ -505,7 +507,7 @@ function DamageModal({
         mediaTypes: ["images"],
         quality: 1,  // No compression — preserve original quality
       });
-      if (!result.canceled) {
+      if (!result.canceled && result.assets?.[0]) {
         setDamagePhotos((prev) => [...prev, result.assets[0].uri]);
       }
     } finally {
@@ -726,6 +728,9 @@ export default function InspectionScreen() {
   const [navigationDisk, setNavigationDisk] = useState<boolean | null>(existingAdditional?.navigationDisk ?? null);
   const [pluginChargerCable, setPluginChargerCable] = useState<boolean | null>(existingAdditional?.pluginChargerCable ?? null);
   const [headphones, setHeadphones] = useState<boolean | null>(existingAdditional?.headphones ?? null);
+  const [handoffNote, setHandoffNote] = useState(
+    isDelivery ? vehicle?.deliveryInspection?.handoffNote ?? "" : ""
+  );
 
   const [selectedZone, setSelectedZone] = useState<DamageZone | null>(null);
   const [showDamageModal, setShowDamageModal] = useState(false);
@@ -882,30 +887,13 @@ export default function InspectionScreen() {
   };
 
   const handleSave = async () => {
-    // Capture driver's GPS location for the caption
-    let locationLat: number | undefined;
-    let locationLng: number | undefined;
-    let locationLabel: string | undefined;
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") {
-        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-        locationLat = pos.coords.latitude;
-        locationLng = pos.coords.longitude;
-        // Reverse-geocode to get city/region
-        try {
-          const [geo] = await Location.reverseGeocodeAsync({ latitude: locationLat, longitude: locationLng });
-          if (geo) {
-            const parts = [geo.city || geo.subregion, geo.region].filter(Boolean);
-            if (parts.length > 0) locationLabel = parts.join(", ");
-          }
-        } catch {
-          // Reverse geocode failed — lat/lng still saved
-        }
-      }
-    } catch {
-      // GPS unavailable — proceed without location
-    }
+    // Reuse GPS from the existing inspection (captured during camera session)
+    // instead of blocking on a fresh GPS request.
+    const existingInsp = isDelivery ? vehicle?.deliveryInspection : vehicle?.pickupInspection;
+    const locationLat = existingInsp?.locationLat;
+    const locationLng = existingInsp?.locationLng;
+    const locationLabel = existingInsp?.locationLabel;
+
     const inspection: VehicleInspection = {
       vehicleId,
       damages,
@@ -916,6 +904,7 @@ export default function InspectionScreen() {
       locationLat,
       locationLng,
       locationLabel,
+      ...(isDelivery && handoffNote.trim() ? { handoffNote: handoffNote.trim() } : {}),
       additionalInspection: {
         odometer,
         notes: "",
@@ -943,62 +932,81 @@ export default function InspectionScreen() {
     } else {
       savePickupInspection(loadId, vehicleId, inspection);
     }
-    // Upload photos to S3 and wait for completion before syncing to platform.
-    // flushAndGetUrls() awaits every pending upload for this vehicle and returns
-    // the S3 URLs, fixing the race condition where syncInspection received photos: [].
-    let uploadedPhotoUrls: string[] = [];
-    try {
-      uploadedPhotoUrls = await photoQueue.flushAndGetUrls(loadId, vehicleId);
-    } catch (flushErr) {
-      console.warn("[Inspection] Photo flush failed, will retry in background:", flushErr);
-      // Fall back to fire-and-forget so the background loop can retry
-      photoQueue.flushForVehicle(loadId, vehicleId).catch(() => {});
+
+    // Navigate back immediately — don't block the driver on uploads
+    if (router.canGoBack()) {
+      router.dismiss(1);
+    } else {
+      router.replace(`/load/${loadId}` as any);
     }
 
-    // Also include any photos that were already S3 URLs (e.g. from a previous save)
-    const existingS3Urls = photos.filter((p) => p.startsWith("http"));
-    const allUploadedPhotos = [...new Set([...existingS3Urls, ...uploadedPhotoUrls])];
-
-    // Submit to company platform for platform loads
+    // Upload remaining photos and sync to platform in the background.
+    // Photos already started uploading when they were taken; this flushes any stragglers.
     const isPlatformLoad = loadId.startsWith("platform-");
-    // Read platformTripId from the load object (fresh from latest platform fetch),
-    // NOT from parsing loadId which may contain a stale legId.
     const platformTripId = isPlatformLoad ? (load?.platformTripId ?? loadId.replace("platform-", "")) : null;
-    // Use platform-assigned driverCode, not local app code
     const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
-    if (isPlatformLoad && platformTripId && driverCode && vehicle) {
+
+    (async () => {
+      let uploadedPhotoUrls: string[] = [];
       try {
-        // Map damages to the new syncInspection format with x/y coordinates
-        const syncDamages = damages.map((d) => ({
-          id: d.id,
-          zone: d.zone,
-          type: d.type,
-          severity: d.severity,
-          x: d.xPct != null ? d.xPct / 100 : 0.5,  // normalize 0-100 → 0-1
-          y: d.yPct != null ? d.yPct / 100 : 0.5,
-          diagramView: d.diagramView,
-          note: d.description || undefined,
-        }));
-        await syncInspectionAction({
-          loadNumber: load?.loadNumber || "",
-          legId: platformTripId,
-          driverCode,
-          inspectionType: isDelivery ? "delivery" : "pickup",
-          vehicleVin: vehicle.vin || "",
-          photos: allUploadedPhotos,
-          damages: syncDamages,
-          noDamage,
-          gps: { lat: locationLat ?? 0, lng: locationLng ?? 0 },
-          timestamp: new Date().toISOString(),
-          notes: notes || undefined,
-        });
-      } catch (err) {
-        console.warn("[Inspection] Failed to sync to company platform:", err);
-        // Don't block the driver — local save already happened
+        uploadedPhotoUrls = await photoQueue.flushAndGetUrls(loadId, vehicleId);
+      } catch {
+        photoQueue.flushForVehicle(loadId, vehicleId).catch(() => {});
       }
-    }
-    // Navigate back to load detail
-    router.dismiss(1);
+
+      const existingS3Urls = photos.filter((p) => p.startsWith("http"));
+      const allUploadedPhotos = [...new Set([...existingS3Urls, ...uploadedPhotoUrls])];
+
+      if (isPlatformLoad && platformTripId && driverCode && vehicle) {
+        try {
+          const syncDamages = damages.map((d) => ({
+            id: d.id,
+            zone: d.zone,
+            type: d.type,
+            severity: d.severity,
+            x: d.xPct != null ? d.xPct / 100 : 0.5,
+            y: d.yPct != null ? d.yPct / 100 : 0.5,
+            diagramView: d.diagramView,
+            note: d.description || undefined,
+          }));
+          const additionalData: Record<string, unknown> = {};
+          if (odometer) additionalData.odometer = odometer;
+          if (drivable !== null) additionalData.drivable = drivable;
+          if (windscreen !== null) additionalData.windscreen = windscreen;
+          if (glassesIntact !== null) additionalData.glassesIntact = glassesIntact;
+          if (titlePresent !== null) additionalData.titlePresent = titlePresent;
+          if (billOfSale !== null) additionalData.billOfSale = billOfSale;
+          if (keys !== null) additionalData.keys = keys;
+          if (remotes !== null) additionalData.remotes = remotes;
+          if (headrests !== null) additionalData.headrests = headrests;
+          if (cargoCover !== null) additionalData.cargoCover = cargoCover;
+          if (spareTire !== null) additionalData.spareTire = spareTire;
+          if (radio !== null) additionalData.radio = radio;
+          if (manuals !== null) additionalData.manuals = manuals;
+          if (navigationDisk !== null) additionalData.navigationDisk = navigationDisk;
+          if (pluginChargerCable !== null) additionalData.pluginChargerCable = pluginChargerCable;
+          if (headphones !== null) additionalData.headphones = headphones;
+
+          await syncInspectionAction({
+            loadNumber: load?.loadNumber || "",
+            legId: platformTripId,
+            driverCode,
+            inspectionType: isDelivery ? "delivery" : "pickup",
+            vehicleVin: vehicle.vin || "",
+            photos: allUploadedPhotos,
+            damages: syncDamages,
+            noDamage,
+            gps: { lat: locationLat ?? 0, lng: locationLng ?? 0 },
+            timestamp: new Date().toISOString(),
+            notes: notes || undefined,
+            ...(isDelivery && handoffNote.trim() ? { handoffNote: handoffNote.trim() } : {}),
+            ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
+          });
+        } catch (err) {
+          console.warn("[Inspection] Failed to sync to company platform:", err);
+        }
+      }
+    })();
   };
 
   // ── Complete Pickup: save inspection + capture GPS + upload photos + call markAsPickedUp ──
@@ -1010,27 +1018,12 @@ export default function InspectionScreen() {
     setCompleting(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      // 1. Capture GPS (best-effort; fallback to 0,0 if denied)
-      let gpsLat = 0;
-      let gpsLng = 0;
-      let locationLabel: string | undefined;
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === "granted") {
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          gpsLat = pos.coords.latitude;
-          gpsLng = pos.coords.longitude;
-          try {
-            const [geo] = await Location.reverseGeocodeAsync({ latitude: gpsLat, longitude: gpsLng });
-            if (geo) {
-              const parts = [geo.city || geo.subregion, geo.region].filter(Boolean);
-              if (parts.length > 0) locationLabel = parts.join(", ");
-            }
-          } catch { /* reverse geocode failed */ }
-        }
-      } catch { /* GPS unavailable */ }
+      // Reuse GPS from camera session (already captured during photo taking)
+      const existingInsp = vehicle?.pickupInspection;
+      const gpsLat = existingInsp?.locationLat ?? 0;
+      const gpsLng = existingInsp?.locationLng ?? 0;
+      const locationLabel = existingInsp?.locationLabel;
 
-      // 2. Save inspection locally
       const inspection: VehicleInspection = {
         vehicleId,
         damages,
@@ -1207,12 +1200,19 @@ export default function InspectionScreen() {
             <IconSymbol name="chevron.right" size={16} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
 
-          {/* Photo grid — shows captured photos */}
+          {/* Photo grid — virtualized for large photo sets */}
           {photos.length > 0 && (
-            <View style={styles.photosGrid}>
-              {photos.map((uri, idx) => (
-                <View key={idx} style={styles.photoThumb}>
-                  <Image source={{ uri }} style={styles.photoImage} resizeMode="cover" />
+            <FlatList
+              data={photos}
+              keyExtractor={(_uri, idx) => `photo-${idx}`}
+              numColumns={Math.floor((Dimensions.get("window").width - 48) / 88)}
+              scrollEnabled={false}
+              initialNumToRender={20}
+              maxToRenderPerBatch={15}
+              columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
+              renderItem={({ item: uri, index: idx }) => (
+                <View style={styles.photoThumb}>
+                  <Image source={{ uri }} style={styles.photoImage} contentFit="cover" />
                   <TouchableOpacity
                     style={[styles.photoRemove, { backgroundColor: colors.error }]}
                     onPress={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
@@ -1221,8 +1221,9 @@ export default function InspectionScreen() {
                     <IconSymbol name="xmark" size={10} color="#FFFFFF" />
                   </TouchableOpacity>
                 </View>
-              ))}
-            </View>
+              )}
+              style={{ marginBottom: 12 }}
+            />
           )}
 
           {/* Upload status banner — only shown after Save triggers upload */}
@@ -1381,6 +1382,38 @@ export default function InspectionScreen() {
             numberOfLines={4}
           />
         </View>
+
+        {/* Handoff Note — delivery only, for next leg's driver */}
+        {isDelivery && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.primary }]}>NOTE FOR NEXT DRIVER</Text>
+            <Text style={[styles.handoffHint, { color: colors.muted }]}>
+              Leave instructions for whoever picks up this vehicle next (optional)
+            </Text>
+            <TextInput
+              style={[styles.handoffField, { backgroundColor: "#E3F2FD", color: colors.foreground, borderColor: colors.primary + "44" }]}
+              placeholder='e.g. "Key underneath driver side mat"'
+              placeholderTextColor={colors.muted}
+              value={handoffNote}
+              onChangeText={setHandoffNote}
+              multiline
+              numberOfLines={3}
+            />
+          </View>
+        )}
+
+        {/* Previous Leg Notes — pickup only, from previous leg's delivery driver */}
+        {!isDelivery && vehicle?.previousLegNotes && (
+          <View style={styles.section}>
+            <View style={[styles.prevLegBanner, { backgroundColor: "#FFF8E1", borderColor: "#FFD54F" }]}>
+              <IconSymbol name="info.circle.fill" size={18} color="#F9A825" />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.prevLegTitle, { color: "#E65100" }]}>Note from previous driver</Text>
+                <Text style={[styles.prevLegText, { color: "#5D4037" }]}>{vehicle.previousLegNotes}</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Odometer */}
         <View style={[styles.section, { paddingHorizontal: 16 }]}>
@@ -1590,7 +1623,7 @@ export default function InspectionScreen() {
             <Image
               source={{ uri: pinPhotoViewer.damage.photos![pinPhotoViewer.photoIdx] }}
               style={pinViewerStyles.mainPhoto}
-              resizeMode="contain"
+              contentFit="contain"
             />
 
             {/* Thumbnail strip (if multiple photos) */}
@@ -1612,7 +1645,7 @@ export default function InspectionScreen() {
                         pinViewerStyles.thumb,
                         idx === pinPhotoViewer.photoIdx && pinViewerStyles.thumbActive,
                       ]}
-                      resizeMode="cover"
+                      contentFit="cover"
                     />
                   </TouchableOpacity>
                 ))}
@@ -1962,6 +1995,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     minHeight: 90,
     textAlignVertical: "top",
+  },
+  handoffHint: {
+    fontSize: 12,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
+  handoffField: {
+    borderRadius: 12,
+    borderWidth: 1.5,
+    padding: 12,
+    fontSize: 14,
+    minHeight: 72,
+    textAlignVertical: "top",
+  },
+  prevLegBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  prevLegTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  prevLegText: {
+    fontSize: 14,
+    lineHeight: 20,
   },
   // Save button
   saveFullBtn: {

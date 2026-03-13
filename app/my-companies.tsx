@@ -93,6 +93,9 @@ export default function MyCompaniesScreen() {
       <FlatList
         data={connections}
         keyExtractor={(item) => item.linkId}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={5}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}

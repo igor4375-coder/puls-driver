@@ -27,7 +27,9 @@ import { trpc, createTRPCClient } from "@/lib/trpc";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { SettingsProvider } from "@/lib/settings-context";
 import { LoadsProvider } from "@/lib/loads-context";
+import { PermissionsProvider } from "@/lib/permissions-context";
 import { SyncStatusBanner } from "@/components/sync-status-banner";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
 import { photoQueue } from "@/lib/photo-queue";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
@@ -47,7 +49,11 @@ export const unstable_settings = {
 function LoadsProviderWithAuth({ children }: { children: React.ReactNode }) {
   const { driver } = useAuth();
   const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? null;
-  return <LoadsProvider driverCode={driverCode}>{children}</LoadsProvider>;
+  return (
+    <PermissionsProvider driverCode={driverCode}>
+      <LoadsProvider driverCode={driverCode}>{children}</LoadsProvider>
+    </PermissionsProvider>
+  );
 }
 
 function AppContent() {
@@ -158,7 +164,9 @@ export default function RootLayout() {
 
   const appContent = (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <AppContent />
+      <ErrorBoundary>
+        <AppContent />
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 

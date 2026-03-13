@@ -142,9 +142,9 @@ export class PhotoQueue {
   startBackgroundRetry(): void {
     if (this.backgroundTimer) return; // already running
     // Run once immediately on start to catch any pending from a previous session
-    this.load().then(() => this.sync()).catch(() => {});
+    this.load().then(() => this.sync()).catch((err) => console.warn("[PhotoQueue]", err));
     this.backgroundTimer = setInterval(() => {
-      this.sync().catch(() => {});
+      this.sync().catch((err) => console.warn("[PhotoQueue]", err));
     }, BACKGROUND_INTERVAL_MS);
   }
 
@@ -192,9 +192,9 @@ export class PhotoQueue {
     this.entries.push(entry);
     await this.persist();
     this.emit();
-    // NOTE: Upload is intentionally NOT triggered here.
-    // Photos are uploaded only when flushForVehicle() is called on Save.
-    // The background retry loop handles any remaining photos after that.
+    // Start uploading immediately in the background so most photos are
+    // already on S3 by the time the driver hits Save.
+    this.uploadEntry(entry).catch((err) => console.warn("[PhotoQueue]", err));
     return entry;
   }
 
@@ -208,7 +208,7 @@ export class PhotoQueue {
     await this.load();
     const pending = this.entries.filter(
       (e) =>
-        e.status === "pending" &&
+        (e.status === "pending" || e.status === "uploading") &&
         e.attempts < MAX_RETRIES &&
         e.loadId === loadId &&
         e.vehicleId === vehicleId
@@ -216,9 +216,35 @@ export class PhotoQueue {
     if (pending.length === 0) return;
     const online = await isOnline();
     if (!online) return;
-    for (const entry of pending) {
-      await this.uploadEntry(entry);
+    const CONCURRENCY = 3;
+    for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      const batch = pending.slice(i, i + CONCURRENCY);
+      await Promise.all(batch.map((snapshot) => {
+        // Re-read current status from the live entries array because the
+        // enqueue-triggered background upload may have already started.
+        const live = this.entries.find((e) => e.clientId === snapshot.clientId);
+        if (!live || live.status === "done") return Promise.resolve();
+        if (live.status === "uploading") {
+          return this.waitForUpload(live.clientId);
+        }
+        return this.uploadEntry(live);
+      }));
     }
+  }
+
+  private waitForUpload(clientId: string, timeoutMs = 30_000): Promise<void> {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const check = () => {
+        const entry = this.entries.find((e) => e.clientId === clientId);
+        if (!entry || entry.status === "done" || entry.status === "failed" || Date.now() - start > timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 200);
+      };
+      check();
+    });
   }
 
   /**

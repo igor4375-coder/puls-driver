@@ -10,6 +10,18 @@ import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MOCK_LOADS, type Load, type LoadStatus, type VehicleInspection } from "./data";
 
+// ─── Debounced AsyncStorage writes (reduces I/O pressure) ───────────────────────
+
+const _pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+function debouncedAsyncWrite(key: string, value: string, delayMs = 500) {
+  const existing = _pendingWrites.get(key);
+  if (existing) clearTimeout(existing);
+  _pendingWrites.set(key, setTimeout(() => {
+    AsyncStorage.setItem(key, value).catch((err) => console.warn(`[Loads] AsyncStorage write failed for ${key}:`, err));
+    _pendingWrites.delete(key);
+  }, delayMs));
+}
+
 // ─── Persistence key ──────────────────────────────────────────────────────────
 
 const LOADS_STORAGE_KEY = "autohaul_loads_v2";
@@ -164,6 +176,7 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
         hasKeys: v?.hasKeys ?? null,
         starts: v?.starts ?? null,
         drives: v?.drives ?? null,
+        previousLegNotes: (pl as any).previousLegNotes ?? null,
       } as any,
     ],
     pickup: {
@@ -256,6 +269,7 @@ interface LoadsContextType {
   loads: Load[];
   isLoadingPlatformLoads: boolean;
   platformLoadError: string | null;
+  lastSyncedAt: Date | null;
   getLoad: (id: string) => Load | undefined;
   updateLoadStatus: (loadId: string, status: LoadStatus) => void;
   savePickupInspection: (loadId: string, vehicleId: string, inspection: VehicleInspection) => void;
@@ -270,6 +284,10 @@ interface LoadsContextType {
   revertVehicleToPickupPending: (loadId: string, vehicleId: string) => void;
   /** Move all delivered loads to "archived" status immediately. */
   archiveAllDelivered: () => void;
+  /** Move a single load to "archived" status. Works for both platform and local loads. */
+  archiveSingleLoad: (loadId: string) => void;
+  /** Permanently remove all archived loads from local storage. */
+  clearAllArchived: () => void;
 
   /**
    * Delete a non-platform load (id does NOT start with "platform-").
@@ -368,6 +386,7 @@ export function LoadsProvider({
   const [platformLoads, setPlatformLoads] = useState<Load[]>([]);
   const [isLoadingPlatformLoads, setIsLoadingPlatformLoads] = useState(false);
   const [platformLoadError, setPlatformLoadError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // ── Driver-delivered tracking ─────────────────────────────────────────────
   // Set of load IDs that the driver explicitly marked as delivered.
@@ -399,17 +418,14 @@ export function LoadsProvider({
   // Helper: mark a load as driver-delivered and snapshot it
   const markDriverDelivered = React.useCallback((loadId: string, load: Load) => {
     driverDeliveredRef.current.add(loadId);
-    AsyncStorage.setItem(
-      DRIVER_DELIVERED_KEY,
-      JSON.stringify([...driverDeliveredRef.current])
-    ).catch(() => {});
+    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
     // Save a snapshot so we can show it even if the platform drops the load
     setDeliveredSnapshots((prev) => {
       const exists = prev.some((l) => l.id === loadId);
       const updated = exists
         ? prev.map((l) => (l.id === loadId ? { ...load, status: "delivered" as LoadStatus } : l))
         : [...prev, { ...load, status: "delivered" as LoadStatus }];
-      AsyncStorage.setItem(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
       return updated;
     });
   }, []);
@@ -510,7 +526,7 @@ export function LoadsProvider({
       })
     );
     if (changed) {
-      AsyncStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geocacheRef.current)).catch(() => {});
+      debouncedAsyncWrite(GEO_CACHE_KEY, JSON.stringify(geocacheRef.current));
     }
     return updated;
   }, []);
@@ -527,7 +543,8 @@ export function LoadsProvider({
       const converted = (rawLoads as PlatformLoad[]).map(platformLoadToLoad);
       const geocoded = await geocodePlatformLoads(converted);
       setPlatformLoads(geocoded);
-      AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(geocoded)).catch(() => {});
+      setLastSyncedAt(new Date());
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(geocoded));
     } catch (err: any) {
       setPlatformLoadError(err?.message ?? "Failed to fetch platform loads");
     } finally {
@@ -562,7 +579,7 @@ export function LoadsProvider({
           if (needsGeo) {
             const geocoded = await geocodePlatformLoads(cached);
             setPlatformLoads(geocoded);
-            AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(geocoded)).catch(() => {});
+            debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(geocoded));
           } else {
             setPlatformLoads(cached);
           }
@@ -638,7 +655,7 @@ export function LoadsProvider({
       setLocalLoads(stampFn);
       setPlatformLoads((prev) => {
         const updated = stampFn(prev);
-        AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(updated)).catch(() => {});
+        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
         return updated;
       });
     }
@@ -652,7 +669,7 @@ export function LoadsProvider({
         const updated = prev.map((l) => (l.id === loadId ? { ...l, status } : l));
         // Keep cache in sync so the optimistic update survives until the next API poll
         // (the next API response will overwrite this with the authoritative platform status)
-        AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(updated)).catch(() => {});
+        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
         return updated;
       });
     }
@@ -774,12 +791,12 @@ export function LoadsProvider({
     setLocalLoads(archiveFn);
     setPlatformLoads((prev) => {
       const updated = archiveFn(prev);
-      AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
       return updated;
     });
     setDeliveredSnapshots((prev) => {
       const updated = archiveFn(prev);
-      AsyncStorage.setItem(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
       return updated;
     });
   }, [geocacheReady]);
@@ -794,15 +811,12 @@ export function LoadsProvider({
     // Also remove from delivered snapshots if it ended up there
     setDeliveredSnapshots((prev) => {
       const updated = prev.filter((l) => l.id !== loadId);
-      AsyncStorage.setItem(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
       return updated;
     });
     // Remove from driver-delivered tracking set
     driverDeliveredRef.current.delete(loadId);
-    AsyncStorage.setItem(
-      DRIVER_DELIVERED_KEY,
-      JSON.stringify([...driverDeliveredRef.current])
-    ).catch(() => {});
+    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
   }, []);
 
   // ── clearNonPlatformLoads: wipe all demo/mock/manual loads ───────────────────
@@ -811,7 +825,7 @@ export function LoadsProvider({
     // Remove any non-platform snapshots from delivered snapshots
     setDeliveredSnapshots((prev) => {
       const updated = prev.filter((l) => l.id.startsWith("platform-"));
-      AsyncStorage.setItem(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
       return updated;
     });
     // Clean up driver-delivered tracking for non-platform IDs
@@ -819,10 +833,7 @@ export function LoadsProvider({
       [...driverDeliveredRef.current].filter((id) => id.startsWith("platform-"))
     );
     driverDeliveredRef.current = platformOnly;
-    AsyncStorage.setItem(
-      DRIVER_DELIVERED_KEY,
-      JSON.stringify([...platformOnly])
-    ).catch(() => {});
+    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...platformOnly]));
   }, []);
 
   const archiveAllDelivered = useCallback(() => {
@@ -833,15 +844,55 @@ export function LoadsProvider({
     setLocalLoads(archiveFn);
     setPlatformLoads((prev) => {
       const updated = archiveFn(prev);
-      AsyncStorage.setItem(PLATFORM_LOADS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
       return updated;
     });
     setDeliveredSnapshots((prev) => {
       const updated = archiveFn(prev);
-      AsyncStorage.setItem(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated)).catch(() => {});
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
       return updated;
     });
   }, []);
+
+  const archiveSingleLoad = useCallback((loadId: string) => {
+    const patchFn = (prev: Load[]) =>
+      prev.map((l) => (l.id === loadId && l.status === "delivered" ? { ...l, status: "archived" as LoadStatus } : l));
+    setLocalLoads(patchFn);
+    setPlatformLoads((prev) => {
+      const updated = patchFn(prev);
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+    setDeliveredSnapshots((prev) => {
+      const updated = patchFn(prev);
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  const clearAllArchived = useCallback(() => {
+    const removeFn = (prev: Load[]) => prev.filter((l) => l.status !== "archived");
+    setLocalLoads(removeFn);
+    setPlatformLoads((prev) => {
+      const updated = removeFn(prev);
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+    setDeliveredSnapshots((prev) => {
+      const updated = removeFn(prev);
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+    const archivedIds = new Set(
+      [...driverDeliveredRef.current].filter((id) => {
+        const allLoads = [...localLoads, ...platformLoads, ...deliveredSnapshots];
+        const load = allLoads.find((l) => l.id === id);
+        return load?.status === "archived";
+      })
+    );
+    for (const id of archivedIds) driverDeliveredRef.current.delete(id);
+    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
+  }, [localLoads, platformLoads, deliveredSnapshots]);
 
   return (
     <LoadsContext.Provider
@@ -849,6 +900,7 @@ export function LoadsProvider({
         loads,
         isLoadingPlatformLoads,
         platformLoadError,
+        lastSyncedAt,
         getLoad,
         updateLoadStatus,
         savePickupInspection,
@@ -858,6 +910,8 @@ export function LoadsProvider({
         refreshPlatformLoads,
         revertVehicleToPickupPending,
         archiveAllDelivered,
+        archiveSingleLoad,
+        clearAllArchived,
         deleteLoad,
         clearNonPlatformLoads,
       }}

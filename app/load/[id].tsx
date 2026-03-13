@@ -11,13 +11,13 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   FlatList,
   Dimensions,
   Switch,
   Animated,
 } from "react-native";
+import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { router, useLocalSearchParams } from "expo-router";
@@ -29,6 +29,7 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
+import { usePermissions } from "@/lib/permissions-context";
 import { useSettings, type MapsApp } from "@/lib/settings-context";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { trpc } from "@/lib/trpc";
@@ -338,6 +339,16 @@ function VehicleCard({
               )}
             </View>
           )}
+          {/* Previous leg driver note */}
+          {vehicle.previousLegNotes && (
+            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 8, backgroundColor: "#FFF8E1", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#FFD54F" }}>
+              <IconSymbol name="info.circle.fill" size={15} color="#F9A825" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#E65100", marginBottom: 2 }}>Note from previous driver</Text>
+                <Text style={{ fontSize: 12, color: "#5D4037", lineHeight: 17 }}>{vehicle.previousLegNotes}</Text>
+              </View>
+            </View>
+          )}
         </View>
         <View style={[styles.vehicleColorDot, { backgroundColor: getColorHex(vehicle.color) }]} />
       </View>
@@ -461,6 +472,9 @@ function VehicleCard({
           <FlatList
             data={lightboxPhotos}
             keyExtractor={(_, i) => String(i)}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
@@ -475,7 +489,7 @@ function VehicleCard({
                 <Image
                   source={{ uri: item }}
                   style={styles.lightboxImage}
-                  resizeMode="contain"
+                  contentFit="contain"
                 />
               </View>
             )}
@@ -529,14 +543,21 @@ export default function LoadDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getLoad, updateLoadStatus } = useLoads();
   const { driver } = useAuth();
+  const { canViewRates } = usePermissions();
   const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
   const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
+  const syncInspectionAction = useAction(api.platform.syncInspection);
   const saveSignatureMutation = useMutation(api.signatures.save);
+
+  // Inline handoff note for delivery (visible above "Mark Delivered" when no inspection photos)
+  const [pendingHandoffNote, setPendingHandoffNote] = useState("");
 
   // ─── Require customer signature toggle (per session, resets after pickup/delivery) ─────
   const [requireCustomerSignature, setRequireCustomerSignature] = useState(false);
   const [requireDeliverySignature, setRequireDeliverySignature] = useState(false);
   const { settings } = useSettings();
+
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // ─── Toast notification ────────────────────────────────────────────────────
   const [toastMessage, setToastMessage] = useState("");
@@ -760,6 +781,7 @@ export default function LoadDetailScreen() {
             text: "Take Photos",
             onPress: () => {
               const vehicle = load.vehicles[0];
+              if (!vehicle) return;
               cameraSessionStore.open(null, {
                 loadId: load.id,
                 vehicleId: vehicle.id,
@@ -856,10 +878,73 @@ export default function LoadDetailScreen() {
     ? "Vehicle dropped at terminal — dispatch will assign the next leg"
     : "Vehicle delivered to final destination";
 
+  const hasDeliveryPhotos = load.vehicles.some(
+    (v) => (v.deliveryInspection?.photos?.length ?? 0) > 0
+  );
+
+  const finalizeDelivery = (handoffNote?: string) => {
+    if (requireDeliverySignature) {
+      router.push(`/delivery-signature/${load.id}` as any);
+      return;
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    updateLoadStatus(load.id, "delivered");
+    setRequireDeliverySignature(false);
+    pickupHighlightStore.signal("delivered", deliveryToastMsg);
+    showToast(deliveryToastMsg);
+    router.back();
+
+    const savedSigPaths = settings.driverSignaturePaths;
+    const driverSigStr = savedSigPaths.length > 0
+      ? savedSigPaths.map((p) => p.d).join(" ")
+      : undefined;
+
+    if (driverCode) {
+      saveSignatureMutation({
+        loadId: load.loadNumber ?? load.id,
+        driverCode,
+        signatureType: "delivery",
+        customerNotAvailable: true,
+        driverSig: driverSigStr,
+        capturedAt: new Date().toISOString(),
+      }).catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
+    }
+
+    if (isPlatformLoad && platformTripId && driverCode) {
+      const dlvPhotos = load.vehicles.flatMap(
+        (v) => v.deliveryInspection?.photos ?? []
+      );
+      markAsDeliveredAction({
+        loadNumber: load.loadNumber,
+        legId: platformTripId,
+        driverCode,
+        deliveryTime: new Date().toISOString(),
+        deliveryGPS: { lat: 0, lng: 0 },
+        deliveryPhotos: dlvPhotos,
+      }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
+
+      // Sync handoff note to the platform if provided
+      if (handoffNote && load.vehicles[0]) {
+        syncInspectionAction({
+          loadNumber: load.loadNumber,
+          legId: platformTripId,
+          driverCode,
+          inspectionType: "delivery",
+          vehicleVin: load.vehicles[0].vin || "",
+          photos: dlvPhotos,
+          damages: [],
+          noDamage: true,
+          gps: { lat: 0, lng: 0 },
+          timestamp: new Date().toISOString(),
+          handoffNote,
+        }).catch((err) => console.warn("[LoadDetail] Handoff note sync failed:", err));
+      }
+    }
+  };
+
   const proceedWithDelivery = async () => {
-    // ── GPS Proximity Check ──────────────────────────────────────────────
-    // If the delivery destination has coordinates, compare against the
-    // driver's current position. If > threshold miles away, warn the driver.
+    const noteToSend = pendingHandoffNote.trim() || undefined;
     const destLat = load.delivery.lat;
     const destLng = load.delivery.lng;
 
@@ -878,7 +963,6 @@ export default function LoadDetailScreen() {
           );
 
           if (dist > DELIVERY_PROXIMITY_THRESHOLD_MILES) {
-            // Driver is far from the assigned destination — show warning
             Alert.alert(
               "You're Far From Destination",
               `You are approximately ${Math.round(dist)} miles from the assigned delivery location. Are you sure you want to mark this as delivered here?`,
@@ -889,49 +973,7 @@ export default function LoadDetailScreen() {
                   style: "destructive",
                   onPress: () => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    if (requireDeliverySignature) {
-                      router.push(`/delivery-signature/${load.id}` as any);
-                    } else {
-                      // Auto-confirm delivery without signature
-                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                      updateLoadStatus(load.id, "delivered");
-                      setRequireDeliverySignature(false);
-                      pickupHighlightStore.signal("delivered", deliveryToastMsg);
-                      showToast(deliveryToastMsg);
-                      router.back();
-
-                      // Fire-and-forget: save signature record
-                      const savedSigPaths2 = settings.driverSignaturePaths;
-                      const driverSigStr2 = savedSigPaths2.length > 0
-                        ? savedSigPaths2.map((p) => p.d).join(" ")
-                        : undefined;
-
-                      if (driverCode) {
-                        saveSignatureMutation({
-                          loadId: load.loadNumber ?? load.id,
-                          driverCode,
-                          signatureType: "delivery",
-                          customerNotAvailable: true,
-                          driverSig: driverSigStr2,
-                          capturedAt: new Date().toISOString(),
-                        }).catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
-                      }
-
-                      // Fire-and-forget: sync to platform
-                      if (isPlatformLoad && platformTripId && driverCode) {
-                        const deliveryPhotos2 = load.vehicles.flatMap(
-                          (v) => v.deliveryInspection?.photos ?? []
-                        );
-                        markAsDeliveredAction({
-                          loadNumber: load.loadNumber,
-                          legId: platformTripId,
-                          driverCode,
-                          deliveryTime: new Date().toISOString(),
-                          deliveryGPS: { lat: 0, lng: 0 },
-                          deliveryPhotos: deliveryPhotos2,
-                        }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
-                      }
-                    }
+                    finalizeDelivery(noteToSend);
                   },
                 },
               ]
@@ -944,51 +986,7 @@ export default function LoadDetailScreen() {
       }
     }
 
-    // Within range or GPS unavailable — check if signature is required
-    if (requireDeliverySignature) {
-      router.push(`/delivery-signature/${load.id}` as any);
-      return;
-    }
-
-    // Default: auto-confirm delivery with "Customer Not Available"
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    updateLoadStatus(load.id, "delivered");
-    setRequireDeliverySignature(false);
-    pickupHighlightStore.signal("delivered", deliveryToastMsg);
-    showToast(deliveryToastMsg);
-    router.back();
-
-    // Fire-and-forget: save signature record
-    const savedSigPaths = settings.driverSignaturePaths;
-    const driverSigStr = savedSigPaths.length > 0
-      ? savedSigPaths.map((p) => p.d).join(" ")
-      : undefined;
-
-    if (driverCode) {
-      saveSignatureMutation({
-        loadId: load.loadNumber ?? load.id,
-        driverCode,
-        signatureType: "delivery",
-        customerNotAvailable: true,
-        driverSig: driverSigStr,
-        capturedAt: new Date().toISOString(),
-      }).catch((err) => console.warn("[LoadDetail] Delivery signature save failed:", err));
-    }
-
-    // Fire-and-forget: sync to platform
-    if (isPlatformLoad && platformTripId && driverCode) {
-      const deliveryPhotos = load.vehicles.flatMap(
-        (v) => v.deliveryInspection?.photos ?? []
-      );
-      markAsDeliveredAction({
-        loadNumber: load.loadNumber,
-        legId: platformTripId,
-        driverCode,
-        deliveryTime: new Date().toISOString(),
-        deliveryGPS: { lat: 0, lng: 0 },
-        deliveryPhotos,
-      }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
-    }
+    finalizeDelivery(noteToSend);
   };
 
   const statusColors: Record<LoadStatus, string> = {
@@ -1066,7 +1064,8 @@ export default function LoadDetailScreen() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }} keyboardVerticalOffset={0}>
+      <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={styles.content}>
           {/* Vehicles */}
           <SectionHeader title={`VEHICLES (${load.vehicles.length})`} />
@@ -1138,12 +1137,16 @@ export default function LoadDetailScreen() {
             <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
           </View>
 
-          {/* Payment Info */}
-          <SectionHeader title="PAYMENT" />
-          <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <InfoRow label="Driver Pay" value={formatCurrency(load.driverPay)} />
-            <InfoRow label="Payment Type" value={getPaymentLabel(load.paymentType)} />
-          </View>
+          {/* Payment Info — hidden when rates not visible */}
+          {canViewRates && (
+            <>
+              <SectionHeader title="PAYMENT" />
+              <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <InfoRow label="Driver Pay" value={formatCurrency(load.driverPay)} />
+                <InfoRow label="Payment Type" value={getPaymentLabel(load.paymentType)} />
+              </View>
+            </>
+          )}
 
            {/* Notes */}
           {load.notes ? (
@@ -1361,6 +1364,25 @@ export default function LoadDetailScreen() {
                 />
               </TouchableOpacity>
 
+              {/* Inline handoff note — visible when no delivery inspection photos */}
+              {!hasDeliveryPhotos && (
+                <>
+                  <SectionHeader title="NOTE FOR NEXT DRIVER" />
+                  <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
+                    <TextInput
+                      style={[styles.handoffInlineInput, { color: colors.foreground }]}
+                      placeholder='e.g. "Key underneath driver side mat" (optional)'
+                      placeholderTextColor={colors.muted}
+                      value={pendingHandoffNote}
+                      onChangeText={setPendingHandoffNote}
+                      multiline
+                      numberOfLines={2}
+                      onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 300)}
+                    />
+                  </View>
+                </>
+              )}
+
               <TouchableOpacity
                 style={[styles.ctaBtn, { backgroundColor: colors.success }]}
                 onPress={handleMarkDelivered}
@@ -1389,6 +1411,7 @@ export default function LoadDetailScreen() {
           <View style={{ height: 40 }} />
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Add Expense Sheet */}
       <Modal
@@ -2254,5 +2277,12 @@ const expenseSheetStyles = StyleSheet.create({
     height: 80,
     textAlignVertical: "top",
     paddingTop: 10,
+  },
+  handoffInlineInput: {
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 50,
+    textAlignVertical: "top",
+    padding: 0,
   },
 });
