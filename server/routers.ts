@@ -60,8 +60,7 @@ export const appRouter = router({
         const company = await db.getCompanyByOwnerId(ctx.user.id);
         if (!company) throw new Error("You must set up your company profile first");
         const result = await db.inviteDriverByCode(company.id, input.driverCode);
-        // Send push notification to driver if they have a push token
-        if (result.isNew && result.driverProfile.pushToken) {
+        if (result.isNew && result.driverProfile.pushToken && result.driverProfile.notifyNewInvite !== false) {
           sendPushNotification(
             result.driverProfile.pushToken,
             "New Company Invite",

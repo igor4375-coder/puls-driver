@@ -528,7 +528,7 @@ export default function AddLoadScreen() {
       if (status !== "granted") {
         Alert.alert(
           "Location Permission Needed",
-          "Please allow AutoHaul Driver to access your location in Settings to use this feature.",
+          "Please allow Puls Dispatch to access your location in Settings to use this feature.",
           [
             { text: "Cancel", style: "cancel" },
             { text: "Open Settings", onPress: () => Location.requestForegroundPermissionsAsync() },

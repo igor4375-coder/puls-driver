@@ -10,12 +10,14 @@ import {
   loadExpenses,
   gatePassFiles,
   loadSignatures,
+  driverLocations,
   type InsertCompany,
   type InsertDriverProfile,
   type InsertCompanyInvitation,
   type InsertLoadExpense,
   type InsertGatePassFile,
   type InsertLoadSignature,
+  type InsertDriverLocation,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -850,4 +852,73 @@ export async function getSignaturesForLoad(loadId: string) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(loadSignatures).where(eq(loadSignatures.loadId, loadId));
+}
+
+// ─── Driver Location Helpers ─────────────────────────────────────────────────
+
+export async function insertDriverLocationPings(
+  driverCode: string,
+  pings: Array<{
+    lat: number;
+    lng: number;
+    accuracy?: number | null;
+    speed?: number | null;
+    heading?: number | null;
+    timestamp: number;
+  }>,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const rows: InsertDriverLocation[] = pings.map((p) => ({
+    driverCode,
+    latitude: String(p.lat),
+    longitude: String(p.lng),
+    accuracy: p.accuracy != null ? String(p.accuracy) : undefined,
+    speed: p.speed != null ? String(p.speed) : undefined,
+    heading: p.heading != null ? String(p.heading) : undefined,
+    deviceTimestamp: p.timestamp,
+  }));
+
+  await db.insert(driverLocations).values(rows);
+}
+
+export async function getLatestDriverLocations(companyId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // If companyId is given, only return locations for drivers linked to that company
+  if (companyId) {
+    const linked = await db
+      .select({ driverCode: driverProfiles.driverCode, platformDriverCode: driverProfiles.platformDriverCode, name: driverProfiles.name })
+      .from(driverProfiles)
+      .innerJoin(driverCompanyLinks, eq(driverProfiles.id, driverCompanyLinks.driverProfileId))
+      .where(and(eq(driverCompanyLinks.companyId, companyId), eq(driverCompanyLinks.status, "active")));
+
+    if (linked.length === 0) return [];
+
+    const codes = linked
+      .flatMap((d) => [d.driverCode, d.platformDriverCode].filter(Boolean))
+      .filter((c): c is string => !!c);
+
+    if (codes.length === 0) return [];
+
+    // Get latest ping per driver code using a subquery approach
+    const results = [];
+    for (const code of codes) {
+      const rows = await db
+        .select()
+        .from(driverLocations)
+        .where(eq(driverLocations.driverCode, code))
+        .orderBy(driverLocations.createdAt)
+        .limit(1);
+      if (rows.length > 0) {
+        const driver = linked.find((d) => d.driverCode === code || d.platformDriverCode === code);
+        results.push({ ...rows[0], driverName: driver?.name ?? code });
+      }
+    }
+    return results;
+  }
+
+  return db.select().from(driverLocations).orderBy(driverLocations.createdAt).limit(50);
 }

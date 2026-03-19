@@ -110,7 +110,7 @@ export default function ProfileScreen() {
   const [codeCopied, setCodeCopied] = useState(false);
   const [respondingId, setRespondingId] = useState<number | string | null>(null);
   const [showEquipmentPicker, setShowEquipmentPicker] = useState(false);
-  const { settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths } = useSettings();
+  const { settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths, setLocationTrackingEnabled } = useSettings();
   const { loads, archiveAllDelivered, clearNonPlatformLoads } = useLoads();
 
   // Count non-platform loads (test/manual/demo loads that can be cleared)
@@ -237,10 +237,11 @@ export default function ProfileScreen() {
   const getPendingInvitesAction = useAction(api.platform.getPendingInvites);
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(false);
+  const hasFetchedInvites = useRef(false);
 
   const fetchInvites = useCallback(async () => {
     if (!isValidCode || !inviteCode) return;
-    setInvitesLoading(true);
+    if (!hasFetchedInvites.current) setInvitesLoading(true);
     try {
       const result = await getPendingInvitesAction({ driverCode: inviteCode });
       setPendingInvites(Array.isArray(result) ? result : []);
@@ -249,6 +250,7 @@ export default function ProfileScreen() {
       setPendingInvites([]);
     } finally {
       setInvitesLoading(false);
+      hasFetchedInvites.current = true;
     }
   }, [isValidCode, inviteCode, getPendingInvitesAction]);
 
@@ -431,7 +433,7 @@ export default function ProfileScreen() {
                   onPress={async () => {
                     if (Platform.OS !== "web") await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     Share.share({
-                      message: `My AutoHaul Driver ID is ${inviteCode} — enter it on the platform to invite me.`,
+                      message: `My Puls Dispatch Driver ID is ${inviteCode} — enter it on the platform to invite me.`,
                       title: "My Driver ID",
                     });
                   }}
@@ -691,22 +693,6 @@ export default function ProfileScreen() {
             }
           />
           <SettingRow
-            icon="key.fill"
-            label="Gate Pass Expiring"
-            rightElement={
-              <Switch
-                value={notifyGatePassExpiry}
-                onValueChange={(val) => {
-                  setNotifyGatePassExpiry(val);
-                  saveField({ notifyGatePassExpiry: val });
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                }}
-                trackColor={{ false: colors.border, true: colors.primary }}
-                thumbColor="#FFFFFF"
-              />
-            }
-          />
-          <SettingRow
             icon="calendar.badge.exclamationmark"
             label="Storage Expiry Today"
             rightElement={
@@ -822,6 +808,28 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {/* Location Tracking */}
+          <View style={[styles.settingRow, { borderBottomColor: colors.border, borderBottomWidth: 0 }]}>
+            <View style={[styles.settingIcon, { backgroundColor: colors.primary + "18" }]}>
+              <IconSymbol name="location.fill" size={18} color={colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.settingLabel, { color: colors.foreground }]}>Share Location</Text>
+              <Text style={[styles.settingSubLabel, { color: colors.muted }]}>
+                {settings.locationTrackingEnabled ? "Dispatch can see your position" : "Location sharing is off"}
+              </Text>
+            </View>
+            <Switch
+              value={settings.locationTrackingEnabled}
+              onValueChange={(val) => {
+                setLocationTrackingEnabled(val);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              trackColor={{ false: colors.border, true: colors.primary + "60" }}
+              thumbColor={settings.locationTrackingEnabled ? colors.primary : colors.muted}
+            />
+          </View>
         </View>
 
         {/* ── MY SIGNATURE ── */}
@@ -911,7 +919,7 @@ export default function ProfileScreen() {
           <SettingRow icon="arrow.right" label="Sign Out" onPress={handleLogout} danger />
         </View>
 
-        <Text style={[styles.version, { color: colors.muted }]}>AutoHaul Driver v1.0.0</Text>
+        <Text style={[styles.version, { color: colors.muted }]}>Puls Dispatch v1.0.0</Text>
       </ScrollView>
 
       {/* ── EQUIPMENT TYPE PICKER MODAL ── */}

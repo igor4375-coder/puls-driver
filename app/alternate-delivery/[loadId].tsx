@@ -39,7 +39,7 @@ type Tab = "search" | "new";
 export default function AlternateDeliveryScreen() {
   const colors = useColors();
   const { loadId } = useLocalSearchParams<{ loadId: string }>();
-  const { getLoad, updateLoadStatus } = useLoads();
+  const { getLoad, updateLoadStatus, patchLoad } = useLoads();
   const { driver } = useAuth();
   const { settings } = useSettings();
   const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
@@ -95,6 +95,19 @@ export default function AlternateDeliveryScreen() {
       if (!load || !platformTripId || !driverCode || isDelivering) return;
       setIsDelivering(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Build the alternate location info for local persistence
+      let altLocation: { name: string; address?: string; city?: string; province?: string } | undefined;
+      if (opts?.alternateDropLocationId) {
+        const loc = locations.find((l) => l.id === opts.alternateDropLocationId);
+        if (loc) altLocation = { name: loc.name, address: loc.address, city: loc.city, province: loc.province };
+      } else if (opts?.newLocation) {
+        altLocation = { name: opts.newLocation.name, address: opts.newLocation.address, city: opts.newLocation.city, province: opts.newLocation.province };
+      }
+
+      if (altLocation) {
+        patchLoad(load.id, { wasAlternateDelivery: true, actualDeliveryLocation: altLocation });
+      }
 
       updateLoadStatus(load.id, "delivered");
 
@@ -153,7 +166,7 @@ export default function AlternateDeliveryScreen() {
 
       setIsDelivering(false);
     },
-    [load, platformTripId, driverCode, isDelivering, updateLoadStatus, settings, saveSignatureMutation, markAsDeliveredAction],
+    [load, platformTripId, driverCode, isDelivering, updateLoadStatus, patchLoad, locations, settings, saveSignatureMutation, markAsDeliveredAction],
   );
 
   const handleSelectLocation = (loc: CompanyLocation) => {

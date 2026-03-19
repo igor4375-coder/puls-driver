@@ -39,18 +39,25 @@ import type {
 
 // ─── Zone / Type / Severity Definitions ──────────────────────────────────────
 const DAMAGE_ZONES: { key: DamageZone; label: string }[] = [
-  { key: "front", label: "Front" },
-  { key: "rear", label: "Rear" },
-  { key: "hood", label: "Hood" },
-  { key: "trunk", label: "Trunk" },
-  { key: "roof", label: "Roof" },
-  { key: "driver_side", label: "Driver Side" },
-  { key: "passenger_side", label: "Pass. Side" },
-  { key: "windshield", label: "Windshield" },
-  { key: "driver_front_wheel", label: "Dr. Front Wheel" },
-  { key: "driver_rear_wheel", label: "Dr. Rear Wheel" },
-  { key: "passenger_front_wheel", label: "Ps. Front Wheel" },
-  { key: "passenger_rear_wheel", label: "Ps. Rear Wheel" },
+  { key: "front",                 label: "Front Bumper" },
+  { key: "rear",                  label: "Rear Bumper" },
+  { key: "hood",                  label: "Hood" },
+  { key: "trunk",                 label: "Trunk" },
+  { key: "roof",                  label: "Roof" },
+  { key: "windshield",            label: "Windshield" },
+  { key: "rear_windshield",       label: "Rear Windshield" },
+  { key: "fl_fender",             label: "F.L Fender" },
+  { key: "fr_fender",             label: "F.R Fender" },
+  { key: "fl_door",               label: "F.L Door" },
+  { key: "rl_door",               label: "R.L Door" },
+  { key: "fr_door",               label: "F.R Door" },
+  { key: "rr_door",               label: "R.R Door" },
+  { key: "rl_panel",              label: "R.L Quarter Panel" },
+  { key: "rr_panel",              label: "R.R Quarter Panel" },
+  { key: "driver_front_wheel",    label: "F.L Wheel" },
+  { key: "driver_rear_wheel",     label: "R.L Wheel" },
+  { key: "passenger_front_wheel", label: "F.R Wheel" },
+  { key: "passenger_rear_wheel",  label: "R.R Wheel" },
 ];
 const DAMAGE_TYPES: { key: DamageType; label: string }[] = [
   { key: "scratch", label: "Scratch" },
@@ -71,23 +78,45 @@ const SEV_COLORS: Record<string, string> = {
 
 type DiagramView = "top" | "side";
 
+/** Top-down view (y 0–38%): driver's side from above. LEFT = REAR, RIGHT = FRONT */
 function inferZoneTop(xPct: number, yPct: number): DamageZone {
-  if (yPct < 15) return "front";
-  if (yPct > 85) return "rear";
-  if (xPct < 20) return "driver_side";
-  if (xPct > 80) return "passenger_side";
-  if (yPct < 35) return "hood";
-  if (yPct > 65) return "trunk";
+  const relY = (yPct / 38) * 100;
+  if (relY < 40 && xPct >= 12 && xPct < 28) return "driver_rear_wheel";
+  if (relY < 40 && xPct >= 72 && xPct < 88) return "driver_front_wheel";
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 22) return "rl_panel";
+  if (xPct < 42) return "rl_door";
+  if (xPct < 62) return "fl_door";
+  if (xPct <= 88) return "fl_fender";
   return "roof";
 }
-function inferZoneSide(xPct: number, yPct: number): DamageZone {
-  if (xPct < 15) return "front";
-  if (xPct > 85) return "rear";
-  if (yPct < 25) return "roof";
-  if (yPct < 45 && xPct < 35) return "windshield";
-  if (yPct > 70 && xPct < 40) return "driver_front_wheel";
-  if (yPct > 70 && xPct > 60) return "driver_rear_wheel";
-  return "driver_side";
+
+/** Body/roof strip (y 38–55%): LEFT = REAR, RIGHT = FRONT */
+function inferZoneMiddle(xPct: number): DamageZone {
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 20) return "trunk";
+  if (xPct < 37) return "rear_windshield";
+  if (xPct < 58) return "roof";
+  if (xPct < 72) return "windshield";
+  if (xPct <= 88) return "hood";
+  return "roof";
+}
+
+/** Side view (y 55–100%): passenger side. LEFT = REAR, RIGHT = FRONT */
+function inferZoneBottom(xPct: number, yPct: number): DamageZone {
+  const relY = ((yPct - 55) / 45) * 100;
+  if (relY < 12) return "roof";
+  if (relY > 70 && xPct >= 10 && xPct < 30) return "passenger_rear_wheel";
+  if (relY > 70 && xPct >= 65 && xPct < 88) return "passenger_front_wheel";
+  if (xPct < 8) return "rear";
+  if (xPct > 82) return "front";
+  if (xPct < 22) return "rr_panel";
+  if (xPct < 45) return "rr_door";
+  if (xPct < 62) return "fr_door";
+  if (xPct <= 82) return "fr_fender";
+  return "roof";
 }
 
 // ─── Damage Detail Bottom Sheet ───────────────────────────────────────────────
@@ -250,9 +279,18 @@ function VehicleDiagram({
     const { locationX, locationY } = evt.nativeEvent;
     const xPct = Math.max(0, Math.min(100, (locationX / W) * 100));
     const yPct = Math.max(0, Math.min(100, (locationY / H) * 100));
-    const isTopHalf = yPct < 55;
-    const zone = isTopHalf ? inferZoneTop(xPct, yPct) : inferZoneSide(xPct, yPct);
-    const view: DiagramView = isTopHalf ? "top" : "side";
+    let zone: DamageZone;
+    let view: DiagramView;
+    if (yPct < 38) {
+      zone = inferZoneTop(xPct, yPct);
+      view = "top";
+    } else if (yPct < 55) {
+      zone = inferZoneMiddle(xPct);
+      view = "top";
+    } else {
+      zone = inferZoneBottom(xPct, yPct);
+      view = "side";
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onDiagramTap(xPct, yPct, view, zone);
   };

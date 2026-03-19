@@ -14,7 +14,7 @@ import sharp from "sharp";
 
 export interface ServerStampOptions {
   line1: string; // e.g. "Pickup Condition: 2/28/2026  11:56 AM, Calgary, AB T1X 0K1"
-  line2: string; // e.g. "Driver: D-11903  ·  AutoHaul"
+  line2: string; // e.g. "Driver: D-11903  ·  Puls Dispatch"
 }
 
 /**
@@ -25,56 +25,50 @@ export async function stampPhotoBuffer(
   inputBuffer: Buffer,
   opts: ServerStampOptions
 ): Promise<Buffer> {
-  // Get image dimensions
-  const meta = await sharp(inputBuffer).metadata();
+  // Auto-orient based on EXIF so portrait photos are physically upright
+  const oriented = await sharp(inputBuffer).rotate().toBuffer();
+
+  const meta = await sharp(oriented).metadata();
   const w = meta.width ?? 1080;
   const h = meta.height ?? 1440;
 
-  // Banner height: ~8% of image height, min 80px
-  const bannerH = Math.max(80, Math.round(h * 0.08));
+  const shortSide = Math.min(w, h);
+  const bannerH = Math.max(56, Math.round(shortSide * 0.055));
 
-  // Font size scales with image width: ~2.2% of width, min 18px
-  const fontSize = Math.max(18, Math.round(w * 0.022));
-  const fontSize2 = Math.max(15, Math.round(w * 0.018));
-  const lineH = Math.round(fontSize * 1.5);
-  const padding = Math.round(w * 0.025);
-  const accentW = Math.round(w * 0.008);
-  const accentGap = Math.round(w * 0.015);
+  const fontSize = Math.max(14, Math.round(shortSide * 0.018));
+  const fontSize2 = Math.max(12, Math.round(shortSide * 0.015));
+  const lineH = Math.round(fontSize * 1.4);
+  const padding = Math.round(w * 0.02);
+  const accentW = Math.round(w * 0.005);
+  const accentGap = Math.round(w * 0.01);
 
-  // Text x start (after accent bar)
   const textX = padding + accentW + accentGap;
   const textMaxW = w - textX - padding;
 
-  // Vertical centering of two lines within banner
-  const totalTextH = lineH + Math.round(fontSize2 * 1.4);
+  const totalTextH = lineH + Math.round(fontSize2 * 1.3);
   const textStartY = Math.round((bannerH - totalTextH) / 2) + fontSize;
 
-  // Build SVG overlay
   const svgOverlay = `
 <svg width="${w}" height="${bannerH}" xmlns="http://www.w3.org/2000/svg">
-  <!-- Dark semi-transparent background -->
-  <rect x="0" y="0" width="${w}" height="${bannerH}" fill="rgba(0,0,0,0.85)" />
-  <!-- Blue accent bar -->
-  <rect x="${padding}" y="${Math.round(bannerH * 0.15)}" width="${accentW}" height="${Math.round(bannerH * 0.7)}" fill="#2563EB" rx="${Math.round(accentW / 2)}" />
-  <!-- Line 1: bold white -->
+  <rect x="0" y="0" width="${w}" height="${bannerH}" fill="rgba(0,0,0,0.55)" />
+  <rect x="${padding}" y="${Math.round(bannerH * 0.18)}" width="${accentW}" height="${Math.round(bannerH * 0.64)}" fill="#2563EB" rx="${Math.round(accentW / 2)}" />
   <text
     x="${textX}"
     y="${textStartY}"
-    font-family="monospace, Courier New, Courier"
+    font-family="Arial, Helvetica, sans-serif"
     font-size="${fontSize}"
     font-weight="700"
     fill="#FFFFFF"
     text-anchor="start"
     dominant-baseline="auto"
   >${escapeXml(truncateText(opts.line1, textMaxW, fontSize))}</text>
-  <!-- Line 2: lighter -->
   <text
     x="${textX}"
-    y="${textStartY + Math.round(fontSize2 * 1.55)}"
-    font-family="monospace, Courier New, Courier"
+    y="${textStartY + Math.round(fontSize2 * 1.45)}"
+    font-family="Arial, Helvetica, sans-serif"
     font-size="${fontSize2}"
     font-weight="400"
-    fill="rgba(255,255,255,0.80)"
+    fill="rgba(255,255,255,0.75)"
     text-anchor="start"
     dominant-baseline="auto"
   >${escapeXml(opts.line2)}</text>
@@ -82,8 +76,7 @@ export async function stampPhotoBuffer(
 
   const svgBuffer = Buffer.from(svgOverlay);
 
-  // Composite: place banner at the bottom of the original image
-  const stamped = await sharp(inputBuffer)
+  const stamped = await sharp(oriented)
     .composite([
       {
         input: svgBuffer,
@@ -109,10 +102,10 @@ function escapeXml(str: string): string {
 
 /**
  * Rough character truncation to prevent text overflow in SVG.
- * Assumes monospace font: ~0.6 × fontSize per character.
+ * Assumes proportional sans-serif: ~0.55 × fontSize average char width.
  */
 function truncateText(text: string, maxWidth: number, fontSize: number): string {
-  const charW = fontSize * 0.6;
+  const charW = fontSize * 0.55;
   const maxChars = Math.floor(maxWidth / charW);
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars - 1) + "…";

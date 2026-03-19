@@ -1,4 +1,4 @@
-import { boolean, datetime, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, varchar, uniqueIndex } from "drizzle-orm/mysql-core";
+import { bigint, boolean, datetime, decimal, int, mysqlEnum, mysqlTable, text, timestamp, tinyint, varchar, uniqueIndex } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -267,3 +267,23 @@ export const loadSignatures = mysqlTable("load_signatures", {
 });
 export type LoadSignature = typeof loadSignatures.$inferSelect;
 export type InsertLoadSignature = typeof loadSignatures.$inferInsert;
+
+// ─── Driver Locations ────────────────────────────────────────────────────────
+// Stores the most recent location pings reported by each driver.
+// Only the latest row per driver matters for real-time tracking; older rows
+// serve as a lightweight breadcrumb trail for the company platform.
+export const driverLocations = mysqlTable("driver_locations", {
+  id: int("id").autoincrement().primaryKey(),
+  driverCode: varchar("driver_code", { length: 16 }).notNull(),
+  latitude: decimal("latitude", { precision: 10, scale: 7 }).notNull(),
+  longitude: decimal("longitude", { precision: 10, scale: 7 }).notNull(),
+  accuracy: decimal("accuracy", { precision: 8, scale: 2 }),
+  speed: decimal("speed", { precision: 8, scale: 2 }),
+  heading: decimal("heading", { precision: 6, scale: 2 }),
+  /** Epoch ms from the device GPS reading */
+  deviceTimestamp: bigint("device_timestamp", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DriverLocation = typeof driverLocations.$inferSelect;
+export type InsertDriverLocation = typeof driverLocations.$inferInsert;

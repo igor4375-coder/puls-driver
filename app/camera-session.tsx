@@ -152,6 +152,9 @@ export default function CameraSessionScreen() {
             text: "Discard",
             style: "destructive",
             onPress: () => {
+              for (const item of items) {
+                if (item.clientId) photoQueue.remove(item.clientId).catch(() => {});
+              }
               cameraSessionStore.cancel();
               router.back();
             },
@@ -198,7 +201,7 @@ export default function CameraSessionScreen() {
               locationLabel,
               capturedAt: new Date().toISOString(),
               driverCode: driver?.driverCode,
-              companyName: "AutoHaul",
+              companyName: "Puls Dispatch",
               inspectionType: inspType,
             };
             const finalUri = await stampPhotoViaServer(photo.uri, stampOpts);
@@ -311,7 +314,7 @@ export default function CameraSessionScreen() {
         <IconSymbol name="camera.fill" size={56} color="#fff" />
         <Text style={s.permTitle}>Camera Access Required</Text>
         <Text style={s.permSub}>
-          AutoHaul needs camera access to capture inspection photos and videos.
+          Puls Dispatch needs camera access to capture inspection photos and videos.
         </Text>
         <TouchableOpacity
           style={s.permBtn}

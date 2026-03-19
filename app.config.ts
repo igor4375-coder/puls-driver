@@ -28,7 +28,7 @@ const schemeFromBundleId = `manus${timestamp}`;
 
 const env = {
   // App branding - update these values directly (do not use env vars)
-  appName: "AutoHaul Driver",
+  appName: "Puls Dispatch",
   appSlug: "driver-app",
   // S3 URL of the app logo
   logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663355206211/airKgmZeKkVdUkqi.png",
@@ -50,7 +50,8 @@ const config: ExpoConfig = {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
     "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["location", "fetch"]
       }
   },
   android: {
@@ -63,7 +64,7 @@ const config: ExpoConfig = {
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
-    permissions: ["POST_NOTIFICATIONS"],
+    permissions: ["POST_NOTIFICATIONS", "ACCESS_BACKGROUND_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION"],
     intentFilters: [
       {
         action: "VIEW",
@@ -88,13 +89,16 @@ const config: ExpoConfig = {
     [
       "expo-location",
       {
-        "locationWhenInUsePermission": "Allow AutoHaul Driver to access your location to stamp GPS coordinates on inspection photos for tamper-evident chain-of-custody records."
+        "locationWhenInUsePermission": "Allow Puls Dispatch to access your location to stamp GPS coordinates on inspection photos for tamper-evident chain-of-custody records.",
+        "locationAlwaysAndWhenInUsePermission": "Allow Puls Dispatch to access your location in the background so dispatch can see your position while you are on a route.",
+        "isAndroidBackgroundLocationEnabled": true,
+        "isAndroidForegroundServiceEnabled": true
       }
     ],
     [
       "expo-camera",
       {
-        "cameraPermission": "Allow AutoHaul Driver to access your camera to scan VIN barcodes and capture inspection photos."
+        "cameraPermission": "Allow Puls Dispatch to access your camera to scan VIN barcodes and capture inspection photos."
       }
     ],
     [

@@ -304,66 +304,60 @@ export class PhotoQueue {
     this.updateEntry(entry.clientId, { status: "uploading" });
 
     try {
-      // Compress before reading as base64 (reduces payload ~10-15x)
+      // Compress before upload (reduces file size ~10-15x)
       const compressedUri = await compressImage(entry.localUri);
-
-      let base64: string;
-
-      if (Platform.OS === "web") {
-        const resp = await fetch(compressedUri);
-        const blob = await resp.blob();
-        base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(",")[1] ?? result);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } else {
-        base64 = await FileSystem.readAsStringAsync(compressedUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      }
-
-      const mimeType = "image/jpeg";
-      const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || undefined;
+      const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
       const apiBase = getUploadApiBase();
 
-      const body = JSON.stringify({
-        "0": {
-          json: {
-            base64,
-            mimeType,
-            groupKey,
-            clientId: entry.clientId,
-          },
-        },
+      // Step 1: Get a presigned upload URL from our server (tiny request)
+      const params = new URLSearchParams({
+        ext: "jpg",
+        groupKey,
+        clientId: entry.clientId,
       });
+      const presignRes = await fetch(`${apiBase}/api/photos/upload-url?${params}`);
+      if (!presignRes.ok) {
+        throw new Error(`Presign failed: HTTP ${presignRes.status}`);
+      }
+      const { uploadUrl, publicUrl } = await presignRes.json() as {
+        uploadUrl: string;
+        publicUrl: string;
+        key: string;
+        clientId: string;
+      };
 
-      const response = await fetch(`${apiBase}/api/trpc/photos.upload?batch=1`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
+      // Step 2: Upload the photo directly to R2 (bypasses our server entirely)
+      let uploadResponse: Response;
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      if (Platform.OS === "web") {
+        const blobRes = await fetch(compressedUri);
+        const blob = await blobRes.blob();
+        uploadResponse = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "image/jpeg" },
+          body: blob,
+        });
+      } else {
+        // React Native: use FileSystem.uploadAsync for efficient binary streaming
+        const result = await FileSystem.uploadAsync(uploadUrl, compressedUri, {
+          httpMethod: "PUT",
+          headers: { "Content-Type": "image/jpeg" },
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        });
+        if (result.status < 200 || result.status >= 300) {
+          throw new Error(`R2 upload failed: HTTP ${result.status}`);
+        }
+        // Create a synthetic Response for the success path
+        uploadResponse = new Response(null, { status: result.status });
       }
 
-      // tRPC batch response is an array: [{ result: { data: { json: { url, key, clientId } } } }]
-      const jsonArr = await response.json();
-      const json = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
-      const url: string =
-        json?.result?.data?.json?.url ?? // tRPC v11 format
-        json?.result?.data?.url ??       // tRPC v10 format
-        json?.url;                        // direct format
-      if (!url) throw new Error(`Server returned no URL. Response: ${JSON.stringify(json).slice(0, 200)}`);
+      if (Platform.OS === "web" && !uploadResponse.ok) {
+        throw new Error(`R2 upload failed: HTTP ${uploadResponse.status}`);
+      }
 
       this.updateEntry(entry.clientId, {
         status: "done",
-        remoteUrl: url,
+        remoteUrl: publicUrl,
         lastError: null,
         lastAttemptAt: Date.now(),
         attempts: entry.attempts + 1,
@@ -372,7 +366,6 @@ export class PhotoQueue {
       const message = err instanceof Error ? err.message : "Upload failed";
       const attempts = entry.attempts + 1;
       this.updateEntry(entry.clientId, {
-        // Keep as "pending" so the background loop retries it (up to MAX_RETRIES)
         status: attempts >= MAX_RETRIES ? "failed" : "pending",
         lastError: message,
         lastAttemptAt: Date.now(),

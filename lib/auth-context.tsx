@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import { useUser, useAuth as useClerkAuth } from "@clerk/expo";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
 import type { Driver } from "./data";
@@ -23,6 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const getOrCreateProfile = useMutation(api.driverProfiles.getOrCreateProfile);
   const updateProfile = useMutation(api.driverProfiles.updateProfile);
+  const registerPlatformToken = useAction(api.platform.registerPushToken);
   const convexProfile = useQuery(
     api.driverProfiles.getByClerkUserId,
     clerkUser?.id ? { clerkUserId: clerkUser.id } : "skip",
@@ -82,13 +83,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!driver?.driverCode) return;
-    refreshPushTokenIfNeeded(driver.driverCode, updateProfile, clerkUser?.id ?? "");
+    refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser?.id ?? "");
   }, [driver?.driverCode]);
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === "active" && driver?.driverCode && clerkUser?.id) {
-        refreshPushTokenIfNeeded(driver.driverCode, updateProfile, clerkUser.id);
+        refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser.id);
       }
     };
     const subscription = AppState.addEventListener("change", handleAppStateChange);
@@ -123,12 +124,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 async function refreshPushTokenIfNeeded(
   driverCode: string,
   updateProfile: (args: { clerkUserId: string; pushToken?: string }) => Promise<unknown>,
+  registerPlatformToken: (args: { driverCode: string; pushToken: string }) => Promise<unknown>,
   clerkUserId: string,
 ): Promise<void> {
   try {
     const token = await registerForPushNotificationsAsync();
     if (!token) return;
+    // Save to driver app's own Convex
     await updateProfile({ clerkUserId, pushToken: token });
+    // Also register with the company platform so dispatchers can send push notifications
+    registerPlatformToken({ driverCode, pushToken: token }).catch(() => {});
   } catch {}
 }
 

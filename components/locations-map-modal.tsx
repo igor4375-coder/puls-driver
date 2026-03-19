@@ -8,6 +8,9 @@ import {
   Platform,
   ScrollView,
   FlatList,
+  Animated,
+  PanResponder,
+  Dimensions,
 } from "react-native";
 import MapView, { Marker, Callout, type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -114,23 +117,60 @@ export function LocationsMapModal({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
+  const screenHeight = Dimensions.get("window").height;
+
+  const SHEET_COLLAPSED = 260;
+  const SHEET_EXPANDED = Math.round(screenHeight * 0.55);
+  const sheetHeight = useRef(new Animated.Value(SHEET_COLLAPSED)).current;
+  const sheetExpanded = useRef(false);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 5,
+      onPanResponderMove: (_, g) => {
+        const current = sheetExpanded.current ? SHEET_EXPANDED : SHEET_COLLAPSED;
+        const next = Math.max(SHEET_COLLAPSED, Math.min(SHEET_EXPANDED, current - g.dy));
+        sheetHeight.setValue(next);
+      },
+      onPanResponderRelease: (_, g) => {
+        const snapUp = g.dy < -40;
+        const snapDown = g.dy > 40;
+        const target = snapUp ? SHEET_EXPANDED : snapDown ? SHEET_COLLAPSED
+          : sheetExpanded.current ? SHEET_EXPANDED : SHEET_COLLAPSED;
+        sheetExpanded.current = target === SHEET_EXPANDED;
+        Animated.spring(sheetHeight, { toValue: target, useNativeDriver: false, bounciness: 4 }).start();
+      },
+    })
+  ).current;
 
   const [mode, setMode] = useState<"pickup" | "dropoff">(initialMode);
-  // Key of the selected cluster: "lat,lng" string — stable across re-renders
   const [selectedClusterKey, setSelectedClusterKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (visible) {
       setMode(initialMode);
       setSelectedClusterKey(null);
+      sheetHeight.setValue(SHEET_COLLAPSED);
+      sheetExpanded.current = false;
     }
   }, [visible, initialMode]);
 
   const primaryPins = mode === "pickup" ? pickupPins : dropoffPins;
+  const oppositePins = mode === "pickup" ? dropoffPins : pickupPins;
   const primaryColor = mode === "pickup" ? PICKUP_COLOR : DROPOFF_COLOR;
   const toggleLabel = mode === "pickup" ? "Show Drop-off Points" : "Show Pickup Points";
   const toggleDotColor = mode === "pickup" ? DROPOFF_COLOR : PICKUP_COLOR;
   const title = mode === "pickup" ? "Pickup Locations" : "Drop-off Locations";
+
+  // Lookup: vehicleKey → opposite-mode pin (e.g. pickup vehicle → its dropoff pin)
+  const counterpartMap = useMemo(() => {
+    const map = new Map<string, MapPin>();
+    for (const pin of oppositePins) {
+      if (pin.vehicleKey) map.set(pin.vehicleKey, pin);
+    }
+    return map;
+  }, [oppositePins]);
 
   // Build clusters from the current mode's pins
   const clusters = useMemo(() => buildClusters(primaryPins), [primaryPins]);
@@ -145,21 +185,67 @@ export function LocationsMapModal({
     mapRef.current.animateToRegion(fitRegion(pins), 400);
   }, []);
 
+  const skipAutoFit = useRef(false);
+
   useEffect(() => {
     if (visible) {
+      if (skipAutoFit.current) {
+        skipAutoFit.current = false;
+        return;
+      }
       setTimeout(() => fitMap(clusters), 400);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, visible]);
 
   const handleToggleMode = () => {
-    setSelectedClusterKey(null);
-    setMode((m) => (m === "pickup" ? "dropoff" : "pickup"));
+    if (selectedCluster) {
+      const counterpartPins = selectedCluster.vehicles
+        .map((v) => v.vehicleKey ? counterpartMap.get(v.vehicleKey) : undefined)
+        .filter((p): p is MapPin => !!p);
+
+      setSelectedClusterKey(null);
+      if (counterpartPins.length > 0) {
+        skipAutoFit.current = true;
+      }
+      setMode((m) => (m === "pickup" ? "dropoff" : "pickup"));
+
+      if (counterpartPins.length > 0) {
+        setTimeout(() => fitMap(counterpartPins), 500);
+      }
+    } else {
+      setSelectedClusterKey(null);
+      setMode((m) => (m === "pickup" ? "dropoff" : "pickup"));
+    }
   };
 
+  const lastClusterTap = useRef(0);
   const handleSelectCluster = (cluster: LocationCluster) => {
+    const now = Date.now();
+    if (now - lastClusterTap.current < 400) return;
+    lastClusterTap.current = now;
     const key = clusterKey(cluster);
     setSelectedClusterKey((prev) => (prev === key ? null : key));
+  };
+
+  const handleJumpToCounterpart = (vehicle: MapPin) => {
+    if (!vehicle.vehicleKey) return;
+    const target = counterpartMap.get(vehicle.vehicleKey);
+    if (!target) return;
+    const nextPins = mode === "pickup" ? dropoffPins : pickupPins;
+    setSelectedClusterKey(null);
+    skipAutoFit.current = true;
+    setMode((m) => (m === "pickup" ? "dropoff" : "pickup"));
+    setTimeout(() => {
+      fitMap([target]);
+      setTimeout(() => {
+        const newClusters = buildClusters(nextPins);
+        const targetCluster = newClusters.find(
+          (c) => Math.abs(c.lat - target.lat) < CLUSTER_RADIUS && Math.abs(c.lng - target.lng) < CLUSTER_RADIUS
+        );
+        if (targetCluster) setSelectedClusterKey(clusterKey(targetCluster));
+      }, 500);
+    }, 300);
   };
 
   const totalVehicles = primaryPins.length;
@@ -276,13 +362,17 @@ export function LocationsMapModal({
           )}
         </View>
 
-        {/* Bottom panel: location list OR expanded vehicle list for selected cluster */}
-        <View
+        {/* Bottom panel: draggable sheet */}
+        <Animated.View
           style={[
             styles.pinList,
-            { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + 8 },
+            { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + 8, height: sheetHeight },
           ]}
         >
+          {/* Drag handle */}
+          <View {...panResponder.panHandlers} style={styles.dragHandleArea}>
+            <View style={[styles.dragHandle, { backgroundColor: colors.border }]} />
+          </View>
           {selectedCluster ? (
             /* ── Expanded: all vehicles at the selected location ── */
             <>
@@ -317,21 +407,41 @@ export function LocationsMapModal({
                 windowSize={5}
                 style={styles.vehicleScroll}
                 showsVerticalScrollIndicator={false}
-                renderItem={({ item, index }) => (
-                  <View
-                    style={[
-                      styles.vehicleRow,
-                      { borderBottomColor: colors.border },
-                    ]}
-                  >
-                    <View style={[styles.vehicleIndex, { backgroundColor: primaryColor + "22" }]}>
-                      <Text style={[styles.vehicleIndexText, { color: primaryColor }]}>{index + 1}</Text>
+                renderItem={({ item, index }) => {
+                  const counterpart = item.vehicleKey ? counterpartMap.get(item.vehicleKey) : undefined;
+                  const dirArrow = mode === "pickup" ? "→" : "←";
+                  const counterpartLabel = counterpart?.sublabel ?? counterpart?.label;
+                  return (
+                    <View
+                      style={[
+                        styles.vehicleRow,
+                        { borderBottomColor: colors.border },
+                      ]}
+                    >
+                      <View style={[styles.vehicleIndex, { backgroundColor: primaryColor + "22" }]}>
+                        <Text style={[styles.vehicleIndexText, { color: primaryColor }]}>{index + 1}</Text>
+                      </View>
+                      <View style={styles.vehicleInfo}>
+                        <Text style={[styles.vehicleLabel, { color: colors.foreground }]}>{item.label}</Text>
+                        {counterpartLabel && (
+                          <Text style={[styles.vehicleDestination, { color: colors.muted }]} numberOfLines={1}>
+                            {dirArrow} {counterpartLabel}
+                          </Text>
+                        )}
+                      </View>
+                      {counterpart && (
+                        <TouchableOpacity
+                          style={[styles.jumpBtn, { backgroundColor: toggleDotColor + "18", borderColor: toggleDotColor + "44" }]}
+                          onPress={() => handleJumpToCounterpart(item)}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <IconSymbol name={mode === "pickup" ? "arrow.down" : "arrow.up"} size={12} color={toggleDotColor} />
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    <View style={styles.vehicleInfo}>
-                      <Text style={[styles.vehicleLabel, { color: colors.foreground }]}>{item.label}</Text>
-                    </View>
-                  </View>
-                )}
+                  );
+                }}
               />
             </>
           ) : (
@@ -368,7 +478,7 @@ export function LocationsMapModal({
               </ScrollView>
             </>
           )}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -421,9 +531,23 @@ const styles = StyleSheet.create({
   webPin: { fontSize: 14, textAlign: "center" },
   pinList: {
     borderTopWidth: 0.5,
-    paddingTop: 12,
     paddingHorizontal: 16,
-    maxHeight: 260,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  dragHandleArea: {
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
   },
   pinScroll: { flex: 1 },
   pinListTitle: {
@@ -471,7 +595,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  vehicleScroll: { flex: 1 },
+  vehicleScroll: { flex: 1, minHeight: 80 },
   vehicleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -490,6 +614,15 @@ const styles = StyleSheet.create({
   vehicleIndexText: { fontSize: 12, fontWeight: "700" },
   vehicleInfo: { flex: 1 },
   vehicleLabel: { fontSize: 14, fontWeight: "500" },
+  vehicleDestination: { fontSize: 12, marginTop: 2 },
+  jumpBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   // Custom map marker styles
   markerWrap: { alignItems: "center" },
   markerBubble: {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -58,16 +58,9 @@ function getMonthOptions(count: number = 12): { year: number; month: number; lab
   return options;
 }
 
-type SubTab = "earnings" | "stats";
 type ChartGranularity = "day" | "week" | "month";
 
 // ─── Formatting ──────────────────────────────────────────────────────────────
-
-function fmtCurrency(cents: number): string {
-  const dollars = Math.abs(cents) / 100;
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}$${dollars.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
 
 function fmtDollars(dollars: number): string {
   const sign = dollars < 0 ? "-" : "";
@@ -76,11 +69,6 @@ function fmtDollars(dollars: number): string {
     return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
   }
   return `${sign}$${abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function fmtShortDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function fmtCompact(n: number): string {
@@ -102,40 +90,6 @@ function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number):
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-
-// ─── Memoized Earning Row ────────────────────────────────────────────────────
-
-type DeliveredLoad = { id: string; loadNumber: string; vehicles: { year?: string; make?: string; model?: string }[]; deliveredAt?: string | null; driverPay: number };
-
-const EarningRowItem = React.memo(function EarningRowItem({
-  load, colors, showPay,
-}: {
-  load: DeliveredLoad;
-  colors: Record<string, string>;
-  showPay: boolean;
-}) {
-  return (
-    <View style={[styles.earningRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <View style={styles.earningLeft}>
-        <Text style={[styles.earningLoad, { color: colors.text }]}>{load.loadNumber || "Local Load"}</Text>
-        <Text style={[styles.earningDetail, { color: colors.muted }]}>
-          {load.vehicles.length} vehicle{load.vehicles.length !== 1 ? "s" : ""}
-          {load.deliveredAt ? ` · ${fmtShortDate(load.deliveredAt)}` : ""}
-        </Text>
-        {load.vehicles.length > 0 && (
-          <Text style={[styles.earningVehicles, { color: colors.muted }]} numberOfLines={1}>
-            {load.vehicles.map((v) => [v.year, v.make, v.model].filter(Boolean).join(" ")).join(", ")}
-          </Text>
-        )}
-      </View>
-      {showPay && (
-        <Text style={[styles.earningAmount, { color: load.driverPay > 0 ? "#4CAF50" : colors.muted }]}>
-          {load.driverPay > 0 ? fmtDollars(load.driverPay) : "—"}
-        </Text>
-      )}
-    </View>
-  );
-});
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -164,7 +118,6 @@ export default function DashboardScreen() {
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
-  const [subTab, setSubTab] = useState<SubTab>("earnings");
   const [chartGranularity, setChartGranularity] = useState<ChartGranularity>("day");
 
   const range = useMemo(() => buildMonthRange(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
@@ -275,13 +228,6 @@ export default function DashboardScreen() {
       }
     }
 
-    // Expense breakdown by category
-    const expenseByCategory: Record<string, number> = {};
-    for (const e of filteredExpenses) {
-      const cat = e.label || "Other";
-      expenseByCategory[cat] = (expenseByCategory[cat] ?? 0) + e.amountCents;
-    }
-
     return {
       totalRevenue,
       totalVehicles,
@@ -293,7 +239,6 @@ export default function DashboardScreen() {
       avgPerVehicle,
       revenueDelta,
       activityBuckets,
-      expenseByCategory,
     };
   }, [deliveredLoads, pickedUpLoads, filteredExpenses, loads, range, chartGranularity]);
 
@@ -404,16 +349,6 @@ export default function DashboardScreen() {
       projectedRevenue,
     };
   }, [deliveredLoads, loads, stats.totalRevenue, monthlyGoal]);
-
-  // ── Sorted delivered loads for earnings list ──────────────────────────────
-
-  const sortedDelivered = useMemo(() => {
-    return [...deliveredLoads].sort((a, b) => {
-      const da = new Date(a.deliveredAt ?? a.delivery?.date ?? 0).getTime();
-      const db = new Date(b.deliveredAt ?? b.delivery?.date ?? 0).getTime();
-      return db - da;
-    });
-  }, [deliveredLoads]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -741,117 +676,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* ── Sub Tabs ───────────────────────────────────────────────────── */}
-        {canViewRates ? (
-          <View style={[styles.subTabBar, { borderBottomColor: colors.border }]}>
-            {(["earnings", "stats"] as SubTab[]).map((tab) => (
-              <TouchableOpacity
-                key={tab}
-                style={[styles.subTab, subTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSubTab(tab); }}
-              >
-                <Text style={[styles.subTabText, { color: subTab === tab ? colors.primary : colors.muted }]}>
-                  {tab === "earnings" ? "Earnings" : "Breakdown"}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : (
-          <View style={[styles.subTabBar, { borderBottomColor: colors.border }]}>
-            <View style={[styles.subTab, { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}>
-              <Text style={[styles.subTabText, { color: colors.primary }]}>Deliveries</Text>
-            </View>
-          </View>
-        )}
-
-        {canViewRates && subTab === "earnings" ? (
-          /* ── Earnings List ──────────────────────────────────────────────── */
-          sortedDelivered.length === 0 ? (
-            <View style={styles.emptyState}>
-              <IconSymbol name="tray" size={36} color={colors.muted} />
-              <Text style={[styles.emptyText, { color: colors.muted }]}>No deliveries in this period</Text>
-            </View>
-          ) : (
-            sortedDelivered.map((load) => (
-              <EarningRowItem key={load.id} load={load} colors={colors} showPay />
-            ))
-          )
-        ) : canViewRates && subTab === "stats" ? (
-          /* ── Stats / Breakdown ──────────────────────────────────────────── */
-          <View style={styles.statsContainer}>
-            <View style={[styles.statsSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.statsSectionTitle, { color: colors.muted }]}>PERFORMANCE</Text>
-              <StatRow label="Total Revenue" value={fmtDollars(stats.totalRevenue)} colors={colors} />
-              <StatRow label="Total Loads" value={String(stats.totalLoads)} colors={colors} />
-              <StatRow label="Total Vehicles" value={String(stats.totalVehicles)} colors={colors} />
-              <StatRow label="Avg Revenue / Load" value={fmtDollars(stats.avgPerLoad)} colors={colors} />
-              <StatRow label="Avg Revenue / Vehicle" value={fmtDollars(stats.avgPerVehicle)} colors={colors} />
-              {deliveredLoads.length > 0 && (
-                <StatRow
-                  label="Avg Vehicles / Load"
-                  value={(stats.totalVehicles / stats.totalLoads).toFixed(1)}
-                  colors={colors}
-                />
-              )}
-              {insights.turnaroundCount > 0 && (
-                <StatRow
-                  label="Avg Turnaround"
-                  value={insights.avgTurnaroundDays < 1
-                    ? `${Math.round(insights.avgTurnaroundDays * 24)} hours`
-                    : `${insights.avgTurnaroundDays.toFixed(1)} days`}
-                  colors={colors}
-                />
-              )}
-              {insights.totalMiles > 0 && (
-                <>
-                  <StatRow label="Est. Miles Driven" value={`${insights.totalMiles.toLocaleString()} mi`} colors={colors} />
-                  <StatRow label="Revenue / Mile" value={`$${insights.costPerMile.toFixed(2)}`} colors={colors} />
-                </>
-              )}
-            </View>
-
-            <View style={[styles.statsSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.statsSectionTitle, { color: colors.muted }]}>EXPENSES</Text>
-              {Object.keys(stats.expenseByCategory).length === 0 ? (
-                <Text style={[styles.noExpenses, { color: colors.muted }]}>No expenses recorded</Text>
-              ) : (
-                <>
-                  {Object.entries(stats.expenseByCategory)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([cat, cents]) => (
-                      <StatRow key={cat} label={cat} value={fmtCurrency(cents)} colors={colors} valueColor="#EF5350" />
-                    ))}
-                  <View style={[styles.statTotalRow, { borderTopColor: colors.border }]}>
-                    <Text style={[styles.statTotalLabel, { color: colors.text }]}>Total Expenses</Text>
-                    <Text style={[styles.statTotalValue, { color: "#EF5350" }]}>
-                      {fmtCurrency(stats.totalExpenseCents)}
-                    </Text>
-                  </View>
-                </>
-              )}
-            </View>
-
-            <View style={[styles.netCard, { backgroundColor: stats.netProfit >= 0 ? "#4CAF5010" : "#EF535010", borderColor: stats.netProfit >= 0 ? "#4CAF5040" : "#EF535040" }]}>
-              <Text style={[styles.netLabel, { color: colors.muted }]}>Net Profit</Text>
-              <Text style={[styles.netValue, { color: stats.netProfit >= 0 ? "#4CAF50" : "#EF5350" }]}>
-                {fmtDollars(stats.netProfit)}
-              </Text>
-              <Text style={[styles.netSub, { color: colors.muted }]}>Revenue minus expenses</Text>
-            </View>
-          </View>
-        ) : !canViewRates ? (
-          /* ── Deliveries list (no dollar amounts) ────────────────────────── */
-          sortedDelivered.length === 0 ? (
-            <View style={styles.emptyState}>
-              <IconSymbol name="tray" size={36} color={colors.muted} />
-              <Text style={[styles.emptyText, { color: colors.muted }]}>No deliveries in this period</Text>
-            </View>
-          ) : (
-            sortedDelivered.map((load) => (
-              <EarningRowItem key={load.id} load={load} colors={colors} showPay={false} />
-            ))
-          )
-        ) : null}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -922,17 +746,6 @@ export default function DashboardScreen() {
         </View>
       </Modal>
     </ScreenContainer>
-  );
-}
-
-// ─── Stat Row Sub-component ──────────────────────────────────────────────────
-
-function StatRow({ label, value, colors, valueColor }: { label: string; value: string; colors: any; valueColor?: string }) {
-  return (
-    <View style={styles.statRow}>
-      <Text style={[styles.statLabel, { color: colors.muted }]}>{label}</Text>
-      <Text style={[styles.statValue, { color: valueColor ?? colors.text }]}>{value}</Text>
-    </View>
   );
 }
 
@@ -1329,140 +1142,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 6,
     fontWeight: "500",
-  },
-
-  // Sub tabs
-  subTabBar: {
-    flexDirection: "row",
-    marginTop: 18,
-    marginHorizontal: 16,
-    borderBottomWidth: 1,
-  },
-  subTab: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
-  },
-  subTabText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  // Empty
-  emptyState: {
-    alignItems: "center",
-    paddingTop: 50,
-    gap: 10,
-  },
-  emptyText: {
-    fontSize: 14,
-  },
-
-  // Earnings rows
-  earningRow: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  earningLeft: {
-    flex: 1,
-    gap: 2,
-  },
-  earningLoad: {
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  earningDetail: {
-    fontSize: 12,
-  },
-  earningVehicles: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  earningAmount: {
-    fontSize: 18,
-    fontWeight: "800",
-    marginLeft: 12,
-  },
-
-  // Stats
-  statsContainer: {
-    paddingHorizontal: 16,
-    marginTop: 10,
-    gap: 12,
-  },
-  statsSection: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 16,
-  },
-  statsSectionTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 12,
-  },
-  statRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  statLabel: {
-    fontSize: 14,
-  },
-  statValue: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  statTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 12,
-    marginTop: 8,
-    borderTopWidth: 1,
-  },
-  statTotalLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  statTotalValue: {
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  noExpenses: {
-    fontSize: 13,
-    textAlign: "center",
-    paddingVertical: 12,
-  },
-
-  // Net profit card
-  netCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 20,
-    alignItems: "center",
-    gap: 4,
-  },
-  netLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-  },
-  netValue: {
-    fontSize: 28,
-    fontWeight: "900",
-  },
-  netSub: {
-    fontSize: 12,
-    marginTop: 2,
   },
 
   // Shared bottom-sheet modal

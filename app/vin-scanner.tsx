@@ -387,7 +387,7 @@ export default function VINScannerScreen() {
         <IconSymbol name="camera.fill" size={48} color={colors.muted} />
         <Text style={[styles.permTitle, { color: colors.foreground }]}>Camera Access Needed</Text>
         <Text style={[styles.permSubtitle, { color: colors.muted }]}>
-          AutoHaul Driver needs camera access to scan VIN barcodes.
+          Puls Dispatch needs camera access to scan VIN barcodes.
         </Text>
         <TouchableOpacity
           style={[styles.permBtn, { backgroundColor: colors.primary }]}

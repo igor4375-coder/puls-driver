@@ -85,7 +85,7 @@ export async function reverseGeocodeCoords(coords: GPSCoords): Promise<string | 
  * Build the stamp text lines that will be burned onto the photo.
  * Layout matches SuperDispatch style:
  *   Line 1 (bold): "Pickup Condition: 2/24/2026, Dallas, TX 75201"
- *   Line 2: "Driver: D-11903  ·  AutoHaul"
+ *   Line 2: "Driver: D-11903  ·  Puls Dispatch"
  */
 export function buildStampLines(opts: StampOptions): string[] {
   const now = opts.capturedAt ? new Date(opts.capturedAt) : new Date();
@@ -124,7 +124,7 @@ export function buildStampLines(opts: StampOptions): string[] {
 
   // Line 2: driver code + brand
   const driverPart = opts.driverCode ? `Driver: ${opts.driverCode}` : "";
-  const brandPart = opts.companyName ?? "AutoHaul";
+  const brandPart = opts.companyName ?? "Puls Dispatch";
   lines.push([driverPart, brandPart].filter(Boolean).join("  ·  "));
 
   return lines;

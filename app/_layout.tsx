@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import "@/lib/_core/nativewind-pressable";
 import { ThemeProvider } from "@/lib/theme-provider";
 import {
@@ -33,6 +33,9 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
 import { photoQueue } from "@/lib/photo-queue";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
+import { startLocationTracking, stopLocationTracking, flushLocationQueue } from "@/lib/location-tracker";
+import { useSettings } from "@/lib/settings-context";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -46,12 +49,47 @@ export const unstable_settings = {
   anchor: "(tabs)",
 };
 
+function LocationTrackingManager() {
+  const { driver } = useAuth();
+  const { settings } = useSettings();
+  const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? null;
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    if (driverCode && settings.locationTrackingEnabled) {
+      startLocationTracking(driverCode, getApiBaseUrl).catch((err) =>
+        console.warn("[LocationTracker] start failed:", err),
+      );
+    } else {
+      stopLocationTracking();
+    }
+
+    return () => {
+      stopLocationTracking();
+    };
+  }, [driverCode, settings.locationTrackingEnabled]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") flushLocationQueue().catch(() => {});
+    });
+    return () => sub.remove();
+  }, []);
+
+  return null;
+}
+
 function LoadsProviderWithAuth({ children }: { children: React.ReactNode }) {
   const { driver } = useAuth();
   const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? null;
   return (
     <PermissionsProvider driverCode={driverCode}>
-      <LoadsProvider driverCode={driverCode}>{children}</LoadsProvider>
+      <LoadsProvider driverCode={driverCode}>
+        <LocationTrackingManager />
+        {children}
+      </LoadsProvider>
     </PermissionsProvider>
   );
 }

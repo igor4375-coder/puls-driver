@@ -98,6 +98,8 @@ export interface Vehicle {
   /** Explicit pickup status - 'pending' means not yet confirmed even if inspection exists */
   pickupStatus?: "pending" | "confirmed";
   pickupInspection?: VehicleInspection;
+  /** Immutable snapshot of the pickup inspection at the time the load was marked picked up */
+  frozenPickupInspection?: VehicleInspection;
   deliveryInspection?: VehicleInspection;
   /** Vehicle condition fields from gate pass / platform — null/undefined means not set by dispatcher */
   hasKeys?: boolean | null;
@@ -158,6 +160,8 @@ export interface Load {
   deliveredAt?: string | null;
   /** Company org ID from the platform — needed for getLocations filter */
   orgId?: string;
+  /** Human-readable company/org name that dispatched this load */
+  orgName?: string;
   /** True if this leg's dropoff IS the order's final destination */
   isFinalLeg?: boolean;
   /** The order's ultimate destination (may differ from this leg's delivery location) */
@@ -167,6 +171,15 @@ export interface Load {
     address: string;
     city: string;
     province: string;
+  };
+  /** True when the driver delivered to a location other than the planned delivery */
+  wasAlternateDelivery?: boolean;
+  /** The actual drop-off location when alternate delivery was used */
+  actualDeliveryLocation?: {
+    name: string;
+    address?: string;
+    city?: string;
+    province?: string;
   };
 }
 
@@ -196,7 +209,7 @@ export const MOCK_DRIVER: Driver = {
   name: "Demo Driver",
   email: "demo@autohaul.app",
   phone: "(555) 000-0001",
-  company: "AutoHaul Demo",
+  company: "Puls Dispatch Demo",
   truckNumber: "TRK-001",
   trailerNumber: "TRL-001",
   avatarInitials: "DD",

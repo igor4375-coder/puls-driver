@@ -29,12 +29,15 @@ export interface AppSettings {
    * Set once in Settings; auto-applied when customer is not available.
    */
   driverSignaturePaths: StrokePath[];
+  /** Share location with dispatch every ~15 min (default: true) */
+  locationTrackingEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   routeDisplayMode: "city",
   mapsApp: null,
   driverSignaturePaths: [],
+  locationTrackingEnabled: true,
 };
 
 // ─── Context ──────────────────────────────────────────────────────────────────
@@ -44,6 +47,7 @@ interface SettingsContextValue {
   setRouteDisplayMode: (mode: RouteDisplayMode) => void;
   setMapsApp: (app: MapsApp) => void;
   setDriverSignaturePaths: (paths: StrokePath[]) => void;
+  setLocationTrackingEnabled: (enabled: boolean) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue>({
@@ -51,6 +55,7 @@ const SettingsContext = createContext<SettingsContextValue>({
   setRouteDisplayMode: () => {},
   setMapsApp: () => {},
   setDriverSignaturePaths: () => {},
+  setLocationTrackingEnabled: () => {},
 });
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -90,8 +95,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     persist({ ...settings, driverSignaturePaths: paths });
   };
 
+  const setLocationTrackingEnabled = (enabled: boolean) => {
+    persist({ ...settings, locationTrackingEnabled: enabled });
+  };
+
   return (
-    <SettingsContext.Provider value={{ settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths }}>
+    <SettingsContext.Provider value={{ settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths, setLocationTrackingEnabled }}>
       {children}
     </SettingsContext.Provider>
   );

@@ -1,106 +1,149 @@
-// Preconfigured storage helpers for Manus WebDev templates
-// Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
+/**
+ * Storage service — uploads/deletes files on Cloudflare R2 (S3-compatible).
+ *
+ * Presigned URL flow for photo uploads:
+ *   1. Client calls GET /api/photos/upload-url → receives { uploadUrl, publicUrl, key }
+ *   2. Client PUTs the file directly to uploadUrl (never touches our server)
+ *   3. Client uses publicUrl when syncing inspection data
+ *
+ * Legacy server-side upload (storagePut) is kept for receipts, gate passes, etc.
+ * that still upload through the Express server.
+ */
 
-import { ENV } from "./_core/env";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-type StorageConfig = { baseUrl: string; apiKey: string };
+// ─── Config ──────────────────────────────────────────────────────────────────
 
-function getStorageConfig(): StorageConfig {
-  const baseUrl = ENV.forgeApiUrl;
-  const apiKey = ENV.forgeApiKey;
+function getR2Config() {
+  const bucket = process.env.S3_BUCKET;
+  const region = process.env.S3_REGION || "auto";
+  const endpoint = process.env.S3_ENDPOINT;
+  const accessKey = process.env.S3_ACCESS_KEY;
+  const secretKey = process.env.S3_SECRET_KEY;
+  const publicUrlBase = process.env.S3_PUBLIC_URL; // e.g. https://photos.yourdomain.com
 
-  if (!baseUrl || !apiKey) {
+  if (!bucket || !endpoint || !accessKey || !secretKey) {
     throw new Error(
-      "Storage proxy credentials missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY",
+      "R2/S3 credentials missing. Set S3_BUCKET, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY in .env",
     );
   }
 
-  return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
+  return { bucket, region, endpoint, accessKey, secretKey, publicUrlBase };
 }
 
-function buildUploadUrl(baseUrl: string, relKey: string): URL {
-  const url = new URL("v1/storage/upload", ensureTrailingSlash(baseUrl));
-  url.searchParams.set("path", normalizeKey(relKey));
-  return url;
-}
+let _client: S3Client | null = null;
 
-async function buildDownloadUrl(baseUrl: string, relKey: string, apiKey: string): Promise<string> {
-  const downloadApiUrl = new URL("v1/storage/downloadUrl", ensureTrailingSlash(baseUrl));
-  downloadApiUrl.searchParams.set("path", normalizeKey(relKey));
-  const response = await fetch(downloadApiUrl, {
-    method: "GET",
-    headers: buildAuthHeaders(apiKey),
+function getClient(): S3Client {
+  if (_client) return _client;
+  const { region, endpoint, accessKey, secretKey } = getR2Config();
+  _client = new S3Client({
+    region,
+    endpoint,
+    credentials: {
+      accessKeyId: accessKey,
+      secretAccessKey: secretKey,
+    },
+    forcePathStyle: true,
   });
-  return (await response.json()).url;
-}
-
-function ensureTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value : `${value}/`;
+  return _client;
 }
 
 function normalizeKey(relKey: string): string {
   return relKey.replace(/^\/+/, "");
 }
 
-function toFormData(
-  data: Buffer | Uint8Array | string,
-  contentType: string,
-  fileName: string,
-): FormData {
-  const blob =
-    typeof data === "string"
-      ? new Blob([data], { type: contentType })
-      : new Blob([data as any], { type: contentType });
-  const form = new FormData();
-  form.append("file", blob, fileName || "file");
-  return form;
+function buildPublicUrl(key: string): string {
+  const { publicUrlBase, endpoint, bucket } = getR2Config();
+  if (publicUrlBase) {
+    return `${publicUrlBase.replace(/\/+$/, "")}/${key}`;
+  }
+  // Fallback: endpoint-based URL
+  return `${endpoint}/${bucket}/${key}`;
 }
 
-function buildAuthHeaders(apiKey: string): HeadersInit {
-  return { Authorization: `Bearer ${apiKey}` };
+// ─── Presigned URL (for direct client uploads) ──────────────────────────────
+
+export async function createPresignedUploadUrl(
+  relKey: string,
+  contentType = "image/jpeg",
+  expiresInSeconds = 300,
+): Promise<{ uploadUrl: string; publicUrl: string; key: string }> {
+  const { bucket } = getR2Config();
+  const key = normalizeKey(relKey);
+  const client = getClient();
+
+  const command = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  const uploadUrl = await getSignedUrl(client, command, {
+    expiresIn: expiresInSeconds,
+  });
+
+  return {
+    uploadUrl,
+    publicUrl: buildPublicUrl(key),
+    key,
+  };
 }
+
+// ─── Server-side upload (for receipts, gate passes, etc.) ───────────────────
 
 export async function storagePut(
   relKey: string,
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream",
 ): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+  const { bucket } = getR2Config();
   const key = normalizeKey(relKey);
-  const uploadUrl = buildUploadUrl(baseUrl, key);
-  const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: buildAuthHeaders(apiKey),
-    body: formData,
-  });
+  const client = getClient();
 
-  if (!response.ok) {
-    const message = await response.text().catch(() => response.statusText);
-    throw new Error(
-      `Storage upload failed (${response.status} ${response.statusText}): ${message}`,
-    );
-  }
-  const url = (await response.json()).url;
-  return { key, url };
+  const body = typeof data === "string" ? Buffer.from(data) : data;
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
+
+  return { key, url: buildPublicUrl(key) };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
+// ─── Get URL for an existing object ─────────────────────────────────────────
+
+export async function storageGet(
+  relKey: string,
+): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
-  return {
-    key,
-    url: await buildDownloadUrl(baseUrl, key, apiKey),
-  };
+  return { key, url: buildPublicUrl(key) };
 }
+
+// ─── Delete ─────────────────────────────────────────────────────────────────
 
 export async function storageDelete(relKey: string): Promise<void> {
-  // Best-effort delete — non-fatal if the storage proxy doesn't support DELETE
   try {
-    const { baseUrl, apiKey } = getStorageConfig();
+    const { bucket } = getR2Config();
     const key = normalizeKey(relKey);
-    const url = new URL("v1/storage/delete", ensureTrailingSlash(baseUrl));
-    url.searchParams.set("path", key);
-    await fetch(url, { method: "DELETE", headers: buildAuthHeaders(apiKey) });
-  } catch { /* ignore */ }
+    const client = getClient();
+
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      }),
+    );
+  } catch {
+    /* best-effort delete */
+  }
 }

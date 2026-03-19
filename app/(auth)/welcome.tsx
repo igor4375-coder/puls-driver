@@ -81,7 +81,7 @@ export default function WelcomeScreen() {
             contentFit="contain"
           />
         </View>
-        <Text style={styles.appName}>AutoHaul Driver</Text>
+        <Text style={styles.appName}>Puls Dispatch</Text>
         <Text style={styles.tagline}>Your loads. Your route. Your way.</Text>
 
         <View style={styles.features}>

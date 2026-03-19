@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import * as db from "../db";
 import { sendPushNotification } from "../push";
+import { createPresignedUploadUrl } from "../storage";
 import { scheduleGatePassExpiryNotifier } from "../gate-pass-notifier";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -63,6 +64,26 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
+  // ─── Presigned Upload URL (photos upload directly to R2) ───────────────────
+  app.get("/api/photos/upload-url", async (req, res) => {
+    try {
+      const ext = (req.query.ext as string) || "jpg";
+      const groupKey = (req.query.groupKey as string) || "inspections";
+      const clientId = (req.query.clientId as string) || "";
+      const contentType = ext === "png" ? "image/png" : "image/jpeg";
+
+      const suffix = Math.random().toString(36).slice(2, 10);
+      const key = `${groupKey}/${Date.now()}-${suffix}.${ext}`;
+
+      const result = await createPresignedUploadUrl(key, contentType);
+      res.json({ ...result, clientId });
+    } catch (err) {
+      console.error("[Photos] presigned URL error:", err);
+      const message = err instanceof Error ? err.message : "Failed to create upload URL";
+      res.status(500).json({ error: message });
+    }
+  });
+
   /**
    * Webhook: called by the company platform when a load is assigned to a driver.
    * The platform POSTs { driverCode, loadNumber, vehicleDescription, pickupLocation, deliveryLocation }
@@ -109,6 +130,12 @@ async function startServer() {
         return;
       }
 
+      if (profile.notifyNewLoad === false) {
+        console.log(`[Webhook] Driver ${driverCode} has new-load notifications disabled — skipping`);
+        res.json({ success: true, notified: false, reason: "notifications_disabled" });
+        return;
+      }
+
       const title = "New Load Assigned";
       const body = vehicleDescription
         ? `${vehicleDescription} — ${pickupLocation ?? ""} → ${deliveryLocation ?? ""}`
@@ -126,6 +153,54 @@ async function startServer() {
       res.json({ success: true, notified: true });
     } catch (err) {
       console.error("[Webhook] load-assigned error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ─── Driver Location Ping Endpoint ───────────────────────────────────────────
+  app.post("/api/driver-location", async (req, res) => {
+    try {
+      const { driverCode, pings } = req.body as {
+        driverCode?: string;
+        pings?: Array<{
+          lat: number;
+          lng: number;
+          accuracy?: number | null;
+          speed?: number | null;
+          heading?: number | null;
+          timestamp: number;
+        }>;
+      };
+
+      if (!driverCode || !pings || pings.length === 0) {
+        res.status(400).json({ error: "driverCode and pings[] are required" });
+        return;
+      }
+
+      await db.insertDriverLocationPings(driverCode, pings);
+      res.json({ success: true, count: pings.length });
+    } catch (err) {
+      console.error("[Location] insert error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Company platform fetches latest driver positions
+  app.get("/api/driver-locations", async (req, res) => {
+    try {
+      const secret = process.env.WEBHOOK_SECRET;
+      if (secret) {
+        const provided = req.headers["x-webhook-secret"] ?? req.query.secret;
+        if (provided !== secret) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+      const companyId = req.query.companyId ? Number(req.query.companyId) : undefined;
+      const locations = await db.getLatestDriverLocations(companyId);
+      res.json({ success: true, locations });
+    } catch (err) {
+      console.error("[Location] fetch error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });

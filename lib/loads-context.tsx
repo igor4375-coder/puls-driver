@@ -81,6 +81,8 @@ export interface PlatformLoad {
   storageExpiryDate?: string | null;
   /** Company org ID — needed for getLocations filter */
   orgId?: string;
+  /** Human-readable company/org name that dispatched this load */
+  orgName?: string;
   /** True if this leg's dropoff IS the order's final destination */
   isFinalLeg?: boolean;
   /** The order's ultimate destination */
@@ -258,6 +260,7 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
     gatePassExpiresAt: pl.storageExpiryDate ? parsePlatformDate(pl.storageExpiryDate) || pl.storageExpiryDate : null,
     storageExpiryDate: pl.storageExpiryDate ? parsePlatformDate(pl.storageExpiryDate) || pl.storageExpiryDate : null,
     orgId: pl.orgId,
+    orgName: pl.orgName,
     isFinalLeg: pl.isFinalLeg,
     finalDestination: pl.finalDestination,
   } as Load & { platformTripId: number | string };
@@ -281,7 +284,7 @@ interface LoadsContextType {
   ) => void;
   addLoad: (load: Load) => void;
   refreshPlatformLoads: () => void;
-  revertVehicleToPickupPending: (loadId: string, vehicleId: string) => void;
+  revertVehicleToPickupPending: (loadId: string, vehicleId: string, reason: string) => void;
   /** Move all delivered loads to "archived" status immediately. */
   archiveAllDelivered: () => void;
   /** Move a single load to "archived" status. Works for both platform and local loads. */
@@ -299,6 +302,8 @@ interface LoadsContextType {
    * Useful for clearing test data before a real session.
    */
   clearNonPlatformLoads: () => void;
+  /** Merge partial fields onto a load (both local & platform arrays + delivered snapshot). */
+  patchLoad: (loadId: string, patch: Partial<Load>) => void;
 }
 
 const LoadsContext = createContext<LoadsContextType | null>(null);
@@ -335,7 +340,7 @@ async function geocodeAddress(address: string, city: string, state: string): Pro
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?q=${encoded}&format=json&limit=1&addressdetails=0&countrycodes=ca,us`,
         {
-          headers: { "User-Agent": "AutoHaulDriverApp/1.0" },
+          headers: { "User-Agent": "PulsDispatchApp/1.0" },
           signal: controller.signal,
         }
       );
@@ -542,9 +547,68 @@ export function LoadsProvider({
       const rawLoads = await fetchAssignedLoads({ driverCode });
       const converted = (rawLoads as PlatformLoad[]).map(platformLoadToLoad);
       const geocoded = await geocodePlatformLoads(converted);
-      setPlatformLoads(geocoded);
+      setPlatformLoads((prev) => {
+        const inspectionMap = new Map<string, Map<string, { pickup?: VehicleInspection; delivery?: VehicleInspection; frozen?: VehicleInspection }>>();
+        for (const l of prev) {
+          for (const v of l.vehicles) {
+            if (v.pickupInspection || v.deliveryInspection || v.frozenPickupInspection) {
+              if (!inspectionMap.has(l.id)) inspectionMap.set(l.id, new Map());
+              inspectionMap.get(l.id)!.set(v.id, {
+                pickup: v.pickupInspection,
+                delivery: v.deliveryInspection,
+                frozen: v.frozenPickupInspection,
+              });
+            }
+          }
+        }
+        if (inspectionMap.size === 0) {
+          return geocoded.map((l) => {
+            const existing = prev.find((p) => p.id === l.id);
+            if (!existing) return l;
+            return {
+              ...l,
+              status: existing.status ?? l.status,
+              deliveredAt: existing.deliveredAt ?? l.deliveredAt,
+              ...(existing.status === "picked_up" || existing.status === "delivered" || existing.status === "archived"
+                ? { pickup: { ...l.pickup, date: existing.pickup.date } }
+                : {}),
+              ...(existing.status === "delivered" || existing.status === "archived"
+                ? { delivery: { ...l.delivery, date: existing.delivery.date } }
+                : {}),
+            };
+          });
+        }
+        return geocoded.map((l) => {
+          const existing = prev.find((p) => p.id === l.id);
+          const loadInsps = inspectionMap.get(l.id);
+          return {
+            ...l,
+            status: existing?.status ?? l.status,
+            deliveredAt: existing?.deliveredAt ?? l.deliveredAt,
+            ...(existing && (existing.status === "picked_up" || existing.status === "delivered" || existing.status === "archived")
+              ? { pickup: { ...l.pickup, date: existing.pickup.date } }
+              : {}),
+            ...(existing && (existing.status === "delivered" || existing.status === "archived")
+              ? { delivery: { ...l.delivery, date: existing.delivery.date } }
+              : {}),
+            vehicles: l.vehicles.map((v) => {
+              const saved = loadInsps?.get(v.id);
+              if (!saved) return v;
+              return {
+                ...v,
+                ...(saved.pickup && { pickupInspection: saved.pickup }),
+                ...(saved.delivery && { deliveryInspection: saved.delivery }),
+                ...(saved.frozen && { frozenPickupInspection: saved.frozen }),
+              };
+            }),
+          };
+        });
+      });
       setLastSyncedAt(new Date());
-      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(geocoded));
+      setPlatformLoads((current) => {
+        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(current));
+        return current;
+      });
     } catch (err: any) {
       setPlatformLoadError(err?.message ?? "Failed to fetch platform loads");
     } finally {
@@ -647,17 +711,52 @@ export function LoadsProvider({
       const currentLoad = [...platformLoads, ...localLoads].find((l) => l.id === loadId);
       const deliveredAt = new Date().toISOString();
       if (currentLoad) {
-        markDriverDelivered(loadId, { ...currentLoad, deliveredAt });
+        markDriverDelivered(loadId, {
+          ...currentLoad,
+          deliveredAt,
+          delivery: { ...currentLoad.delivery, date: deliveredAt },
+        });
       }
-      // Stamp deliveredAt on the load in both arrays
+      // Stamp deliveredAt and actual delivery date on the load in both arrays
       const stampFn = (prev: Load[]) =>
-        prev.map((l) => (l.id === loadId ? { ...l, deliveredAt } : l));
+        prev.map((l) =>
+          l.id === loadId
+            ? { ...l, deliveredAt, delivery: { ...l.delivery, date: deliveredAt } }
+            : l
+        );
       setLocalLoads(stampFn);
       setPlatformLoads((prev) => {
         const updated = stampFn(prev);
         debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
         return updated;
       });
+    }
+
+    // When marking as picked_up, freeze the pickup inspection and stamp actual pickup date
+    if (status === "picked_up") {
+      const pickedUpAt = new Date().toISOString();
+      const freezeFn = (prev: Load[]) =>
+        prev.map((l) => {
+          if (l.id !== loadId) return l;
+          return {
+            ...l,
+            status,
+            pickup: { ...l.pickup, date: pickedUpAt },
+            vehicles: l.vehicles.map((v) => ({
+              ...v,
+              frozenPickupInspection: v.pickupInspection
+                ? { ...v.pickupInspection }
+                : v.frozenPickupInspection,
+            })),
+          };
+        });
+      setLocalLoads(freezeFn);
+      setPlatformLoads((prev) => {
+        const updated = freezeFn(prev);
+        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
+        return updated;
+      });
+      return;
     }
 
     // Update in both local and platform arrays (skip if we already stamped above for delivered)
@@ -667,8 +766,6 @@ export function LoadsProvider({
       );
       setPlatformLoads((prev) => {
         const updated = prev.map((l) => (l.id === loadId ? { ...l, status } : l));
-        // Keep cache in sync so the optimistic update survives until the next API poll
-        // (the next API response will overwrite this with the authoritative platform status)
         debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
         return updated;
       });
@@ -677,11 +774,10 @@ export function LoadsProvider({
 
   const savePickupInspection = useCallback(
     (loadId: string, vehicleId: string, inspection: VehicleInspection) => {
-      // NOTE: Saving an inspection does NOT change the load status.
-      // The driver must manually tap "Mark as Picked Up" after reviewing trip details.
       const updateFn = (prev: Load[]) =>
         prev.map((l) => {
           if (l.id !== loadId) return l;
+          if (l.status !== "new") return l;
           return {
             ...l,
             vehicles: l.vehicles.map((v) =>
@@ -741,12 +837,11 @@ export function LoadsProvider({
     setLocalLoads((prev) => [load, ...prev]);
   }, []);
 
-  // Revert a vehicle back to pending — keeps inspection data (photos, damages) intact
-  // Also reverts load status to 'new' so it appears in the Pending tab
+  // Revert a vehicle back to pending.
+  // The frozen inspection snapshot is preserved; the live pickupInspection is cleared
+  // so the driver starts fresh if they re-inspect.
   const revertVehicleToPickupPending = useCallback(
-    (loadId: string, vehicleId: string) => {
-      // Set pickupStatus to 'pending' — does NOT clear inspection data so photos/damages are preserved
-      // Always revert load status to 'new' so the load moves back to the Pending tab
+    (loadId: string, vehicleId: string, _reason: string) => {
       const updateFn = (prev: Load[]) =>
         prev.map((l) => {
           if (l.id !== loadId) return l;
@@ -754,7 +849,9 @@ export function LoadsProvider({
             ...l,
             status: "new" as const,
             vehicles: l.vehicles.map((v) =>
-              v.id === vehicleId ? { ...v, pickupStatus: "pending" as const } : v
+              v.id === vehicleId
+                ? { ...v, pickupStatus: "pending" as const, pickupInspection: undefined }
+                : v
             ),
           };
         });
@@ -836,6 +933,22 @@ export function LoadsProvider({
     debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...platformOnly]));
   }, []);
 
+  const patchLoad = useCallback((loadId: string, patch: Partial<Load>) => {
+    const mergeFn = (prev: Load[]) =>
+      prev.map((l) => (l.id === loadId ? { ...l, ...patch } : l));
+    setLocalLoads(mergeFn);
+    setPlatformLoads((prev) => {
+      const updated = mergeFn(prev);
+      debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+    setDeliveredSnapshots((prev) => {
+      const updated = mergeFn(prev);
+      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
   const archiveAllDelivered = useCallback(() => {
     const archiveFn = (prev: Load[]) =>
       prev.map((l) =>
@@ -914,6 +1027,7 @@ export function LoadsProvider({
         clearAllArchived,
         deleteLoad,
         clearNonPlatformLoads,
+        patchLoad,
       }}
     >
       {children}

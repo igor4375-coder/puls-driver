@@ -1,5 +1,5 @@
 /**
- * Expo Push Notification helper for the AutoHaul server.
+ * Expo Push Notification helper for the Puls Dispatch server.
  * Sends push notifications directly to driver devices via the Expo Push API.
  * Docs: https://docs.expo.dev/push-notifications/sending-notifications/
  */

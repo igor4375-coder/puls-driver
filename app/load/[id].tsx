@@ -221,8 +221,6 @@ function VehicleCard({
 
   // hasPickupInspection: true when inspection data exists AND not explicitly reverted to pending
   const hasPickupInspection = !!vehicle.pickupInspection && vehicle.pickupStatus !== "pending";
-  // Only show Pickup ✓ badge when the load is actually marked as picked up
-  const showPickupBadge = hasPickupInspection && loadStatus === "picked_up";
   const hasDeliveryInspection = !!vehicle.deliveryInspection;
   const damageCount = vehicle.pickupInspection?.damages.length ?? 0;
   const pickupPhotoCount = vehicle.pickupInspection?.photos.length ?? 0;
@@ -242,50 +240,51 @@ function VehicleCard({
   const pickupPhotos = vehicle.pickupInspection?.photos ?? [];
   const deliveryPhotos = vehicle.deliveryInspection?.photos ?? [];
 
+  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [revertReason, setRevertReason] = useState("");
+
   const handleRevertToPending = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(
-      "Move Back to Pending?",
-      "The vehicle will move back to Pending. Your inspection photos and damage notes will be kept.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Move to Pending",
-          style: "destructive",
-          onPress: () => {
-            // Update local state first
-            revertVehicleToPickupPending(loadId, vehicle.id);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            pickupHighlightStore.signal("new", "Vehicle moved back to Pending tab");
-            // Sync to company platform (platform loads only, non-blocking)
-            const isPlatformLoad = loadId.startsWith("platform-");
-            if (isPlatformLoad && platformTripId && driverCode) {
-              revertPickupAction({
-                loadNumber,
-                legId: platformTripId,
-                driverCode,
-              }).catch((err) => {
-                console.warn("[VehicleCard] revertPickup platform sync failed:", err);
-              });
-            }
-            // Close load detail and return to loads list (vehicle now in Pending tab)
-            router.back();
-          },
-        },
-      ]
-    );
+    setRevertReason("");
+    setShowRevertModal(true);
   };
+
+  const confirmRevert = () => {
+    const reason = revertReason.trim();
+    if (!reason) return;
+    setShowRevertModal(false);
+    revertVehicleToPickupPending(loadId, vehicle.id, reason);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    pickupHighlightStore.signal("new", "Vehicle moved back to Pending tab");
+    const isPlatformLoad = loadId.startsWith("platform-");
+    if (isPlatformLoad && platformTripId && driverCode) {
+      revertPickupAction({
+        loadNumber,
+        legId: platformTripId,
+        driverCode,
+        reason,
+      }).catch((err) => {
+        console.warn("[VehicleCard] revertPickup platform sync failed:", err);
+      });
+    }
+    router.back();
+  };
+
+  const inspectionTypeForVehicle = loadStatus === "new" ? "pickup" : "delivery";
+  const currentInspection = inspectionTypeForVehicle === "delivery" ? vehicle.deliveryInspection : vehicle.pickupInspection;
 
   const handleInspect = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    // Camera-first: set nextRoute so camera-session uses router.replace directly
-    // (avoids router.back() race condition that caused return to load detail)
-    cameraSessionStore.open(null, {
-      loadId,
-      vehicleId: vehicle.id,
-      nextRoute: `/inspection/${loadId}/${vehicle.id}`,
-    });
-    router.push("/camera-session" as any);
+    if (currentInspection) {
+      router.push(`/inspection-review/${loadId}/${vehicle.id}?type=${inspectionTypeForVehicle}` as any);
+    } else {
+      cameraSessionStore.open(null, {
+        loadId,
+        vehicleId: vehicle.id,
+        nextRoute: `/inspection-review/${loadId}/${vehicle.id}?type=${inspectionTypeForVehicle}`,
+      });
+      router.push("/camera-session" as any);
+    }
   };
 
   return (
@@ -303,7 +302,7 @@ function VehicleCard({
           {((vehicle.hasKeys !== null && vehicle.hasKeys !== undefined) ||
             (vehicle.starts !== null && vehicle.starts !== undefined) ||
             (vehicle.drives !== null && vehicle.drives !== undefined)) && (
-            <View style={{ flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+            <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
               {vehicle.hasKeys !== null && vehicle.hasKeys !== undefined && (
                 <View style={{
                   flexDirection: "row", alignItems: "center", gap: 4,
@@ -376,16 +375,6 @@ function VehicleCard({
             </Text>
           </View>
         )}
-        {showPickupBadge && (
-          <View style={[styles.vehicleStat, { backgroundColor: colors.success + "15" }]}>
-            <Text style={[styles.vehicleStatText, { color: colors.success }]}>Pickup ✓</Text>
-          </View>
-        )}
-        {hasDeliveryInspection && (
-          <View style={[styles.vehicleStat, { backgroundColor: colors.success + "15" }]}>
-            <Text style={[styles.vehicleStatText, { color: colors.success }]}>Delivery ✓</Text>
-          </View>
-        )}
       </View>
 
       {/* Pending upload indicator — visible even after picked up */}
@@ -401,27 +390,30 @@ function VehicleCard({
           </Text>
         </View>
       )}
+      {/* Single inspection button per stage */}
       {(loadStatus === "new" || loadStatus === "picked_up") && (
-        <>
-          <TouchableOpacity
-            style={[styles.inspectBtn, { borderColor: colors.primary }]}
-            onPress={handleInspect}
-            activeOpacity={0.8}
-          >
-            <IconSymbol name="camera.fill" size={14} color={colors.primary} />
-            <Text style={[styles.inspectBtnText, { color: colors.primary }]}>
-              {loadStatus === "new"
-                ? hasPickupInspection ? "Edit Pickup Inspection" : "Start Pickup Inspection"
-                : hasDeliveryInspection ? "Edit Delivery Inspection" : "Start Delivery Inspection"}
-            </Text>
-          </TouchableOpacity>
-        </>
+        <TouchableOpacity
+          style={[styles.inspectBtn, { borderColor: colors.primary }]}
+          onPress={handleInspect}
+          activeOpacity={0.8}
+        >
+          <IconSymbol name={currentInspection ? "pencil.circle.fill" : "camera.fill"} size={14} color={colors.primary} />
+          <Text style={[styles.inspectBtnText, { color: colors.primary }]}>
+            {loadStatus === "new"
+              ? currentInspection
+                ? `Pickup Inspection (${pickupPhotoCount} photo${pickupPhotoCount !== 1 ? "s" : ""})`
+                : "Start Pickup Inspection"
+              : currentInspection
+                ? `Delivery Inspection (${deliveryPhotoCount} photo${deliveryPhotoCount !== 1 ? "s" : ""})`
+                : "Start Delivery Inspection"}
+          </Text>
+        </TouchableOpacity>
       )}
 
-      {/* View Inspection buttons — shown whenever an inspection record exists */}
-      {hasPickupInspection && (
+      {/* View-only inspection buttons for completed stages */}
+      {hasPickupInspection && loadStatus !== "new" && (
         <TouchableOpacity
-          style={[styles.inspectBtn, { borderColor: colors.primary, marginTop: 10 }]}
+          style={[styles.inspectBtn, { borderColor: colors.primary, marginTop: 8 }]}
           onPress={() => {
             if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             router.push(`/inspection-review/${loadId}/${vehicle.id}?type=pickup` as any);
@@ -430,11 +422,11 @@ function VehicleCard({
         >
           <IconSymbol name="photo.on.rectangle" size={14} color={colors.primary} />
           <Text style={[styles.inspectBtnText, { color: colors.primary }]}>
-            View Pickup Inspection{pickupPhotos.length > 0 ? ` (${pickupPhotos.length} photos)` : ""}
+            Pickup Inspection{pickupPhotos.length > 0 ? ` (${pickupPhotos.length} photos)` : ""}
           </Text>
         </TouchableOpacity>
       )}
-      {hasDeliveryInspection && (
+      {hasDeliveryInspection && loadStatus === "delivered" && (
         <TouchableOpacity
           style={[styles.inspectBtn, { borderColor: colors.warning, marginTop: 8 }]}
           onPress={() => {
@@ -445,7 +437,7 @@ function VehicleCard({
         >
           <IconSymbol name="photo.on.rectangle" size={14} color={colors.warning} />
           <Text style={[styles.inspectBtnText, { color: colors.warning }]}>
-            View Delivery Inspection{deliveryPhotos.length > 0 ? ` (${deliveryPhotos.length} photos)` : ""}
+            Delivery Inspection{deliveryPhotos.length > 0 ? ` (${deliveryPhotos.length} photos)` : ""}
           </Text>
         </TouchableOpacity>
       )}
@@ -511,9 +503,56 @@ function VehicleCard({
             <IconSymbol name="arrow.uturn.left" size={14} color={colors.error} />
             <Text style={[styles.dangerBtnText, { color: colors.error }]}>Move Back to Pending</Text>
           </TouchableOpacity>
-          <Text style={[styles.dangerHint, { color: colors.muted }]}>{hasPickupInspection ? "Inspection photos & data will be kept" : "Load will move back to Pending tab"}</Text>
+          <Text style={[styles.dangerHint, { color: colors.muted }]}>
+            {hasPickupInspection
+              ? "Original inspection is locked — you'll need to provide a reason"
+              : "Load will move back to Pending tab"}
+          </Text>
         </View>
       )}
+
+      {/* Revert reason modal */}
+      <Modal visible={showRevertModal} transparent animationType="fade" onRequestClose={() => setShowRevertModal(false)}>
+        <View style={styles.revertBackdrop} />
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.revertKAV}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowRevertModal(false)} />
+          <View style={[styles.revertModal, { backgroundColor: colors.surface }]}>
+            <Text style={[styles.revertModalTitle, { color: colors.foreground }]}>Why are you reverting?</Text>
+            <Text style={[styles.revertModalHint, { color: colors.muted }]}>
+              This will be sent to dispatch. The original inspection is locked and can't be modified.
+            </Text>
+            <TextInput
+              style={[styles.revertModalInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
+              placeholder={"e.g. \"Vehicle won't start\" or \"Customer refused release\""}
+              placeholderTextColor={colors.muted}
+              value={revertReason}
+              onChangeText={setRevertReason}
+              multiline
+              numberOfLines={3}
+              autoFocus={false}
+            />
+            <View style={styles.revertModalButtons}>
+              <TouchableOpacity
+                style={[styles.revertModalBtn, { backgroundColor: colors.border }]}
+                onPress={() => setShowRevertModal(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.revertModalBtnText, { color: colors.foreground }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.revertModalBtn, { backgroundColor: revertReason.trim() ? colors.error : colors.border, flex: 2 }]}
+                onPress={confirmRevert}
+                activeOpacity={0.8}
+                disabled={!revertReason.trim()}
+              >
+                <Text style={[styles.revertModalBtnText, { color: revertReason.trim() ? "#FFFFFF" : colors.muted }]}>
+                  Revert to Pending
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -846,31 +885,6 @@ export default function LoadDetailScreen() {
   };
 
   const handleMarkDelivered = async () => {
-    // ── Alternate delivery option for all platform loads ──────────────────
-    if (isPlatformLoad) {
-      const destName = load.finalDestination?.name ?? load.delivery.contact.company ?? "delivery location";
-      const message = load.isFinalLeg === false
-        ? `This vehicle's final destination is ${destName}. You can deliver here or choose an alternate location.`
-        : `Deliver to ${destName}, or choose an alternate drop-off location?`;
-      Alert.alert(
-        "Delivery Options",
-        message,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Deliver Here",
-            onPress: () => proceedWithDelivery(),
-          },
-          {
-            text: "Other Location",
-            onPress: () => {
-              router.push(`/alternate-delivery/${load.id}` as any);
-            },
-          },
-        ],
-      );
-      return;
-    }
     proceedWithDelivery();
   };
 
@@ -1010,14 +1024,11 @@ export default function LoadDetailScreen() {
             <IconSymbol name="arrow.left" size={22} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {/* Center: load number + status */}
+          {/* Center: load number */}
           <View style={styles.navHeaderCenter}>
             <Text style={styles.navTitle} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
               Load #{load.loadNumber}
             </Text>
-            <View style={[styles.statusPill, { backgroundColor: "rgba(255,255,255,0.18)" }]}>
-              <Text style={styles.statusPillText}>{getStatusLabel(load.status)}</Text>
-            </View>
           </View>
 
           {/* Right: action buttons */}
@@ -1067,8 +1078,38 @@ export default function LoadDetailScreen() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }} keyboardVerticalOffset={0}>
       <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={styles.content}>
-          {/* Vehicles */}
-          <SectionHeader title={`VEHICLES (${load.vehicles.length})`} />
+          {/* Company + status row */}
+          <View style={styles.companyStatusRow}>
+            {load.orgName ? (
+              <View style={[styles.orgBadgeRow, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "30" }]}>
+                <IconSymbol name="building.2.fill" size={13} color={colors.primary} />
+                <Text style={[styles.orgBadgeLabel, { color: colors.primary }]} numberOfLines={1}>{load.orgName}</Text>
+              </View>
+            ) : null}
+            <View style={[styles.statusPillInline, {
+              backgroundColor:
+                load.status === "delivered" ? colors.success + "18" :
+                load.status === "picked_up" ? colors.primary + "18" :
+                load.status === "new" ? colors.warning + "18" :
+                colors.muted + "18",
+            }]}>
+              <View style={[styles.statusDotInline, {
+                backgroundColor:
+                  load.status === "delivered" ? colors.success :
+                  load.status === "picked_up" ? colors.primary :
+                  load.status === "new" ? colors.warning :
+                  colors.muted,
+              }]} />
+              <Text style={[styles.statusPillInlineText, {
+                color:
+                  load.status === "delivered" ? colors.success :
+                  load.status === "picked_up" ? colors.primary :
+                  load.status === "new" ? colors.warning :
+                  colors.muted,
+              }]}>{getStatusLabel(load.status)}</Text>
+            </View>
+          </View>
+          {/* Vehicle — always one per load */}
           {load.vehicles.map((v) => (
             <VehicleCard
               key={v.id}
@@ -1084,7 +1125,7 @@ export default function LoadDetailScreen() {
           {/* Pickup Info */}
           <SectionHeader title="PICKUP INFORMATION" />
           <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.contactHeader}>
+            <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
               <View style={[styles.contactDot, { backgroundColor: colors.success }]} />
               <Text style={[styles.contactName, { color: colors.foreground }]}>
                 {load.pickup.contact.company || load.pickup.contact.name}
@@ -1095,8 +1136,6 @@ export default function LoadDetailScreen() {
                 </View>
               </TouchableOpacity>
             </View>
-            <InfoRow label="Company" value={load.pickup.contact.company} />
-            {/* Show contact person name only when it differs from the company name */}
             {load.pickup.contact.name && load.pickup.contact.name !== load.pickup.contact.company && (
               <InfoRow label="Contact" value={load.pickup.contact.name} copyable />
             )}
@@ -1112,7 +1151,7 @@ export default function LoadDetailScreen() {
           {/* Delivery Info */}
           <SectionHeader title="DELIVERY INFORMATION" />
           <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={styles.contactHeader}>
+            <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
               <View style={[styles.contactDot, { backgroundColor: colors.error }]} />
               <Text style={[styles.contactName, { color: colors.foreground }]}>
                 {load.delivery.contact.company || load.delivery.contact.name}
@@ -1123,8 +1162,6 @@ export default function LoadDetailScreen() {
                 </View>
               </TouchableOpacity>
             </View>
-            <InfoRow label="Company" value={load.delivery.contact.company} />
-            {/* Show contact person name only when it differs from the company name */}
             {load.delivery.contact.name && load.delivery.contact.name !== load.delivery.contact.company && (
               <InfoRow label="Contact" value={load.delivery.contact.name} copyable />
             )}
@@ -1136,6 +1173,30 @@ export default function LoadDetailScreen() {
             />
             <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
           </View>
+
+          {/* Alternate delivery notice */}
+          {load.wasAlternateDelivery && load.actualDeliveryLocation && (
+            <View style={[styles.altDeliveryCard, { backgroundColor: colors.warning + "12", borderColor: colors.warning + "40" }]}>
+              <View style={styles.altDeliveryHeader}>
+                <IconSymbol name="arrow.triangle.branch" size={15} color={colors.warning} />
+                <Text style={[styles.altDeliveryTitle, { color: colors.warning }]}>
+                  Delivered to Alternate Location
+                </Text>
+              </View>
+              <Text style={[styles.altDeliveryName, { color: colors.foreground }]}>
+                {load.actualDeliveryLocation.name}
+              </Text>
+              {(load.actualDeliveryLocation.address || load.actualDeliveryLocation.city) && (
+                <Text style={[styles.altDeliveryAddr, { color: colors.muted }]}>
+                  {[
+                    load.actualDeliveryLocation.address,
+                    load.actualDeliveryLocation.city,
+                    load.actualDeliveryLocation.province,
+                  ].filter(Boolean).join(", ")}
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Payment Info — hidden when rates not visible */}
           {canViewRates && (
@@ -1392,21 +1453,23 @@ export default function LoadDetailScreen() {
                 <Text style={styles.ctaBtnText}>Mark as Delivered</Text>
               </TouchableOpacity>
 
+              {isPlatformLoad && (
+                <TouchableOpacity
+                  style={styles.altDeliveryLink}
+                  onPress={() => router.push(`/alternate-delivery/${load.id}` as any)}
+                  activeOpacity={0.7}
+                >
+                  <IconSymbol name="arrow.triangle.branch" size={14} color={colors.muted} />
+                  <Text style={[styles.altDeliveryText, { color: colors.muted }]}>
+                    Deliver to Alternate Location
+                  </Text>
+                </TouchableOpacity>
+              )}
+
             </>
           )}
 
 
-
-          {load.status === "delivered" && (
-            <TouchableOpacity
-              style={[styles.ctaBtn, { backgroundColor: colors.primary }]}
-              onPress={() => router.push(`/bol/${load.id}` as any)}
-              activeOpacity={0.85}
-            >
-              <IconSymbol name="doc.text.fill" size={22} color="#FFFFFF" />
-              <Text style={styles.ctaBtnText}>View Bill of Lading</Text>
-            </TouchableOpacity>
-          )}
 
           <View style={{ height: 40 }} />
         </View>
@@ -1686,6 +1749,43 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
   },
+  companyStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 12,
+  },
+  orgBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  orgBadgeLabel: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  statusPillInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  statusDotInline: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusPillInlineText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
   sectionHeader: {
     fontSize: 11,
     fontWeight: "700",
@@ -1697,7 +1797,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     padding: 14,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   vehicleHeader: {
     flexDirection: "row",
@@ -1716,8 +1816,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   vehicleName: {
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 17,
+    fontWeight: "800",
   },
   vehicleVin: {
     fontSize: 11,
@@ -1768,9 +1868,12 @@ const styles = StyleSheet.create({
   contactHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    padding: 14,
-    paddingBottom: 10,
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    marginBottom: 2,
   },
   contactDot: {
     width: 10,
@@ -1779,8 +1882,8 @@ const styles = StyleSheet.create({
   },
   contactName: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: "700",
+    fontSize: 17,
+    fontWeight: "800",
   },
   callBtn: {
     width: 32,
@@ -1847,6 +1950,45 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "700",
+  },
+  altDeliveryLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  altDeliveryText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  altDeliveryCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 12,
+  },
+  altDeliveryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+  },
+  altDeliveryTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  altDeliveryName: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  altDeliveryAddr: {
+    fontSize: 13,
   },
   notFound: {
     flex: 1,
@@ -2284,5 +2426,57 @@ const expenseSheetStyles = StyleSheet.create({
     minHeight: 50,
     textAlignVertical: "top",
     padding: 0,
+  },
+  revertBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  revertKAV: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  revertModal: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 36,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  revertModalTitle: {
+    fontSize: 19,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  revertModalHint: {
+    fontSize: 14,
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  revertModalInput: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    fontSize: 15,
+    minHeight: 100,
+    textAlignVertical: "top",
+    marginBottom: 20,
+  },
+  revertModalButtons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  revertModalBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  revertModalBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

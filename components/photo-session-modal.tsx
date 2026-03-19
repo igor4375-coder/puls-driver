@@ -248,7 +248,7 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
         Camera Access Required
       </Text>
       <Text style={{ color: "#aaa", fontSize: 15, textAlign: "center", marginTop: 10, lineHeight: 22 }}>
-        AutoHaul needs camera access to capture inspection photos and videos.
+        Puls Dispatch needs camera access to capture inspection photos and videos.
       </Text>
       <TouchableOpacity
         style={{ backgroundColor: colors.primary, paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14, marginTop: 28 }}

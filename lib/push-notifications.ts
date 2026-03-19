@@ -1,23 +1,34 @@
 /**
  * Push Notification Service
- * Handles device token registration and notification tap routing.
+ * Handles device token registration, notification tap routing, and
+ * automatic responses to dispatcher location requests.
  * Works on iOS and Android (physical devices only — not simulators).
  * Push notifications require a development build; local notifications work in Expo Go.
  */
-import { Platform } from "react-native";
+import { Alert, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import { router } from "expo-router";
+import { sendImmediateLocationPing } from "@/lib/location-tracker";
 
 // Show notifications even when app is in foreground
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data as Record<string, unknown> | undefined;
+
+    // Auto-respond to location requests when app is foregrounded
+    if (data?.type === "location_request") {
+      sendImmediateLocationPing().catch(() => {});
+    }
+
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    };
+  },
 });
 
 /**
@@ -34,7 +45,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   // Android channel setup
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
-      name: "AutoHaul",
+      name: "Puls Dispatch",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#0a7ea4",
@@ -47,6 +58,12 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       name: "Load Assignments",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 300, 200, 300],
+    });
+    await Notifications.setNotificationChannelAsync("location-requests", {
+      name: "Location Requests",
+      description: "Dispatcher requests for your current location",
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 200, 100, 200],
     });
   }
 
@@ -85,7 +102,6 @@ export function setupNotificationResponseListener(): () => void {
     // Delay navigation to allow the stack to initialize when app was cold-started from notification
     setTimeout(() => {
       if (type === "invite") {
-        // Navigate to profile tab where pending invites are shown
         router.push("/(tabs)/profile");
       } else if (type === "load_assigned") {
         const loadId = data?.loadId as string | undefined;
@@ -94,6 +110,17 @@ export function setupNotificationResponseListener(): () => void {
         } else {
           router.push("/(tabs)");
         }
+      } else if (type === "location_request") {
+        // Tapped the location request notification — send ping and show confirmation
+        sendImmediateLocationPing()
+          .then((ok) => {
+            if (ok) {
+              Alert.alert("Location Shared", "Your current location has been sent to dispatch.");
+            } else {
+              Alert.alert("Location Unavailable", "Could not get your current location. Make sure location services are enabled.");
+            }
+          })
+          .catch(() => {});
       }
     }, 500);
   });

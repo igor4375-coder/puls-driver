@@ -23,10 +23,10 @@ import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
-import type { Damage, DamageType, DamageSeverity, DamageZone } from "@/lib/data";
+import type { Damage, DamageType, DamageSeverity, DamageZone, AdditionalInspection } from "@/lib/data";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const MAIN_IMAGE_HEIGHT = SCREEN_WIDTH * 0.75;
+const MAIN_IMAGE_HEIGHT = SCREEN_WIDTH * 1.15;
 const THUMB_SIZE = 72;
 const THUMB_GAP = 8;
 
@@ -69,75 +69,72 @@ const SEV_COLORS: Record<string, string> = {
 };
 
 const ZONE_LABELS: Record<string, string> = {
-  front: "Front",
-  rear: "Rear",
+  front: "Front Bumper",
+  rear: "Rear Bumper",
   hood: "Hood",
   trunk: "Trunk",
   roof: "Roof",
-  driver_side: "Driver Side",
-  passenger_side: "Passenger Side",
   windshield: "Windshield",
-  driver_front_wheel: "Driver Front Wheel",
-  driver_rear_wheel: "Driver Rear Wheel",
-  passenger_front_wheel: "Passenger Front Wheel",
-  passenger_rear_wheel: "Passenger Rear Wheel",
+  rear_windshield: "Rear Windshield",
+  fl_fender: "F.L Fender",
+  fr_fender: "F.R Fender",
+  fl_door: "F.L Door",
+  rl_door: "R.L Door",
+  fr_door: "F.R Door",
+  rr_door: "R.R Door",
+  rl_panel: "R.L Quarter Panel",
+  rr_panel: "R.R Quarter Panel",
+  driver_front_wheel: "F.L Wheel",
+  driver_rear_wheel: "R.L Wheel",
+  passenger_front_wheel: "F.R Wheel",
+  passenger_rear_wheel: "R.R Wheel",
+  driver_side: "Driver Side",
+  passenger_side: "Pass. Side",
 };
 
 // ─── Zone inference helpers ───────────────────────────────────────────────────
 
 type DiagramView = "top" | "side";
 
-/**
- * The vehicle diagram image has 3 sections (percentages of total image height):
- *   Top-down view:  y =  0% – 33%  (front at top, rear at bottom)
- *   Side view:      y = 33% – 68%  (front on left, rear on right)
- *   Bottom view:    y = 68% – 100% (mirror of top-down, front at bottom)
- */
-
+/** Top-down view (y 0–38%): driver's side from above. LEFT = REAR, RIGHT = FRONT */
 function inferZoneTop(xPct: number, yPct: number): DamageZone {
-  const relY = (yPct / 33) * 100;
-  if (relY < 40 && xPct < 25) return "driver_front_wheel";
-  if (relY < 40 && xPct > 75) return "passenger_front_wheel";
-  if (relY > 60 && xPct < 25) return "driver_rear_wheel";
-  if (relY > 60 && xPct > 75) return "passenger_rear_wheel";
-  if (relY < 18) return "front";
-  if (relY > 82) return "rear";
-  if (xPct < 15) return "driver_side";
-  if (xPct > 85) return "passenger_side";
-  if (relY < 45) return "hood";
-  if (relY < 60) return "windshield";
-  if (relY < 75) return "roof";
-  return "trunk";
+  const relY = (yPct / 38) * 100;
+  if (relY < 40 && xPct >= 12 && xPct < 28) return "driver_rear_wheel";
+  if (relY < 40 && xPct >= 72 && xPct < 88) return "driver_front_wheel";
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 22) return "rl_panel";
+  if (xPct < 42) return "rl_door";
+  if (xPct < 62) return "fl_door";
+  if (xPct <= 88) return "fl_fender";
+  return "roof";
 }
 
-function inferZoneSide(xPct: number, _yPct: number): DamageZone {
-  const relY = ((_yPct - 33) / 35) * 100;
-  if (xPct < 10) return "front";
-  if (xPct > 90) return "rear";
-  if (relY > 55 && xPct >= 10 && xPct < 40) return "driver_front_wheel";
-  if (relY > 55 && xPct >= 60 && xPct <= 90) return "driver_rear_wheel";
-  if (relY < 20) return "roof";
-  if (relY < 40 && xPct < 38) return "windshield";
-  if (relY < 40 && xPct > 62) return "trunk";
-  if (xPct < 30) return "hood";
-  if (xPct > 70) return "trunk";
-  return "driver_side";
+/** Body/roof strip (y 38–55%): LEFT = REAR, RIGHT = FRONT */
+function inferZoneMiddle(xPct: number): DamageZone {
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 20) return "trunk";
+  if (xPct < 37) return "rear_windshield";
+  if (xPct < 58) return "roof";
+  if (xPct < 72) return "windshield";
+  if (xPct <= 88) return "hood";
+  return "roof";
 }
 
+/** Side view (y 55–100%): passenger side. LEFT = REAR, RIGHT = FRONT */
 function inferZoneBottom(xPct: number, yPct: number): DamageZone {
-  const relY = 100 - ((yPct - 68) / 32) * 100;
-  if (relY < 40 && xPct < 25) return "passenger_front_wheel";
-  if (relY < 40 && xPct > 75) return "driver_front_wheel";
-  if (relY > 60 && xPct < 25) return "passenger_rear_wheel";
-  if (relY > 60 && xPct > 75) return "driver_rear_wheel";
-  if (relY < 18) return "front";
-  if (relY > 82) return "rear";
-  if (xPct < 15) return "passenger_side";
-  if (xPct > 85) return "driver_side";
-  if (relY < 45) return "hood";
-  if (relY < 60) return "windshield";
-  if (relY < 75) return "roof";
-  return "trunk";
+  const relY = ((yPct - 55) / 45) * 100;
+  if (relY < 12) return "roof";
+  if (relY > 70 && xPct >= 10 && xPct < 30) return "passenger_rear_wheel";
+  if (relY > 70 && xPct >= 65 && xPct < 88) return "passenger_front_wheel";
+  if (xPct < 8) return "rear";
+  if (xPct > 82) return "front";
+  if (xPct < 22) return "rr_panel";
+  if (xPct < 45) return "rr_door";
+  if (xPct < 62) return "fr_door";
+  if (xPct <= 82) return "fr_fender";
+  return "roof";
 }
 
 // ─── VehicleDiagram component ─────────────────────────────────────────────────
@@ -166,15 +163,15 @@ function VehicleDiagram({
     const yPct = Math.max(0, Math.min(100, (locationY / H) * 100));
     let zone: DamageZone;
     let view: DiagramView;
-    if (yPct < 33) {
+    if (yPct < 38) {
       zone = inferZoneTop(xPct, yPct);
       view = "top";
-    } else if (yPct < 68) {
-      zone = inferZoneSide(xPct, yPct);
-      view = "side";
+    } else if (yPct < 55) {
+      zone = inferZoneMiddle(xPct);
+      view = "top";
     } else {
       zone = inferZoneBottom(xPct, yPct);
-      view = "top";
+      view = "side";
     }
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onDiagramTap(xPct, yPct, view, zone);
@@ -316,22 +313,6 @@ function DamageModal({
     }
   }, [visible]);
 
-  const handlePickPhoto = async () => {
-    setPickingPhoto(true);
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsMultipleSelection: true,
-        quality: 1,  // No compression — preserve original quality
-      });
-      if (!result.canceled) {
-        setDamagePhotos((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
-      }
-    } finally {
-      setPickingPhoto(false);
-    }
-  };
-
   const handleTakePhoto = async () => {
     setPickingPhoto(true);
     try {
@@ -427,11 +408,7 @@ function DamageModal({
           <View style={ms.photoRow}>
             <TouchableOpacity
               style={[ms.photoAddBtn, { borderColor: colors.border, backgroundColor: colors.background }]}
-              onPress={() => Alert.alert("Add Photo", "Choose source", [
-                { text: "Take Photo", onPress: handleTakePhoto },
-                { text: "Choose from Library", onPress: handlePickPhoto },
-                { text: "Cancel", style: "cancel" },
-              ])}
+              onPress={handleTakePhoto}
               activeOpacity={0.7}
               disabled={pickingPhoto}
             >
@@ -516,13 +493,33 @@ export default function InspectionReviewScreen() {
       ? vehicle?.deliveryInspection
       : vehicle?.pickupInspection;
 
-  const photos = inspection?.photos ?? [];
+  const [photos, setPhotos] = useState<string[]>(inspection?.photos ?? []);
   const savedDamages = inspection?.damages ?? [];
   const savedNoDamage = inspection?.noDamage ?? false;
+  const existingAdditional = inspection?.additionalInspection;
 
   // Local editable damage state (synced back on every change)
   const [damages, setDamages] = useState<Damage[]>(savedDamages);
   const [noDamage, setNoDamage] = useState(savedNoDamage);
+
+  // Editable additional inspection fields
+  const [odometer, setOdometer] = useState(existingAdditional?.odometer ?? "");
+  const [notes, setNotes] = useState(inspection?.notes ?? "");
+  const [drivable, setDrivable] = useState<boolean | null>(existingAdditional?.drivable ?? null);
+  const [windscreen, setWindscreen] = useState<boolean | null>(existingAdditional?.windscreen ?? null);
+  const [glassesIntact, setGlassesIntact] = useState<boolean | null>(existingAdditional?.glassesIntact ?? null);
+  const [titlePresent, setTitlePresent] = useState<boolean | null>(existingAdditional?.titlePresent ?? null);
+  const [billOfSale, setBillOfSale] = useState<boolean | null>(existingAdditional?.billOfSale ?? null);
+  const [keys, setKeys] = useState<number | null>(existingAdditional?.keys ?? null);
+  const [remotes, setRemotes] = useState<number | null>(existingAdditional?.remotes ?? null);
+  const [headrests, setHeadrests] = useState<number | null>(existingAdditional?.headrests ?? null);
+  const [cargoCover, setCargoCover] = useState<boolean | null>(existingAdditional?.cargoCover ?? null);
+  const [spareTire, setSpareTire] = useState<boolean | null>(existingAdditional?.spareTire ?? null);
+  const [radio, setRadio] = useState<boolean | null>(existingAdditional?.radio ?? null);
+  const [manuals, setManuals] = useState<boolean | null>(existingAdditional?.manuals ?? null);
+  const [navigationDisk, setNavigationDisk] = useState<boolean | null>(existingAdditional?.navigationDisk ?? null);
+  const [pluginChargerCable, setPluginChargerCable] = useState<boolean | null>(existingAdditional?.pluginChargerCable ?? null);
+  const [headphones, setHeadphones] = useState<boolean | null>(existingAdditional?.headphones ?? null);
 
   // Diagram modal state
   const [selectedZone, setSelectedZone] = useState<DamageZone | null>(null);
@@ -531,25 +528,85 @@ export default function InspectionReviewScreen() {
   const [pendingYPct, setPendingYPct] = useState<number | undefined>();
   const [pendingDiagramView, setPendingDiagramView] = useState<"top" | "side_driver">("top");
 
+  // Consume photos from camera session on first mount (new inspection flow)
+  const didConsume = useRef(false);
+  useEffect(() => {
+    if (didConsume.current) return;
+    didConsume.current = true;
+    const pending = cameraSessionStore.consumePendingPhotos();
+    if (pending.length > 0) {
+      setPhotos((prev) => [...prev, ...pending].slice(0, 200));
+      if (vehicle && load) {
+        const base = inspection ?? { vehicleId, damages: [], photos: [], notes: "", noDamage: false };
+        const merged = [...(base.photos ?? []), ...pending].slice(0, 200);
+        const updated = { ...base, photos: merged };
+        if (inspectionType === "delivery") {
+          saveDeliveryInspection(loadId, vehicleId, updated);
+        } else {
+          savePickupInspection(loadId, vehicleId, updated);
+        }
+      }
+    }
+    cameraSessionStore.clearMeta();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Photo gallery state
   const [selectedIndex, setSelectedIndex] = useState(0);
   const mainListRef = useRef<FlatList>(null);
   const thumbListRef = useRef<FlatList>(null);
 
-  // Helper to persist damage changes immediately
-  const persistDamages = useCallback((newDamages: Damage[], newNoDamage: boolean) => {
-    if (!inspection || !vehicle || !load) return;
-    const updated = { ...inspection, damages: newDamages, noDamage: newNoDamage };
+  const buildAdditional = useCallback((): AdditionalInspection => ({
+    odometer,
+    notes: "",
+    drivable,
+    windscreen,
+    glassesIntact,
+    titlePresent,
+    billOfSale,
+    keys,
+    remotes,
+    headrests,
+    cargoCover,
+    spareTire,
+    radio,
+    manuals,
+    navigationDisk,
+    pluginChargerCable,
+    headphones,
+  }), [odometer, drivable, windscreen, glassesIntact, titlePresent, billOfSale, keys, remotes, headrests, cargoCover, spareTire, radio, manuals, navigationDisk, pluginChargerCable, headphones]);
+
+  const persistAll = useCallback((overrides?: { newDamages?: Damage[]; newNoDamage?: boolean; newPhotos?: string[] }) => {
+    if (!vehicle || !load) return;
+    const base = inspection ?? { vehicleId, damages: [], photos: [], notes: "", noDamage: false };
+    const updated = {
+      ...base,
+      damages: overrides?.newDamages ?? damages,
+      noDamage: overrides?.newNoDamage ?? noDamage,
+      photos: overrides?.newPhotos ?? photos,
+      notes,
+      additionalInspection: buildAdditional(),
+    };
     if (inspectionType === "delivery") {
       saveDeliveryInspection(loadId, vehicleId, updated);
     } else {
       savePickupInspection(loadId, vehicleId, updated);
     }
-  }, [inspection, vehicle, load, inspectionType, loadId, vehicleId, savePickupInspection, saveDeliveryInspection]);
+  }, [inspection, vehicle, load, inspectionType, loadId, vehicleId, damages, noDamage, photos, notes, buildAdditional, savePickupInspection, saveDeliveryInspection]);
+
+  // Alias for damage-only persists (called from diagram handlers)
+  const persistDamages = useCallback((newDamages: Damage[], newNoDamage: boolean) => {
+    persistAll({ newDamages, newNoDamage });
+  }, [persistAll]);
 
   // ── Navigation ──────────────────────────────────────────────────────────────
   const handleBack = () => {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.back();
+  };
+
+  const handleSave = () => {
+    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    persistAll();
     router.back();
   };
 
@@ -578,31 +635,22 @@ export default function InspectionReviewScreen() {
     }
     cameraSessionStore.open(
       (uris: string[]) => {
-        if (!inspection || !vehicle || !load) return;
-        const updatedPhotos = [...photos, ...uris].slice(0, 200);
-        const updatedInspection = { ...inspection, photos: updatedPhotos };
-        if (inspectionType === "delivery") {
-          saveDeliveryInspection(loadId, vehicleId, updatedInspection);
-        } else {
-          savePickupInspection(loadId, vehicleId, updatedInspection);
-        }
-        setTimeout(() => {
-          const newIndex = photos.length;
-          if (newIndex < updatedPhotos.length) {
-            setSelectedIndex(newIndex);
-            mainListRef.current?.scrollToIndex({ index: newIndex, animated: true });
+        cameraSessionStore.consumePendingPhotos();
+        setPhotos((prev) => {
+          const merged = [...prev, ...uris].slice(0, 200);
+          const base = inspection ?? { vehicleId, damages: [], photos: [], notes: "", noDamage: false };
+          const updated = { ...base, damages, noDamage, photos: merged, notes, additionalInspection: buildAdditional() };
+          if (inspectionType === "delivery") {
+            saveDeliveryInspection(loadId, vehicleId, updated);
+          } else {
+            savePickupInspection(loadId, vehicleId, updated);
           }
-        }, 300);
+          return merged;
+        });
       },
       { loadId, vehicleId, inspectionType }
     );
     router.push("/camera-session" as any);
-  };
-
-  // ── Navigate to full inspection edit ────────────────────────────────────────
-  const handleEditInspection = () => {
-    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/inspection/${loadId}/${vehicleId}` as any);
   };
 
   // ── Diagram handlers ────────────────────────────────────────────────────────
@@ -619,18 +667,10 @@ export default function InspectionReviewScreen() {
     setDamages(newDamages);
     setShowDamageModal(false);
     setSelectedZone(null);
-    // Merge damage photos into the inspection gallery
-    if (damagePhotos.length > 0 && inspection) {
-      const updatedPhotos = [...photos, ...damagePhotos].slice(0, 200);
-      const updated = { ...inspection, damages: newDamages, photos: updatedPhotos };
-      if (inspectionType === "delivery") {
-        saveDeliveryInspection(loadId, vehicleId, updated);
-      } else {
-        savePickupInspection(loadId, vehicleId, updated);
-      }
-    } else {
-      persistDamages(newDamages, noDamage);
+    if (damagePhotos.length > 0) {
+      setPhotos((prev) => [...prev, ...damagePhotos].slice(0, 200));
     }
+    persistDamages(newDamages, noDamage);
   };
 
   const handleRemoveDamage = (id: string) => {
@@ -667,17 +707,6 @@ export default function InspectionReviewScreen() {
 
   const vehicleTitle = [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") || "Unknown Vehicle";
   const vinDisplay = vehicle.vin || "VIN# Not Available";
-  const completedDate = inspection?.completedAt
-    ? new Date(inspection.completedAt).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" })
-    : null;
-
-  const locationInfo = inspection?.locationLabel
-    ? inspection.locationLabel
-    : inspectionType === "pickup"
-      ? [load.pickup.contact.city, load.pickup.contact.state, load.pickup.contact.zip].filter(Boolean).join(", ")
-      : [load.delivery.contact.city, load.delivery.contact.state, load.delivery.contact.zip].filter(Boolean).join(", ");
-
-  const captionText = `${inspectionType === "pickup" ? "Pickup" : "Delivery"} Condition${completedDate ? `: ${completedDate}` : ""}${locationInfo ? `, ${locationInfo}` : ""}`;
 
   const existingZoneDamages = damages.filter((d) => d.zone === selectedZone);
 
@@ -694,8 +723,8 @@ export default function InspectionReviewScreen() {
             <IconSymbol name="lock.fill" size={18} color={colors.muted} />
           </View>
         ) : (
-          <TouchableOpacity onPress={handleEditInspection} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <IconSymbol name="pencil" size={20} color={colors.muted} />
+          <TouchableOpacity onPress={handleSave} activeOpacity={0.7} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={[s.headerSaveBtn, { color: colors.primary }]}>Save</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -746,16 +775,13 @@ export default function InspectionReviewScreen() {
                   getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
                   renderItem={({ item }) => (
                     <View style={{ width: SCREEN_WIDTH, height: MAIN_IMAGE_HEIGHT }}>
-                      <Image source={{ uri: item }} style={s.mainImage} contentFit="cover" />
+                      <Image source={{ uri: item }} style={s.mainImage} contentFit="contain" />
                     </View>
                   )}
                 />
                 <View style={[s.photoCountBadge, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
                   <IconSymbol name="camera.fill" size={13} color="#FFFFFF" />
                   <Text style={s.photoCountText}>{selectedIndex + 1}/{photos.length}</Text>
-                </View>
-                <View style={s.captionOverlay}>
-                  <Text style={s.captionText} numberOfLines={1}>{captionText}</Text>
                 </View>
               </View>
               <FlatList
@@ -847,30 +873,163 @@ export default function InspectionReviewScreen() {
           />
         </View>
 
-        {/* ── Additional Inspection Info ──────────────────────────────────────── */}
-        {inspection?.additionalInspection && (
-          <View style={[s.additionalSection, { borderTopColor: colors.border }]}>
-            <Text style={[s.sectionTitle, { color: colors.foreground }]}>Additional Inspection</Text>
-            <View style={s.additionalGrid}>
-              {inspection.additionalInspection.odometer ? <AdditionalItem label="Odometer" value={inspection.additionalInspection.odometer} /> : null}
-              {inspection.additionalInspection.drivable !== null && <AdditionalItem label="Drivable" value={inspection.additionalInspection.drivable ? "Yes" : "No"} />}
-              {inspection.additionalInspection.windscreen !== null && <AdditionalItem label="Windscreen" value={inspection.additionalInspection.windscreen ? "OK" : "Damaged"} />}
-              {inspection.additionalInspection.glassesIntact !== null && <AdditionalItem label="Glasses Intact" value={inspection.additionalInspection.glassesIntact ? "Yes" : "No"} />}
-              {inspection.additionalInspection.titlePresent !== null && <AdditionalItem label="Title Present" value={inspection.additionalInspection.titlePresent ? "Yes" : "No"} />}
-              {inspection.additionalInspection.keys !== null && <AdditionalItem label="Keys" value={String(inspection.additionalInspection.keys)} />}
-              {inspection.additionalInspection.remotes !== null && <AdditionalItem label="Remotes" value={String(inspection.additionalInspection.remotes)} />}
-              {inspection.additionalInspection.spareTire !== null && <AdditionalItem label="Spare Tire" value={inspection.additionalInspection.spareTire ? "Yes" : "No"} />}
+        {/* ── Odometer ──────────────────────────────────────────────────────── */}
+        {!isLocked && (
+          <View style={[s.editSection, { borderTopColor: colors.border }]}>
+            <View style={s.inlineRow}>
+              <IconSymbol name="gauge" size={18} color={colors.muted} />
+              <TextInput
+                style={[s.inlineInput, { color: colors.foreground }]}
+                placeholder="Odometer"
+                placeholderTextColor={colors.muted}
+                value={odometer}
+                onChangeText={setOdometer}
+                keyboardType="numeric"
+                returnKeyType="done"
+              />
             </View>
           </View>
         )}
-
-        {/* ── Notes ──────────────────────────────────────────────────────────── */}
-        {inspection?.notes ? (
-          <View style={[s.notesSection, { borderTopColor: colors.border }]}>
-            <Text style={[s.sectionTitle, { color: colors.foreground }]}>Notes</Text>
-            <Text style={[s.notesText, { color: colors.muted }]}>{inspection.notes}</Text>
+        {isLocked && odometer ? (
+          <View style={[s.editSection, { borderTopColor: colors.border }]}>
+            <AdditionalItem label="Odometer" value={odometer} />
           </View>
         ) : null}
+
+        {/* ── Additional Inspection ────────────────────────────────────────── */}
+        <View style={[s.editSection, { borderTopColor: colors.border }]}>
+          <Text style={[s.editSectionLabel, { color: colors.muted }]}>ADDITIONAL INSPECTION</Text>
+          {([
+            { label: "Drivable", value: drivable, setter: setDrivable },
+            { label: "Windscreen", value: windscreen, setter: setWindscreen },
+            { label: "Glasses (all intact)", value: glassesIntact, setter: setGlassesIntact },
+            { label: "Title", value: titlePresent, setter: setTitlePresent },
+            { label: "Bill of Sale", value: billOfSale, setter: setBillOfSale },
+          ] as { label: string; value: boolean | null; setter: (v: boolean | null) => void }[]).map((item, idx, arr) => (
+            <View key={item.label} style={[s.toggleRow, { borderBottomColor: colors.border, borderBottomWidth: idx < arr.length - 1 ? 1 : 0 }]}>
+              <Text style={[s.toggleLabel, { color: colors.foreground }]}>{item.label}</Text>
+              {isLocked ? (
+                <Text style={[s.toggleLockedVal, { color: item.value === true ? colors.success : item.value === false ? colors.error : colors.muted }]}>
+                  {item.value === true ? "YES" : item.value === false ? "NO" : "—"}
+                </Text>
+              ) : (
+                <View style={[s.toggleGroup, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <TouchableOpacity
+                    style={[s.toggleBtn, item.value === true && { backgroundColor: colors.primary }]}
+                    onPress={() => { item.setter(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[s.toggleBtnText, { color: item.value === true ? "#fff" : colors.foreground }]}>YES</Text>
+                  </TouchableOpacity>
+                  <View style={[s.toggleDivider, { backgroundColor: colors.border }]} />
+                  <TouchableOpacity
+                    style={[s.toggleBtn, item.value === false && { backgroundColor: colors.error }]}
+                    onPress={() => { item.setter(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[s.toggleBtnText, { color: item.value === false ? "#fff" : colors.foreground }]}>NO</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+
+        {/* ── Loose Items ──────────────────────────────────────────────────── */}
+        <View style={[s.editSection, { borderTopColor: colors.border }]}>
+          <Text style={[s.editSectionLabel, { color: colors.muted }]}>LOOSE ITEMS</Text>
+          {([
+            { label: "Keys", value: keys, setter: setKeys },
+            { label: "Remotes", value: remotes, setter: setRemotes },
+            { label: "Headrests", value: headrests, setter: setHeadrests },
+          ] as { label: string; value: number | null; setter: (v: number | null) => void }[]).map((item) => (
+            <View key={item.label} style={[s.toggleRow, { borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
+              <Text style={[s.toggleLabel, { color: colors.foreground }]}>{item.label}</Text>
+              {isLocked ? (
+                <Text style={[s.toggleLockedVal, { color: item.value !== null ? colors.foreground : colors.muted }]}>
+                  {item.value !== null ? String(item.value) : "—"}
+                </Text>
+              ) : (
+                <View style={s.countPickerRow}>
+                  {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <TouchableOpacity
+                      key={n}
+                      style={[s.countChip, { borderColor: colors.border, backgroundColor: item.value === n ? colors.primary : colors.surface }]}
+                      onPress={() => { item.setter(n); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[s.countChipText, { color: item.value === n ? "#fff" : colors.foreground }]}>{n}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          ))}
+          {([
+            { label: "Cargo Cover", value: cargoCover, setter: setCargoCover },
+            { label: "Spare Tire", value: spareTire, setter: setSpareTire },
+            { label: "Radio", value: radio, setter: setRadio },
+            { label: "Manuals", value: manuals, setter: setManuals },
+            { label: "Navigation Disk", value: navigationDisk, setter: setNavigationDisk },
+            { label: "Charger Cable", value: pluginChargerCable, setter: setPluginChargerCable },
+            { label: "Headphones", value: headphones, setter: setHeadphones },
+          ] as { label: string; value: boolean | null; setter: (v: boolean | null) => void }[]).map((item, idx, arr) => (
+            <View key={item.label} style={[s.toggleRow, { borderBottomColor: colors.border, borderBottomWidth: idx < arr.length - 1 ? 1 : 0 }]}>
+              <Text style={[s.toggleLabel, { color: colors.foreground }]}>{item.label}</Text>
+              {isLocked ? (
+                <Text style={[s.toggleLockedVal, { color: item.value === true ? colors.success : item.value === false ? colors.error : colors.muted }]}>
+                  {item.value === true ? "YES" : item.value === false ? "NO" : "—"}
+                </Text>
+              ) : (
+                <View style={[s.toggleGroup, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <TouchableOpacity
+                    style={[s.toggleBtn, item.value === true && { backgroundColor: colors.primary }]}
+                    onPress={() => { item.setter(true); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[s.toggleBtnText, { color: item.value === true ? "#fff" : colors.foreground }]}>YES</Text>
+                  </TouchableOpacity>
+                  <View style={[s.toggleDivider, { backgroundColor: colors.border }]} />
+                  <TouchableOpacity
+                    style={[s.toggleBtn, item.value === false && { backgroundColor: colors.error }]}
+                    onPress={() => { item.setter(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[s.toggleBtnText, { color: item.value === false ? "#fff" : colors.foreground }]}>NO</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+
+        {/* ── Notes ──────────────────────────────────────────────────────────── */}
+        <View style={[s.editSection, { borderTopColor: colors.border }]}>
+          <Text style={[s.editSectionLabel, { color: colors.muted }]}>NOTES</Text>
+          {isLocked ? (
+            <Text style={[s.notesText, { color: notes ? colors.foreground : colors.muted }]}>{notes || "No notes"}</Text>
+          ) : (
+            <TextInput
+              style={[s.notesInput, { color: colors.foreground, backgroundColor: colors.surface, borderColor: colors.border }]}
+              placeholder="Add any additional notes about vehicle condition..."
+              placeholderTextColor={colors.muted}
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              textAlignVertical="top"
+            />
+          )}
+        </View>
+
+        {/* ── Save Button ────────────────────────────────────────────────────── */}
+        {!isLocked && (
+          <View style={s.saveSection}>
+            <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSave} activeOpacity={0.85}>
+              <IconSymbol name="checkmark.circle.fill" size={18} color="#FFFFFF" />
+              <Text style={s.saveBtnText}>Save Inspection</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -966,6 +1125,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 0.5,
   },
   headerTitle: { fontSize: 17, fontWeight: "600", letterSpacing: -0.2 },
+  headerSaveBtn: { fontSize: 16, fontWeight: "700" },
   scrollView: { flex: 1 },
   scrollContent: { paddingBottom: 20 },
   vehicleInfoSection: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16 },
@@ -981,8 +1141,6 @@ const s = StyleSheet.create({
   mainImage: { width: "100%", height: "100%" },
   photoCountBadge: { position: "absolute", top: 12, right: 12, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   photoCountText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
-  captionOverlay: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "rgba(0,0,0,0.55)", paddingHorizontal: 14, paddingVertical: 8 },
-  captionText: { color: "#FFFFFF", fontSize: 12, fontWeight: "500" },
   thumbStrip: { paddingHorizontal: 16, paddingVertical: 10, gap: THUMB_GAP },
   thumbWrap: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: 6, overflow: "hidden", marginRight: THUMB_GAP, borderWidth: 2, borderColor: "transparent" },
   thumbImage: { width: "100%", height: "100%" },
@@ -1011,15 +1169,37 @@ const s = StyleSheet.create({
   // Diagram section
   diagramSection: { paddingTop: 20, paddingHorizontal: 16, borderTopWidth: 0.5, marginTop: 8 },
   diagramSectionLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 10 },
-  additionalSection: { paddingTop: 20, paddingHorizontal: 20, borderTopWidth: 0.5, marginTop: 8 },
-  additionalGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   additionalItem: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, minWidth: 100 },
   additionalLabel: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.3 },
   additionalValue: { fontSize: 15, fontWeight: "600", marginTop: 2 },
-  notesSection: { paddingTop: 20, paddingHorizontal: 20, borderTopWidth: 0.5, marginTop: 8 },
-  notesText: { fontSize: 14, lineHeight: 20, marginTop: 8 },
+  notesText: { fontSize: 14, lineHeight: 20, marginTop: 4 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   errorText: { fontSize: 16, fontWeight: "500" },
+  // Editable sections
+  editSection: { paddingTop: 16, paddingHorizontal: 16, borderTopWidth: 0.5, marginTop: 8 },
+  editSectionLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 0.8, marginBottom: 8 },
+  inlineRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingBottom: 12 },
+  inlineInput: { flex: 1, fontSize: 16, fontWeight: "500", padding: 0 },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  toggleLabel: { fontSize: 15, fontWeight: "500", flex: 1 },
+  toggleLockedVal: { fontSize: 14, fontWeight: "700" },
+  toggleGroup: { flexDirection: "row", borderRadius: 10, borderWidth: 1.5, overflow: "hidden" },
+  toggleBtn: { paddingHorizontal: 18, alignItems: "center", justifyContent: "center", paddingVertical: 8 },
+  toggleBtnText: { fontSize: 13, fontWeight: "700" },
+  toggleDivider: { width: 1 },
+  countPickerRow: { flexDirection: "row", gap: 6 },
+  countChip: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  countChipText: { fontSize: 13, fontWeight: "600" },
+  notesInput: { borderRadius: 12, borderWidth: 1, padding: 12, fontSize: 14, minHeight: 80, textAlignVertical: "top" },
+  saveSection: { paddingHorizontal: 16, paddingTop: 20 },
+  saveBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, height: 52, borderRadius: 14 },
+  saveBtnText: { color: "#FFFFFF", fontSize: 17, fontWeight: "700" },
   lockedBanner: {
     flexDirection: "row",
     alignItems: "center",

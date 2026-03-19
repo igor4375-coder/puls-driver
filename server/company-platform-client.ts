@@ -391,6 +391,8 @@ export interface RevertPickupInput {
   loadId: string;   // load number (e.g. "PAT-2026-00001")
   legId: number;
   driverCode: string;
+  /** Driver's reason for reverting pickup (e.g. "Vehicle won't start") */
+  reason?: string;
 }
 
 export interface RevertPickupResult {

@@ -142,6 +142,12 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
           <Text style={[styles.loadNumber, { color: colors.muted }]}>#{load.loadNumber}</Text>
           <StatusBadge status={load.status} />
         </View>
+        {load.orgName ? (
+          <View style={[styles.orgBadge, { backgroundColor: colors.primary + "14" }]}>
+            <IconSymbol name="building.2.fill" size={11} color={colors.primary} />
+            <Text style={[styles.orgBadgeText, { color: colors.primary }]} numberOfLines={1}>{load.orgName}</Text>
+          </View>
+        ) : null}
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>
@@ -182,6 +188,15 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
               {failedCount > 0
                 ? `⚠ ${failedCount} photo${failedCount !== 1 ? "s" : ""} failed to upload`
                 : `⬆ ${pendingCount} photo${pendingCount !== 1 ? "s" : ""} uploading...`}
+            </Text>
+          </View>
+        )}
+
+        {load.wasAlternateDelivery && (
+          <View style={[styles.altDropBadge, { backgroundColor: colors.warning + "14" }]}>
+            <IconSymbol name="arrow.triangle.branch" size={11} color={colors.warning} />
+            <Text style={[styles.altDropBadgeText, { color: colors.warning }]} numberOfLines={1}>
+              Alt drop: {load.actualDeliveryLocation?.name ?? "Alternate location"}
             </Text>
           </View>
         )}
@@ -473,6 +488,8 @@ export default function LoadsScreen() {
   const [activeTab, setActiveTab] = useState<TabFilter>("new");
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [groupMode, setGroupMode] = useState<"default" | "pickup" | "dropoff" | "shipper">("default");
+  const [showSortSheet, setShowSortSheet] = useState(false);
 
   // Clear search when switching tabs
   const prevTabRef = useRef(activeTab);
@@ -494,14 +511,31 @@ export default function LoadsScreen() {
   // Platform code (D-68544) takes priority; fall back to local code only if platform code not yet assigned
   const displayDriverCode = dbProfile?.platformDriverCode ?? localDriverCode ?? null;
 
-  // Sort newest-first: platform loads use assignedAt; fall back to pickup date
+  const groupKeyFn = useCallback((load: Load): string => {
+    if (groupMode === "pickup") return load.pickup.contact.company || load.pickup.contact.city || "Unknown";
+    if (groupMode === "dropoff") return load.delivery.contact.company || load.delivery.contact.city || "Unknown";
+    if (groupMode === "shipper") return load.orgName || "Unknown";
+    return "";
+  }, [groupMode]);
+
   const sortedLoads = useMemo(() => {
-    return [...loads].sort((a, b) => {
-      const dateA = new Date(a.assignedAt || a.pickup.date || 0).getTime();
-      const dateB = new Date(b.assignedAt || b.pickup.date || 0).getTime();
-      return dateB - dateA; // descending — newest at top
-    });
-  }, [loads]);
+    const sorted = [...loads];
+    if (groupMode !== "default") {
+      sorted.sort((a, b) => {
+        const ga = groupKeyFn(a).toLowerCase();
+        const gb = groupKeyFn(b).toLowerCase();
+        if (ga !== gb) return ga.localeCompare(gb);
+        return new Date(b.assignedAt || b.pickup.date || 0).getTime()
+             - new Date(a.assignedAt || a.pickup.date || 0).getTime();
+      });
+    } else {
+      sorted.sort((a, b) => {
+        return new Date(b.assignedAt || b.pickup.date || 0).getTime()
+             - new Date(a.assignedAt || a.pickup.date || 0).getTime();
+      });
+    }
+    return sorted;
+  }, [loads, groupMode, groupKeyFn]);
 
   const baseFilteredLoads = sortedLoads.filter((l) => l.status === activeTab);
 
@@ -926,6 +960,23 @@ export default function LoadsScreen() {
               <Text style={[styles.statLink, { color: colors.primary }]}>View List ›</Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity
+            style={styles.sortBtn}
+            activeOpacity={0.7}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowSortSheet(true);
+            }}
+          >
+            <IconSymbol
+              name="arrow.up.arrow.down"
+              size={16}
+              color={groupMode !== "default" ? colors.primary : colors.muted}
+            />
+            {groupMode !== "default" && (
+              <View style={[styles.sortActiveDot, { backgroundColor: colors.primary }]} />
+            )}
+          </TouchableOpacity>
         </View>
         {/* Search Bar — only shown on Delivered and Archived tabs */}
         {(activeTab === "delivered" || activeTab === "archived") && (
@@ -1022,6 +1073,22 @@ export default function LoadsScreen() {
           </View>
         )}
 
+        {/* Active group indicator */}
+        {groupMode !== "default" && (
+          <View style={[styles.groupActiveBar, { backgroundColor: colors.primary + "10", borderBottomColor: colors.border }]}>
+            <IconSymbol name="arrow.up.arrow.down" size={12} color={colors.primary} />
+            <Text style={[styles.groupActiveLabel, { color: colors.primary }]}>
+              Grouped by {groupMode === "pickup" ? "Pickup" : groupMode === "dropoff" ? "Drop-off" : "Company"}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { setGroupMode("default"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.groupActiveClear, { color: colors.muted }]}>Clear ✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {/* Swipe indicator dots — shows current tab position and hints at swipe navigation */}
         <View style={styles.swipeDots}>
           {TAB_ORDER.map((tab) => (
@@ -1096,6 +1163,45 @@ export default function LoadsScreen() {
           dropoffPins={tabStats.dropoffPins ?? []}
           initialMode={mapModal?.type ?? "pickup"}
         />
+        {/* Sort / Group Picker Sheet */}
+        <Modal visible={showSortSheet} transparent animationType="slide" onRequestClose={() => setShowSortSheet(false)}>
+          <View style={styles.sortSheetWrapper}>
+            <Pressable style={styles.sortSheetBackdrop} onPress={() => setShowSortSheet(false)} />
+            <View style={[styles.sortSheetContainer, { backgroundColor: colors.surface }]}>
+              <View style={[styles.sortSheetHandle, { backgroundColor: colors.border }]} />
+              <Text style={[styles.sortSheetTitle, { color: colors.foreground }]}>Group Loads</Text>
+              {([
+                { key: "default" as const, label: "Newest First", icon: "clock.fill" as const, desc: "Default sort" },
+                { key: "pickup" as const, label: "Pickup Location", icon: "arrow.up.circle.fill" as const, desc: "Group by pickup facility or city" },
+                { key: "dropoff" as const, label: "Drop-off Location", icon: "arrow.down.circle.fill" as const, desc: "Group by delivery facility or city" },
+                { key: "shipper" as const, label: "Company / Shipper", icon: "building.2.fill" as const, desc: "Group by dispatching company" },
+              ]).map((opt) => {
+                const active = groupMode === opt.key;
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[styles.sortOption, active && { backgroundColor: colors.primary + "12" }]}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setGroupMode(opt.key);
+                      setShowSortSheet(false);
+                    }}
+                  >
+                    <View style={[styles.sortOptionIcon, { backgroundColor: active ? colors.primary + "20" : colors.border + "60" }]}>
+                      <IconSymbol name={opt.icon} size={18} color={active ? colors.primary : colors.muted} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.sortOptionLabel, { color: active ? colors.primary : colors.foreground }]}>{opt.label}</Text>
+                      <Text style={[styles.sortOptionDesc, { color: colors.muted }]}>{opt.desc}</Text>
+                    </View>
+                    {active && <IconSymbol name="checkmark.circle.fill" size={20} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </Modal>
         {/* Offline / stale data banner */}
         {platformLoadError && !isLoadingPlatformLoads && (
           <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
@@ -1118,20 +1224,37 @@ export default function LoadsScreen() {
             maxToRenderPerBatch={10}
             windowSize={5}
             contentContainerStyle={[styles.listContent, { paddingBottom: 120 }]}
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const counts = queueCountsByLoad[item.id];
+              let groupHeader: string | null = null;
+              if (groupMode !== "default") {
+                const key = groupKeyFn(item);
+                const prevKey = index > 0 ? groupKeyFn(filteredLoads[index - 1]) : null;
+                if (key !== prevKey) groupHeader = key;
+              }
               return (
-                <LoadCard
-                  load={item}
-                  onPress={() => handleLoadPress(item)}
-                  onDelete={!item.id.startsWith("platform-") ? () => handleDeleteLoad(item) : undefined}
-                  onArchive={item.status === "delivered" ? () => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    archiveSingleLoad(item.id);
-                  } : undefined}
-                  pendingCount={counts?.pending ?? 0}
-                  failedCount={counts?.failed ?? 0}
-                />
+                <>
+                  {groupHeader && (
+                    <View style={[styles.groupHeader, { borderBottomColor: colors.border }]}>
+                      <View style={[styles.groupDot, { backgroundColor: colors.primary }]} />
+                      <Text style={[styles.groupLabel, { color: colors.foreground }]}>{groupHeader}</Text>
+                      <Text style={[styles.groupCount, { color: colors.muted }]}>
+                        {filteredLoads.filter((l) => groupKeyFn(l) === groupHeader).length}
+                      </Text>
+                    </View>
+                  )}
+                  <LoadCard
+                    load={item}
+                    onPress={() => handleLoadPress(item)}
+                    onDelete={!item.id.startsWith("platform-") ? () => handleDeleteLoad(item) : undefined}
+                    onArchive={item.status === "delivered" ? () => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      archiveSingleLoad(item.id);
+                    } : undefined}
+                    pendingCount={counts?.pending ?? 0}
+                    failedCount={counts?.failed ?? 0}
+                  />
+                </>
               );
             }}
             ListEmptyComponent={
@@ -1320,6 +1443,28 @@ const styles = StyleSheet.create({
   loadNumber: { fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 11, fontWeight: "700" },
+  orgBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  orgBadgeText: { fontSize: 12, fontWeight: "700" },
+  altDropBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+  },
+  altDropBadgeText: { fontSize: 12, fontWeight: "600" },
   vehicleCount: { fontSize: 17, fontWeight: "700", marginBottom: 10 },
   routeRow: {
     flexDirection: "row",
@@ -1702,5 +1847,112 @@ const styles = StyleSheet.create({
   tabActionBtnText: {
     fontSize: 13,
     fontWeight: "600",
+  },
+  // Sort / Group
+  sortBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sortActiveDot: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  sortSheetWrapper: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  sortSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  sortSheetContainer: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 8,
+    paddingBottom: 36,
+    paddingHorizontal: 20,
+  },
+  sortSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  sortSheetTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    marginBottom: 16,
+  },
+  sortOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  sortOptionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sortOptionLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  sortOptionDesc: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  // Group headers in load list
+  groupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 8,
+    marginBottom: 2,
+    borderBottomWidth: 1,
+  },
+  groupDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  groupLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    flex: 1,
+  },
+  groupCount: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  groupActiveBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
+    borderBottomWidth: 0.5,
+  },
+  groupActiveLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  groupActiveClear: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginLeft: 6,
   },
 });

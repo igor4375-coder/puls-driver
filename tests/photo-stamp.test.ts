@@ -54,9 +54,9 @@ describe("buildStampLines", () => {
     expect(lines[2]).toContain("AcmeTrans");
   });
 
-  it("line 3 falls back to AutoHaul when no company name", () => {
+  it("line 3 falls back to Puls Dispatch when no company name", () => {
     const lines = buildStampLines({});
-    expect(lines[2]).toContain("AutoHaul");
+    expect(lines[2]).toContain("Puls Dispatch");
   });
 
   it("coordinates are formatted to 5 decimal places", () => {

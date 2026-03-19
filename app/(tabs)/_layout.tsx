@@ -11,8 +11,8 @@ export default function TabLayout() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { isAuthenticated, isLoading } = useAuth();
-  const bottomPadding = Platform.OS === "web" ? 12 : Math.max(insets.bottom, 8);
-  const tabBarHeight = 56 + bottomPadding;
+  const bottomPadding = Platform.OS === "web" ? 10 : Math.max(insets.bottom - 8, 4);
+  const tabBarHeight = 50 + bottomPadding;
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -28,7 +28,7 @@ export default function TabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarStyle: {
-          paddingTop: 8,
+          paddingTop: 4,
           paddingBottom: bottomPadding,
           height: tabBarHeight,
           backgroundColor: colors.surface,

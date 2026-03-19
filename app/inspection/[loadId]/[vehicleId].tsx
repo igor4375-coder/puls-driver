@@ -41,35 +41,26 @@ import {
 
 // ─── Damage Zone Definitions ─────────────────────────────────────────────────
 
-const DAMAGE_ZONES: { key: DamageZone; label: string; x: number; y: number }[] = [
-  // ── Top-down view zones (y ≈ 0–38%) ──────────────────────────────────────
-  { key: "rl_bumper",             label: "R.L Bumper",         x: 6,  y: 14 },
-  { key: "fl_bumper",             label: "F.L Bumper",         x: 94, y: 14 },
-  { key: "fl_fender",             label: "F.L Fender",         x: 78, y: 14 },
-  { key: "fl_door",               label: "F.L Door",           x: 62, y: 14 },
-  { key: "rl_door",               label: "R.L Door",           x: 42, y: 14 },
-  { key: "rl_panel",              label: "R.L Panel",          x: 20, y: 22 },
-  { key: "driver_front_wheel",    label: "F.L Wheel",          x: 82, y: 6  },
-  { key: "driver_rear_wheel",     label: "R.L Wheel",          x: 18, y: 6  },
-  { key: "hood",                  label: "Hood",               x: 50, y: 28 },
-  { key: "trunk",                 label: "Trunk",              x: 50, y: 10 },
-  { key: "front",                 label: "Front Bumper",       x: 50, y: 36 },
-  { key: "rear",                  label: "Rear Bumper",        x: 50, y: 2  },
-  // ── Body/Roof view zones (y ≈ 38–65%) ────────────────────────────────────
-  { key: "rear_windshield",       label: "Rear Windshield",    x: 28, y: 51 },
-  { key: "roof",                  label: "Roof",               x: 50, y: 51 },
-  { key: "windshield",            label: "Windshield",         x: 67, y: 51 },
-  { key: "trunk",                 label: "Trunk",              x: 6,  y: 51 },
-  { key: "hood",                  label: "Hood",               x: 82, y: 51 },
-  // ── Side view zones (y ≈ 65–100%) ────────────────────────────────────────
-  { key: "rr_bumper",             label: "R.R Bumper",         x: 5,  y: 88 },
-  { key: "rr_panel",              label: "R.R Panel",          x: 16, y: 73 },
-  { key: "rr_door",               label: "R.R Door",           x: 34, y: 80 },
-  { key: "fr_door",               label: "F.R Door",           x: 53, y: 80 },
-  { key: "fr_fender",             label: "F.R Fender",         x: 72, y: 73 },
-  { key: "rf_bumper",             label: "R.F Bumper",         x: 94, y: 88 },
-  { key: "passenger_rear_wheel",  label: "R.R Wheel",          x: 22, y: 91 },
-  { key: "passenger_front_wheel", label: "F.R Wheel",          x: 68, y: 91 },
+const DAMAGE_ZONES: { key: DamageZone; label: string }[] = [
+  { key: "front",                 label: "Front Bumper" },
+  { key: "rear",                  label: "Rear Bumper" },
+  { key: "hood",                  label: "Hood" },
+  { key: "trunk",                 label: "Trunk" },
+  { key: "roof",                  label: "Roof" },
+  { key: "windshield",            label: "Windshield" },
+  { key: "rear_windshield",       label: "Rear Windshield" },
+  { key: "fl_fender",             label: "F.L Fender" },
+  { key: "fr_fender",             label: "F.R Fender" },
+  { key: "fl_door",               label: "F.L Door" },
+  { key: "rl_door",               label: "R.L Door" },
+  { key: "fr_door",               label: "F.R Door" },
+  { key: "rr_door",               label: "R.R Door" },
+  { key: "rl_panel",              label: "R.L Quarter Panel" },
+  { key: "rr_panel",              label: "R.R Quarter Panel" },
+  { key: "driver_front_wheel",    label: "F.L Wheel" },
+  { key: "driver_rear_wheel",     label: "R.L Wheel" },
+  { key: "passenger_front_wheel", label: "F.R Wheel" },
+  { key: "passenger_rear_wheel",  label: "R.R Wheel" },
 ];
 
 const DAMAGE_TYPES: { key: DamageType; abbr: string; label: string }[] = [
@@ -98,124 +89,45 @@ const ABBR_MAP: Record<DamageType, string> = {
   other: "OT",
 };
 
-/**
- * Vehicle diagram — 3 sections, orientation from user color-annotated image (v4):
- *
- *   TOP-DOWN view  (y = 0–38%)  — FRONT at top, REAR at bottom
- *     Top-right corner:  F.L Wheel (green), F.L Bumper (yellow strip)
- *     Top-left corner:   R.L Wheel (green)
- *     Right body strip:  F.L Fender (red) then F.L Door (blue) then R.L Door (pink) then R.L Panel (cyan)
- *     Centre upper:      Hood (front half), Trunk (rear half)
- *
- *   BODY/ROOF view (y = 38–65%)  — left → right
- *     Far left panel (green) = Trunk
- *     Left body (yellow)     = Rear Windshield
- *     Centre (blue)          = Roof
- *     Right-centre (green)   = Windshield
- *     Right body (red)       = Hood
- *     Far right panel (pink) = Front Bumper
- *
- *   SIDE view      (y = 65–100%) — FRONT on left, REAR on right
- *     Far left (red outline)  = R.R Panel
- *     Left-centre (cyan)      = R.R Door
- *     Centre (pink)           = F.R Door
- *     Right-centre (green)    = F.R Fender
- *     Far right (yellow)      = R.F Bumper
- *     Bottom-left wheel       = R.R Wheel
- *     Bottom-right wheel      = F.R Wheel
- *     Top strip               = Roof
- */
-
-/**
- * TOP-DOWN view (y 0–38%): car shown upside-down.
- * LEFT side of image = REAR of car (R.L parts)
- * RIGHT side of image = FRONT of car (F.L parts)
- * The body strip runs along the TOP edge of this section (upper portion of the image).
- *
- * Left:  R.L Bumper | R.L Wheel | R.L Panel | R.L Door
- * Right: F.L Door   | F.L Fender | F.L Wheel | F.L Bumper
- * Centre body: Hood (right half) / Trunk (left half)
- */
+/** Top-down view (y 0–38%): driver's side from above. LEFT = REAR, RIGHT = FRONT */
 function inferZoneTop(xPct: number, yPct: number): DamageZone {
-  const relY = (yPct / 38) * 100; // 0 = top of image, 100 = bottom of section
-
-  // ── Wheels ──
-  // R.L Wheel — left side, upper area
-  if (xPct < 28 && relY < 55) return "driver_rear_wheel";
-  // F.L Wheel — right side, upper area
-  if (xPct > 72 && relY < 55) return "driver_front_wheel";
-
-  // ── Bumpers ──
-  // R.L Bumper — far left strip (yellow)
-  if (xPct < 12) return "rl_bumper";
-  // F.L Bumper — far right strip (yellow)
-  if (xPct > 88) return "fl_bumper";
-
-  // ── Body strips (upper portion of section, near the car outline) ──
-  // R.L Panel — left body, rear quarter (cyan)
-  if (xPct >= 12 && xPct < 30 && relY < 70) return "rl_panel";
-  // R.L Door — left-centre door (pink)
-  if (xPct >= 30 && xPct < 50 && relY < 65) return "rl_door";
-  // F.L Door — right-centre door (blue)
-  if (xPct >= 50 && xPct < 68 && relY < 65) return "fl_door";
-  // F.L Fender — right body, front quarter (yellow)
-  if (xPct >= 68 && xPct < 88 && relY < 70) return "fl_fender";
-
-  // ── Centre body (lower portion of section) ──
-  // Hood = right half (front side)
-  if (xPct > 50) return "hood";
-  // Trunk = left half (rear side)
-  return "trunk";
+  const relY = (yPct / 38) * 100;
+  if (relY < 40 && xPct >= 12 && xPct < 28) return "driver_rear_wheel";
+  if (relY < 40 && xPct >= 72 && xPct < 88) return "driver_front_wheel";
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 22) return "rl_panel";
+  if (xPct < 42) return "rl_door";
+  if (xPct < 62) return "fl_door";
+  if (xPct <= 88) return "fl_fender";
+  return "roof";
 }
 
-/** BODY/ROOF view (y 38–65%): left → right layout */
-function inferZoneSide(xPct: number, _yPct: number): DamageZone {
-  if (xPct < 10) return "trunk";           // Far left panel (green) = Trunk
-  if (xPct > 88) return "front";           // Far right panel (pink) = Front Bumper
-  if (xPct < 35) return "rear_windshield"; // Left body (yellow)
-  if (xPct > 75) return "hood";            // Right body (red)
-  if (xPct > 58) return "windshield";      // Right-centre (green)
-  return "roof";                           // Centre (blue)
+/** Body/roof strip (y 38–55%): LEFT = REAR, RIGHT = FRONT */
+function inferZoneMiddle(xPct: number): DamageZone {
+  if (xPct < 7) return "rear";
+  if (xPct > 88) return "front";
+  if (xPct < 20) return "trunk";
+  if (xPct < 37) return "rear_windshield";
+  if (xPct < 58) return "roof";
+  if (xPct < 72) return "windshield";
+  if (xPct <= 88) return "hood";
+  return "roof";
 }
 
-/**
- * SIDE view (y 65–100%): REAR on the LEFT, FRONT on the RIGHT.
- *
- * Left → Right layout (from user annotation):
- *   R.R Bumper (far left, yellow) | R.R Panel (red) | R.R Wheel (bottom-left)
- *   R.R Door (cyan) | F.R Door (pink) | F.R Fender (green) | F.R Wheel (bottom-right)
- *   R.F Bumper (far right, yellow)
- *   Roof = top strip
- */
+/** Side view (y 55–100%): passenger side. LEFT = REAR, RIGHT = FRONT */
 function inferZoneBottom(xPct: number, yPct: number): DamageZone {
-  const relY = ((yPct - 65) / 35) * 100; // 0 = top, 100 = bottom
-
-  // ── Roof — very top strip ──
-  if (relY < 15) return "roof";
-
-  // ── Bumpers at far edges ──
-  // R.R Bumper — far left (yellow)
-  if (xPct < 10) return "rr_bumper";
-  // R.F Bumper — far right (yellow)
-  if (xPct > 90) return "rf_bumper";
-
-  // ── Wheels at the bottom ──
-  // R.R Wheel — bottom-left
-  if (relY > 60 && xPct < 35) return "passenger_rear_wheel";
-  // F.R Wheel — bottom-right
-  if (relY > 60 && xPct > 62) return "passenger_front_wheel";
-
-  // ── R.R Panel — left rear quarter (red outline) ──
-  if (xPct >= 10 && xPct < 22) return "rr_panel";
-
-  // ── F.R Fender — right body area before bumper (green) ──
-  if (xPct > 68 && xPct <= 90) return "fr_fender";
-
-  // ── Doors ──
-  // R.R Door — rear door, left-centre (cyan)
-  if (xPct >= 22 && xPct < 48) return "rr_door";
-  // F.R Door — front door, centre (pink)
-  return "fr_door";
+  const relY = ((yPct - 55) / 45) * 100;
+  if (relY < 12) return "roof";
+  if (relY > 70 && xPct >= 10 && xPct < 30) return "passenger_rear_wheel";
+  if (relY > 70 && xPct >= 65 && xPct < 88) return "passenger_front_wheel";
+  if (xPct < 8) return "rear";
+  if (xPct > 82) return "front";
+  if (xPct < 22) return "rr_panel";
+  if (xPct < 45) return "rr_door";
+  if (xPct < 62) return "fr_door";
+  if (xPct <= 82) return "fr_fender";
+  return "roof";
 }
 
 // ── Severity colours ─────────────────────────────────────────────────────────
@@ -248,21 +160,17 @@ function VehicleDiagram({
     const { locationX, locationY } = evt.nativeEvent;
     const xPct = Math.max(0, Math.min(100, (locationX / W) * 100));
     const yPct = Math.max(0, Math.min(100, (locationY / H) * 100));
-    // Image has 3 sections based on measured diagram proportions:
-    //   0–38%:  top-down view (front at top, rear at bottom)
-    //   38–65%: body/roof view (door panels on sides, roof in centre)
-    //   65–100%: side view (front on left, rear on right)
     let zone: DamageZone;
     let view: DiagramView;
     if (yPct < 38) {
       zone = inferZoneTop(xPct, yPct);
       view = "top";
-    } else if (yPct < 65) {
-      zone = inferZoneSide(xPct, yPct);
-      view = "side";
+    } else if (yPct < 55) {
+      zone = inferZoneMiddle(xPct);
+      view = "top";
     } else {
       zone = inferZoneBottom(xPct, yPct);
-      view = "side"; // side profile view
+      view = "side";
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onDiagramTap(xPct, yPct, view, zone);
@@ -484,22 +392,6 @@ function DamageModal({
     }
   }, [visible]);
 
-  const handlePickPhoto = async () => {
-    setPickingPhoto(true);
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsMultipleSelection: true,
-        quality: 1,  // No compression — preserve original quality
-      });
-      if (!result.canceled) {
-        setDamagePhotos((prev) => [...prev, ...result.assets.map((a) => a.uri)]);
-      }
-    } finally {
-      setPickingPhoto(false);
-    }
-  };
-
   const handleTakePhoto = async () => {
     setPickingPhoto(true);
     try {
@@ -615,11 +507,7 @@ function DamageModal({
           <View style={styles.damagePhotoRow}>
             <TouchableOpacity
               style={[styles.damagePhotoAddBtn, { borderColor: colors.border, backgroundColor: colors.background }]}
-              onPress={() => Alert.alert("Add Photo", "Choose source", [
-                { text: "Take Photo", onPress: handleTakePhoto },
-                { text: "Choose from Library", onPress: handlePickPhoto },
-                { text: "Cancel", style: "cancel" },
-              ])}
+              onPress={handleTakePhoto}
               activeOpacity={0.7}
               disabled={pickingPhoto}
             >
@@ -872,19 +760,6 @@ export default function InspectionScreen() {
     router.push("/camera-session" as any);
   };
 
-  // ── Photo library picker (secondary option) ───────────────────────────────
-  const handlePickFromLibrary = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 1,  // No compression — preserve original quality
-      allowsMultipleSelection: true,
-    });
-    if (!result.canceled) {
-      setPhotos((prev) => {
-        const combined = [...prev, ...result.assets.map((a) => a.uri)];
-        return combined.slice(0, 200);
-      });
-    }
-  };
 
   const handleSave = async () => {
     // Reuse GPS from the existing inspection (captured during camera session)
@@ -1003,7 +878,7 @@ export default function InspectionScreen() {
             ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
           });
         } catch (err) {
-          console.warn("[Inspection] Failed to sync to company platform:", err);
+          console.error("[Inspection] SYNC FAILED:", err);
         }
       }
     })();
@@ -1099,7 +974,53 @@ export default function InspectionScreen() {
           });
         } catch (platformErr) {
           console.warn("[CompletePickup] Platform markAsPickedUp failed:", platformErr);
-          // Non-fatal — local state already updated
+        }
+
+        try {
+          const syncDamages = damages.map((d) => ({
+            id: d.id,
+            zone: d.zone,
+            type: d.type,
+            severity: d.severity,
+            x: d.xPct != null ? d.xPct / 100 : 0.5,
+            y: d.yPct != null ? d.yPct / 100 : 0.5,
+            diagramView: d.diagramView,
+            note: d.description || undefined,
+          }));
+          const additionalData: Record<string, unknown> = {};
+          if (odometer) additionalData.odometer = odometer;
+          if (drivable !== null) additionalData.drivable = drivable;
+          if (windscreen !== null) additionalData.windscreen = windscreen;
+          if (glassesIntact !== null) additionalData.glassesIntact = glassesIntact;
+          if (titlePresent !== null) additionalData.titlePresent = titlePresent;
+          if (billOfSale !== null) additionalData.billOfSale = billOfSale;
+          if (keys !== null) additionalData.keys = keys;
+          if (remotes !== null) additionalData.remotes = remotes;
+          if (headrests !== null) additionalData.headrests = headrests;
+          if (cargoCover !== null) additionalData.cargoCover = cargoCover;
+          if (spareTire !== null) additionalData.spareTire = spareTire;
+          if (radio !== null) additionalData.radio = radio;
+          if (manuals !== null) additionalData.manuals = manuals;
+          if (navigationDisk !== null) additionalData.navigationDisk = navigationDisk;
+          if (pluginChargerCable !== null) additionalData.pluginChargerCable = pluginChargerCable;
+          if (headphones !== null) additionalData.headphones = headphones;
+
+          await syncInspectionAction({
+            loadNumber: load.loadNumber,
+            legId,
+            driverCode,
+            inspectionType: "pickup",
+            vehicleVin: vehicle?.vin || "",
+            photos: uploadedUrls,
+            damages: syncDamages,
+            noDamage,
+            gps: { lat: gpsLat, lng: gpsLng },
+            timestamp: new Date().toISOString(),
+            notes: notes || undefined,
+            ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
+          });
+        } catch (syncErr) {
+          console.error("[CompletePickup] syncInspection failed:", syncErr);
         }
       }
 
@@ -1279,17 +1200,6 @@ export default function InspectionScreen() {
             </View>
           )}
 
-          {/* Secondary option — photo library */}
-          <TouchableOpacity
-            style={[styles.libraryBtn, { borderColor: colors.border }]}
-            onPress={handlePickFromLibrary}
-            activeOpacity={0.7}
-          >
-            <IconSymbol name="photo.fill" size={16} color={colors.muted} />
-            <Text style={[styles.libraryBtnText, { color: colors.muted }]}>
-              Choose from Photo Library
-            </Text>
-          </TouchableOpacity>
         </View>
 
         {/* ── Damage Diagram ──────────────────────────────────────────────── */}
@@ -1826,21 +1736,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",
-  },
-  // Photo library secondary option
-  libraryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 4,
-  },
-  libraryBtnText: {
-    fontSize: 13,
-    fontWeight: "500",
   },
   // Wireframe
   wireframeContainer: {

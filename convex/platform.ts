@@ -182,11 +182,17 @@ export const revertPickup = action({
     loadNumber: v.string(),
     legId: v.union(v.number(), v.string()),
     driverCode: v.string(),
+    reason: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     return await callTRPC(
       "driversApi.revertPickup",
-      { loadId: args.loadNumber, legId: args.legId, driverCode: args.driverCode },
+      {
+        loadId: args.loadNumber,
+        legId: args.legId,
+        driverCode: args.driverCode,
+        reason: args.reason,
+      },
       "mutation",
     );
   },
@@ -294,6 +300,28 @@ export const registerPushToken = action({
       await callTRPC("driversApi.registerPushToken", args, "mutation");
       return true;
     } catch {
+      return false;
+    }
+  },
+});
+
+export const reportLocation = action({
+  args: {
+    driverCode: v.string(),
+    latitude: v.number(),
+    longitude: v.number(),
+    heading: v.optional(v.number()),
+    speed: v.optional(v.number()),
+    accuracy: v.optional(v.number()),
+    batteryLevel: v.optional(v.number()),
+  },
+  handler: async (_ctx, args) => {
+    if (!BASE_URL) return false;
+    try {
+      await callTRPC("driversApi.reportLocation", args, "mutation");
+      return true;
+    } catch (err) {
+      console.warn("[Platform] reportLocation failed:", err);
       return false;
     }
   },
