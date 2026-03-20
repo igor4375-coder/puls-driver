@@ -21,8 +21,11 @@ import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
+import { useAuth } from "@/lib/auth-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
+import { stampPhotoViaServer } from "@/lib/stamp-photo-client";
+import { photoQueue } from "@/lib/photo-queue";
 import type { Damage, DamageType, DamageSeverity, DamageZone, AdditionalInspection } from "@/lib/data";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -473,6 +476,7 @@ export default function InspectionReviewScreen() {
   const colors = useColors();
   const { loadId, vehicleId } = useLocalSearchParams<{ loadId: string; vehicleId: string }>();
   const { getLoad, savePickupInspection, saveDeliveryInspection } = useLoads();
+  const { driver } = useAuth();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
 
@@ -668,7 +672,33 @@ export default function InspectionReviewScreen() {
     setShowDamageModal(false);
     setSelectedZone(null);
     if (damagePhotos.length > 0) {
-      setPhotos((prev) => [...prev, ...damagePhotos].slice(0, 200));
+      const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
+      const isDelivery = inspectionType === "delivery";
+      (async () => {
+        const stampedUris: string[] = [];
+        for (const uri of damagePhotos) {
+          const stamped = await stampPhotoViaServer(uri, {
+            inspectionType: isDelivery ? "Delivery Damage" : "Pickup Damage",
+            driverCode,
+            companyName: load?.orgName ?? undefined,
+            locationLabel: inspection?.locationLabel ?? undefined,
+            coords: inspection?.locationLat && inspection?.locationLng
+              ? { latitude: inspection.locationLat, longitude: inspection.locationLng }
+              : undefined,
+            vin: vehicle?.vin ?? undefined,
+          });
+          photoQueue.enqueue({
+            localUri: stamped,
+            loadId,
+            vehicleId,
+            inspectionType,
+            zone: damage.zone,
+            damageId: damage.id,
+          });
+          stampedUris.push(stamped);
+        }
+        setPhotos((prev) => [...prev, ...stampedUris].slice(0, 200));
+      })();
     }
     persistDamages(newDamages, noDamage);
   };

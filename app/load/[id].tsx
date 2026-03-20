@@ -32,8 +32,7 @@ import { useAuth } from "@/lib/auth-context";
 import { usePermissions } from "@/lib/permissions-context";
 import { useSettings, type MapsApp } from "@/lib/settings-context";
 import { cameraSessionStore } from "@/lib/camera-session-store";
-import { trpc } from "@/lib/trpc";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery as useConvexQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
@@ -630,17 +629,13 @@ export default function LoadDetailScreen() {
    const [expenseNotes, setExpenseNotes] = useState("");
   // Gate pass is now opened via WebBrowser.openBrowserAsync — no modal needed
   const loadId = id ?? "";
-  const expensesQuery = trpc.expenses.getByLoad.useQuery(
-    { loadId },
-    { enabled: !!loadId }
+  const expensesList = useConvexQuery(
+    api.expenses.getByLoad,
+    loadId ? { loadId } : "skip",
   );
-  const addExpenseMutation = trpc.expenses.add.useMutation({
-    onSuccess: () => { expensesQuery.refetch(); },
-  });
-  const uploadReceiptMutation = trpc.expenses.uploadReceipt.useMutation();
-  const deleteExpenseMutation = trpc.expenses.delete.useMutation({
-    onSuccess: () => { expensesQuery.refetch(); },
-  });
+  const addExpenseConvex = useMutation(api.expenses.add);
+  const deleteExpenseConvex = useMutation(api.expenses.remove);
+  const generateUploadUrl = useMutation(api.expenses.generateUploadUrl);
 
   const launchReceiptCamera = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -672,33 +667,31 @@ export default function LoadDetailScreen() {
     const amountCents = Math.round(parseFloat(amountStr) * 100);
     if (!label) { Alert.alert("Missing Label", "Please enter an expense label."); return; }
     if (!amountStr || isNaN(amountCents) || amountCents <= 0) { Alert.alert("Invalid Amount", "Please enter a valid amount."); return; }
-    // date is always valid since it comes from DateTimePicker
 
     setExpenseSaving(true);
     try {
-      let receiptUrl: string | undefined;
-      let receiptKey: string | undefined;
+      let receiptStorageId: any;
       if (expenseReceiptUri) {
-        const base64 = await FileSystem.readAsStringAsync(expenseReceiptUri, {
+        const uploadUrl = await generateUploadUrl();
+        const fileContent = await FileSystem.readAsStringAsync(expenseReceiptUri, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        const uploaded = await uploadReceiptMutation.mutateAsync({
-          driverCode: driverCode || "unknown",
-          base64,
-          mimeType: "image/jpeg",
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": "image/jpeg" },
+          body: Uint8Array.from(atob(fileContent), (c) => c.charCodeAt(0)),
         });
-        receiptUrl = uploaded.url;
-        receiptKey = uploaded.key;
+        const { storageId } = await response.json();
+        receiptStorageId = storageId;
       }
-      await addExpenseMutation.mutateAsync({
+      await addExpenseConvex({
         loadId,
         driverCode: driverCode || "unknown",
         label,
         amountCents,
         expenseDate: expenseDateStr,
         notes: expenseNotes.trim() || undefined,
-        receiptUrl,
-        receiptKey,
+        receiptStorageId,
       });
       setExpenseLabel("");
       setExpenseAmount("");
@@ -712,17 +705,17 @@ export default function LoadDetailScreen() {
     } finally {
       setExpenseSaving(false);
     }
-  }, [expenseLabel, expenseAmount, expenseDate, expenseReceiptUri, loadId, driverCode]);
+  }, [expenseLabel, expenseAmount, expenseDate, expenseReceiptUri, loadId, driverCode, expenseNotes, generateUploadUrl, addExpenseConvex, expenseDateStr]);
 
-  const handleDeleteExpense = useCallback((expenseId: number) => {
+  const handleDeleteExpense = useCallback((expenseId: any) => {
     Alert.alert("Delete Expense", "Remove this expense?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete", style: "destructive",
-        onPress: () => deleteExpenseMutation.mutate({ id: expenseId, driverCode: driverCode || "unknown" }),
+        onPress: () => deleteExpenseConvex({ id: expenseId, driverCode: driverCode || "unknown" }),
       },
     ]);
-  }, [driverCode]);
+  }, [driverCode, deleteExpenseConvex]);
 
   const load = getLoad(id);
 
@@ -1299,17 +1292,17 @@ export default function LoadDetailScreen() {
           {/* Expenses Section */}
           <SectionHeader title="EXPENSES" />
           {/* Expense list */}
-          {expensesQuery.isLoading ? (
+          {expensesList === undefined ? (
             <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 8 }} />
-          ) : expensesQuery.data && expensesQuery.data.length > 0 ? (
+          ) : expensesList.length > 0 ? (
             <View style={[expenseListStyles.expenseList, { borderColor: colors.border }]}>
-              {expensesQuery.data.map((exp, idx) => (
+              {expensesList.map((exp, idx) => (
                 <View
-                  key={exp.id}
+                  key={exp._id}
                   style={[
                     expenseListStyles.expenseRow,
                     { borderBottomColor: colors.border },
-                    idx === expensesQuery.data!.length - 1 && { borderBottomWidth: 0 },
+                    idx === expensesList.length - 1 && { borderBottomWidth: 0 },
                   ]}
                 >
                   <View style={expenseListStyles.expenseRowLeft}>
@@ -1340,7 +1333,7 @@ export default function LoadDetailScreen() {
                       ${(exp.amountCents / 100).toFixed(2)}
                     </Text>
                     <TouchableOpacity
-                      onPress={() => handleDeleteExpense(exp.id)}
+                      onPress={() => handleDeleteExpense(exp._id)}
                       activeOpacity={0.7}
                       style={expenseListStyles.expenseDeleteBtn}
                     >

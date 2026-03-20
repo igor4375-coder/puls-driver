@@ -22,6 +22,7 @@ import * as Haptics from "expo-haptics";
 
 import { photoQueue } from "@/lib/photo-queue";
 import type { PhotoQueueEntry } from "@/lib/photo-queue";
+import { stampPhotoViaServer } from "@/lib/stamp-photo-client";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
@@ -717,12 +718,34 @@ export default function InspectionScreen() {
 
   const handleAddDamage = (damage: Damage, damagePhotos: string[]) => {
     setDamages((prev) => [...prev, damage]);
-    // Merge damage photos into the main inspection gallery so they appear in the photo section
     if (damagePhotos.length > 0) {
-      setPhotos((prev) => {
-        const combined = [...prev, ...damagePhotos];
-        return combined.slice(0, 200);
-      });
+      const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
+      const existingInsp = isDelivery ? vehicle?.deliveryInspection : vehicle?.pickupInspection;
+      (async () => {
+        const stampedUris: string[] = [];
+        for (const uri of damagePhotos) {
+          const stamped = await stampPhotoViaServer(uri, {
+            inspectionType: isDelivery ? "Delivery Damage" : "Pickup Damage",
+            driverCode,
+            companyName: load?.orgName ?? undefined,
+            locationLabel: existingInsp?.locationLabel ?? undefined,
+            coords: existingInsp?.locationLat && existingInsp?.locationLng
+              ? { latitude: existingInsp.locationLat, longitude: existingInsp.locationLng }
+              : undefined,
+            vin: vehicle?.vin ?? undefined,
+          });
+          photoQueue.enqueue({
+            localUri: stamped,
+            loadId,
+            vehicleId,
+            inspectionType: isDelivery ? "delivery" : "pickup",
+            zone: damage.zone,
+            damageId: damage.id,
+          });
+          stampedUris.push(stamped);
+        }
+        setPhotos((prev) => [...prev, ...stampedUris].slice(0, 200));
+      })();
     }
     setShowDamageModal(false);
     setSelectedZone(null);

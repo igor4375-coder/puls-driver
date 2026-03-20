@@ -2,37 +2,12 @@
 import "./scripts/load-env.js";
 import type { ExpoConfig } from "expo/config";
 
-// Bundle ID format: space.manus.<project_name_dots>.<timestamp>
-// e.g., "my-app" created at 2024-01-15 10:30:45 -> "space.manus.my.app.t20240115103045"
-// Bundle ID can only contain letters, numbers, and dots
-// Android requires each dot-separated segment to start with a letter
-const rawBundleId = "space.manus.driver.app.t20260220142106";
-const bundleId =
-  rawBundleId
-    .replace(/[-_]/g, ".") // Replace hyphens/underscores with dots
-    .replace(/[^a-zA-Z0-9.]/g, "") // Remove invalid chars
-    .replace(/\.+/g, ".") // Collapse consecutive dots
-    .replace(/^\.+|\.+$/g, "") // Trim leading/trailing dots
-    .toLowerCase()
-    .split(".")
-    .map((segment) => {
-      // Android requires each segment to start with a letter
-      // Prefix with 'x' if segment starts with a digit
-      return /^[a-zA-Z]/.test(segment) ? segment : "x" + segment;
-    })
-    .join(".") || "space.manus.app";
-// Extract timestamp from bundle ID and prefix with "manus" for deep link scheme
-// e.g., "space.manus.my.app.t20240115103045" -> "manus20240115103045"
-const timestamp = bundleId.split(".").pop()?.replace(/^t/, "") ?? "";
-const schemeFromBundleId = `manus${timestamp}`;
+const bundleId = "com.pulsdispatch.driver";
 
 const env = {
-  // App branding - update these values directly (do not use env vars)
-  appName: "Puls Dispatch",
-  appSlug: "driver-app",
-  // S3 URL of the app logo
-  logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663355206211/airKgmZeKkVdUkqi.png",
-  scheme: schemeFromBundleId,
+  appName: "Puls Driver",
+  appSlug: "puls-driver",
+  scheme: "pulsdriver",
   iosBundleId: bundleId,
   androidPackage: bundleId,
 };
@@ -89,8 +64,8 @@ const config: ExpoConfig = {
     [
       "expo-location",
       {
-        "locationWhenInUsePermission": "Allow Puls Dispatch to access your location to stamp GPS coordinates on inspection photos for tamper-evident chain-of-custody records.",
-        "locationAlwaysAndWhenInUsePermission": "Allow Puls Dispatch to access your location in the background so dispatch can see your position while you are on a route.",
+        "locationWhenInUsePermission": "Allow Puls Driver to access your location to stamp GPS coordinates on inspection photos for tamper-evident chain-of-custody records.",
+        "locationAlwaysAndWhenInUsePermission": "Allow Puls Driver to access your location in the background so dispatch can see your position while you are on a route.",
         "isAndroidBackgroundLocationEnabled": true,
         "isAndroidForegroundServiceEnabled": true
       }
@@ -98,7 +73,7 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        "cameraPermission": "Allow Puls Dispatch to access your camera to scan VIN barcodes and capture inspection photos."
+        "cameraPermission": "Allow Puls Driver to access your camera to scan VIN barcodes and capture inspection photos."
       }
     ],
     [
@@ -143,6 +118,11 @@ const config: ExpoConfig = {
       },
     ],
   ],
+  extra: {
+    eas: {
+      projectId: "cc2a03cc-5910-464c-8b9a-7dc09c2eda48",
+    },
+  },
   experiments: {
     typedRoutes: true,
     reactCompiler: true,

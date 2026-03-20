@@ -919,7 +919,7 @@ export default function ProfileScreen() {
           <SettingRow icon="arrow.right" label="Sign Out" onPress={handleLogout} danger />
         </View>
 
-        <Text style={[styles.version, { color: colors.muted }]}>Puls Dispatch v1.0.0</Text>
+        <Text style={[styles.version, { color: colors.muted }]}>Puls Driver v1.0.0</Text>
       </ScrollView>
 
       {/* ── EQUIPMENT TYPE PICKER MODAL ── */}

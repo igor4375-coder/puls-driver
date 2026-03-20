@@ -42,6 +42,7 @@ import { cameraSessionStore } from "@/lib/camera-session-store";
 import { getCurrentGPS, reverseGeocodeCoords, type GPSCoords } from "@/lib/photo-stamp";
 import { stampPhotoViaServer } from "@/lib/stamp-photo-client";
 import { useAuth } from "@/lib/auth-context";
+import { useLoads } from "@/lib/loads-context";
 
 type SessionMode = "photo" | "video";
 
@@ -76,7 +77,10 @@ export default function CameraSessionScreen() {
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const { getLoad } = useLoads();
   const meta = cameraSessionStore.getMeta();
+  const sessionLoad = meta?.loadId ? getLoad(meta.loadId) : null;
+  const sessionVehicle = sessionLoad?.vehicles.find((v) => v.id === meta?.vehicleId);
   const pendingStampsRef = useRef(0);
 
   // ── Fetch GPS once when screen mounts ────────────────────────────────────
@@ -201,8 +205,9 @@ export default function CameraSessionScreen() {
               locationLabel,
               capturedAt: new Date().toISOString(),
               driverCode: driver?.driverCode,
-              companyName: "Puls Dispatch",
+              companyName: sessionLoad?.orgName ?? "Puls Dispatch",
               inspectionType: inspType,
+              vin: sessionVehicle?.vin ?? undefined,
             };
             const finalUri = await stampPhotoViaServer(photo.uri, stampOpts);
             const entry = await photoQueue.enqueue(finalUri, meta);

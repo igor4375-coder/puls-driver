@@ -29,7 +29,7 @@ import {
   setVINLaunchContext,
   type VINDecodeResult,
 } from "@/lib/vin-store";
-import { VehicleInspectionModal, type InspectionResult } from "./vehicle-inspection-modal";
+import { VehicleInspectionModal, type InspectionResult } from "@/components/vehicle-inspection-modal";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 
 // ─── Types ───────────────────────────────────────────────────────────────────

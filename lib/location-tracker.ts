@@ -225,7 +225,7 @@ export async function startLocationTracking(
         deferredUpdatesInterval: REPORT_INTERVAL_MS,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
-          notificationTitle: "Puls Dispatch",
+          notificationTitle: "Puls Driver",
           notificationBody: "Sharing your location with dispatch",
           notificationColor: "#2563EB",
         },

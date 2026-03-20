@@ -35,6 +35,8 @@ export interface StampOptions {
   capturedAt?: string;
   /** Inspection type label, e.g. "Pickup Condition" or "Delivery Condition" */
   inspectionType?: string;
+  /** Vehicle VIN — included in the stamp for chain-of-custody */
+  vin?: string | null;
 }
 
 /**
@@ -122,10 +124,11 @@ export function buildStampLines(opts: StampOptions): string[] {
     : `${inspType}: ${dateStr}  ${timeStr}`;
   lines.push(line1);
 
-  // Line 2: driver code + brand
+  // Line 2: driver code + VIN + brand
   const driverPart = opts.driverCode ? `Driver: ${opts.driverCode}` : "";
+  const vinPart = opts.vin ? `VIN: ${opts.vin}` : "";
   const brandPart = opts.companyName ?? "Puls Dispatch";
-  lines.push([driverPart, brandPart].filter(Boolean).join("  ·  "));
+  lines.push([driverPart, vinPart, brandPart].filter(Boolean).join("  ·  "));
 
   return lines;
 }

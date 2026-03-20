@@ -11,7 +11,7 @@
 
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
-import { buildStampLines, type StampOptions } from "./photo-stamp";
+import type { StampOptions } from "./photo-stamp";
 
 function getStampApiBase(): string {
   const fromEnv =
@@ -37,9 +37,6 @@ export async function stampPhotoViaServer(
   opts: StampOptions
 ): Promise<string> {
   try {
-    // Build stamp text lines
-    const [line1, line2] = buildStampLines(opts);
-
     // Read photo as base64
     let base64: string;
     if (Platform.OS === "web") {
@@ -63,10 +60,20 @@ export async function stampPhotoViaServer(
     const ext = localUri.split(".").pop()?.toLowerCase() ?? "jpg";
     const mimeType = ext === "png" ? "image/png" : "image/jpeg";
 
-    // Call server stampPhoto endpoint
+    // Send structured data — server generates timestamp to prevent tampering
     const body = JSON.stringify({
       "0": {
-        json: { base64, mimeType, line1: line1 ?? "", line2: line2 ?? "" },
+        json: {
+          base64,
+          mimeType,
+          inspectionType: opts.inspectionType,
+          driverCode: opts.driverCode,
+          companyName: opts.companyName,
+          vin: opts.vin ?? undefined,
+          locationLabel: opts.locationLabel ?? undefined,
+          lat: opts.coords?.latitude,
+          lng: opts.coords?.longitude,
+        },
       },
     });
 

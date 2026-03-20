@@ -10,6 +10,7 @@ import {
   Platform,
   TextInput,
   Alert,
+  Image,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
@@ -119,6 +120,7 @@ export default function DashboardScreen() {
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalInput, setGoalInput] = useState("");
   const [chartGranularity, setChartGranularity] = useState<ChartGranularity>("day");
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
 
   const range = useMemo(() => buildMonthRange(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
   const monthOptions = useMemo(() => getMonthOptions(12), []);
@@ -152,6 +154,18 @@ export default function DashboardScreen() {
       return d >= range.start && d <= range.end;
     });
   }, [allExpenses, range]);
+
+  const loadNumberMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of loads) map.set(l.id, l.loadNumber);
+    return map;
+  }, [loads]);
+
+  const sortedExpenses = useMemo(() => {
+    return [...filteredExpenses].sort(
+      (a, b) => new Date(b.expenseDate).getTime() - new Date(a.expenseDate).getTime(),
+    );
+  }, [filteredExpenses]);
 
   // ── Compute stats ─────────────────────────────────────────────────────────
 
@@ -379,6 +393,21 @@ export default function DashboardScreen() {
     setShowGoalModal(false);
     setGoalInput("");
   }, [driver?.id, updateProfile]);
+
+  const deleteExpense = useMutation(api.expenses.remove);
+  const handleDeleteExpense = useCallback((expenseId: any) => {
+    Alert.alert("Delete Expense", "Remove this expense?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          deleteExpense({ id: expenseId, driverCode });
+        },
+      },
+    ]);
+  }, [driverCode, deleteExpense]);
 
   // ── Mini bar chart ────────────────────────────────────────────────────────
 
@@ -676,9 +705,126 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {/* ── Expenses List ──────────────────────────────────────────────── */}
+        <View style={[expStyles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={expStyles.header}>
+            <View style={expStyles.headerLeft}>
+              <View style={[expStyles.headerIcon, { backgroundColor: "#E5393518" }]}>
+                <IconSymbol name="doc.text" size={16} color="#E53935" />
+              </View>
+              <View>
+                <Text style={[expStyles.headerTitle, { color: colors.text }]}>Expenses</Text>
+                <Text style={[expStyles.headerSub, { color: colors.muted }]}>{range.label}</Text>
+              </View>
+            </View>
+            {sortedExpenses.length > 0 && (
+              <View style={[expStyles.totalBadge, { backgroundColor: "#E5393512" }]}>
+                <Text style={[expStyles.totalText, { color: "#E53935" }]}>
+                  ${(filteredExpenses.reduce((s, e) => s + e.amountCents, 0) / 100).toFixed(2)}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {sortedExpenses.length === 0 ? (
+            <View style={expStyles.emptyWrap}>
+              <IconSymbol name="tray" size={28} color={colors.muted} />
+              <Text style={[expStyles.emptyText, { color: colors.muted }]}>No expenses this month</Text>
+            </View>
+          ) : (
+            sortedExpenses.map((exp, idx) => {
+              const loadNum = loadNumberMap.get(exp.loadId);
+              const dateStr = new Date(exp.expenseDate + "T12:00:00").toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              });
+              return (
+                <View
+                  key={exp._id}
+                  style={[
+                    expStyles.row,
+                    { borderTopColor: colors.border },
+                    idx === 0 && { borderTopWidth: 1, marginTop: 4 },
+                  ]}
+                >
+                  {exp.receiptUrl ? (
+                    <TouchableOpacity
+                      onPress={() => setReceiptPreview(exp.receiptUrl!)}
+                      activeOpacity={0.8}
+                    >
+                      <Image
+                        source={{ uri: exp.receiptUrl }}
+                        style={expStyles.receiptThumb}
+                      />
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={[expStyles.receiptPlaceholder, { backgroundColor: colors.background }]}>
+                      <IconSymbol name="doc.text" size={16} color={colors.muted} />
+                    </View>
+                  )}
+                  <View style={expStyles.rowInfo}>
+                    <Text style={[expStyles.rowLabel, { color: colors.text }]} numberOfLines={1}>
+                      {exp.label}
+                    </Text>
+                    <View style={expStyles.rowMeta}>
+                      <Text style={[expStyles.rowDate, { color: colors.muted }]}>{dateStr}</Text>
+                      {loadNum && (
+                        <>
+                          <View style={[expStyles.rowDot, { backgroundColor: colors.muted }]} />
+                          <Text style={[expStyles.rowLoad, { color: colors.muted }]} numberOfLines={1}>
+                            Load #{loadNum}
+                          </Text>
+                        </>
+                      )}
+                    </View>
+                    {exp.notes ? (
+                      <Text style={[expStyles.rowNotes, { color: colors.muted }]} numberOfLines={1}>
+                        {exp.notes}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={expStyles.rowRight}>
+                    <Text style={[expStyles.rowAmount, { color: colors.text }]}>
+                      ${(exp.amountCents / 100).toFixed(2)}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleDeleteExpense(exp._id)}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <IconSymbol name="trash" size={13} color={colors.muted} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* ── Receipt Preview Modal ────────────────────────────────────────────── */}
+      <Modal visible={!!receiptPreview} transparent animationType="fade" onRequestClose={() => setReceiptPreview(null)}>
+        <Pressable style={expStyles.previewBackdrop} onPress={() => setReceiptPreview(null)}>
+          <View style={expStyles.previewContainer}>
+            {receiptPreview && (
+              <Image
+                source={{ uri: receiptPreview }}
+                style={expStyles.previewImage}
+                resizeMode="contain"
+              />
+            )}
+            <TouchableOpacity
+              style={expStyles.previewClose}
+              onPress={() => setReceiptPreview(null)}
+              activeOpacity={0.8}
+            >
+              <IconSymbol name="xmark" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* ── Month Picker Modal ───────────────────────────────────────────────── */}
       <Modal visible={showMonthPicker} transparent animationType="fade" onRequestClose={() => setShowMonthPicker(false)}>
@@ -1176,5 +1322,144 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     marginBottom: 16,
+  },
+});
+
+const expStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 16,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  headerIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  headerSub: {
+    fontSize: 11,
+    marginTop: 1,
+  },
+  totalBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  totalText: {
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  emptyWrap: {
+    alignItems: "center",
+    paddingVertical: 24,
+    gap: 8,
+  },
+  emptyText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  receiptThumb: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: "#f0f0f0",
+  },
+  receiptPlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowInfo: {
+    flex: 1,
+  },
+  rowLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  rowMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+    gap: 6,
+  },
+  rowDate: {
+    fontSize: 12,
+  },
+  rowDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+  },
+  rowLoad: {
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  rowNotes: {
+    fontSize: 11,
+    marginTop: 2,
+    fontStyle: "italic",
+  },
+  rowRight: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  rowAmount: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  previewContainer: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  previewImage: {
+    width: "90%",
+    height: "75%",
+    borderRadius: 12,
+  },
+  previewClose: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 60 : 30,
+    right: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

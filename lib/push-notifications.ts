@@ -45,7 +45,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   // Android channel setup
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
-      name: "Puls Dispatch",
+      name: "Puls Driver",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#0a7ea4",

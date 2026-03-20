@@ -24,6 +24,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const getOrCreateProfile = useMutation(api.driverProfiles.getOrCreateProfile);
   const updateProfile = useMutation(api.driverProfiles.updateProfile);
   const registerPlatformToken = useAction(api.platform.registerPushToken);
+  const registerDriverOnPlatform = useAction(api.platform.registerDriver);
   const convexProfile = useQuery(
     api.driverProfiles.getByClerkUserId,
     clerkUser?.id ? { clerkUserId: clerkUser.id } : "skip",
@@ -52,6 +53,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn("[Auth] Failed to create/get profile in Convex:", err);
     });
   }, [isSignedIn, clerkUser?.id, profileCreated, getOrCreateProfile]);
+
+  // Register driver on the company platform if not yet registered.
+  // This gives the driver a platformDriverCode that dispatchers can use to invite them.
+  const platformRegAttempted = React.useRef(false);
+  useEffect(() => {
+    if (!convexProfile || convexProfile.platformDriverCode || platformRegAttempted.current) return;
+    if (!clerkUser?.id) return;
+    platformRegAttempted.current = true;
+
+    const name = convexProfile.name ?? "Driver";
+    const phone = convexProfile.phone ?? "";
+
+    registerDriverOnPlatform({ name, phone, driverCode: convexProfile.driverCode })
+      .then((platformId) => {
+        if (platformId && clerkUser?.id) {
+          updateProfile({ clerkUserId: clerkUser.id, platformDriverCode: platformId });
+          console.log("[Auth] Registered on company platform:", platformId);
+        }
+      })
+      .catch((err) => {
+        console.warn("[Auth] Platform registration failed (non-fatal):", err);
+        platformRegAttempted.current = false;
+      });
+  }, [convexProfile, clerkUser?.id]);
 
   const driver: Driver | null = useMemo(() => {
     if (!isSignedIn || !clerkUser || !convexProfile) return null;

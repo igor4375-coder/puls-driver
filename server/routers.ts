@@ -392,17 +392,43 @@ export const appRouter = router({
         z.object({
           base64: z.string().min(1),
           mimeType: z.string().default("image/jpeg"),
-          line1: z.string(),
-          line2: z.string(),
+          line1: z.string().optional(),
+          line2: z.string().optional(),
+          inspectionType: z.string().optional(),
+          driverCode: z.string().optional(),
+          companyName: z.string().optional(),
+          vin: z.string().optional(),
+          locationLabel: z.string().optional(),
+          lat: z.number().optional(),
+          lng: z.number().optional(),
         })
       )
       .mutation(async ({ input }) => {
         const { stampPhotoBuffer } = await import("./photo-stamp-server.js");
         const inputBuffer = Buffer.from(input.base64, "base64");
-        const stamped = await stampPhotoBuffer(inputBuffer, {
-          line1: input.line1,
-          line2: input.line2,
-        });
+
+        let line1 = input.line1 ?? "";
+        let line2 = input.line2 ?? "";
+
+        if (input.inspectionType || input.driverCode) {
+          const now = new Date();
+          const dateStr = now.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+          const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+          const inspType = input.inspectionType ?? "Inspection";
+          const locPart = input.locationLabel
+            ?? (input.lat && input.lng ? `${input.lat.toFixed(4)}, ${input.lng.toFixed(4)}` : "");
+          line1 = locPart
+            ? `${inspType}: ${dateStr}  ${timeStr}, ${locPart}`
+            : `${inspType}: ${dateStr}  ${timeStr}`;
+          const parts = [
+            input.driverCode ? `Driver: ${input.driverCode}` : "",
+            input.vin ? `VIN: ${input.vin}` : "",
+            input.companyName ?? "Puls Dispatch",
+          ].filter(Boolean);
+          line2 = parts.join("  ·  ");
+        }
+
+        const stamped = await stampPhotoBuffer(inputBuffer, { line1, line2 });
         return { base64: stamped.toString("base64"), mimeType: "image/jpeg" };
       }),
 

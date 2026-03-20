@@ -25,16 +25,23 @@ function debouncedAsyncWrite(key: string, value: string, delayMs = 500) {
 // ─── Persistence key ──────────────────────────────────────────────────────────
 
 const LOADS_STORAGE_KEY = "autohaul_loads_v2";
-const PLATFORM_LOADS_KEY = "autohaul_platform_loads_v7"; // bumped: platform is now source of truth for status — stale delivered/picked_up cache cleared
+const PLATFORM_LOADS_KEY = "autohaul_platform_loads_v7";
 
-// Persists load IDs that the driver has marked as delivered.
-// These loads MUST stay in the Delivered tab even if the platform
-// changes their status or removes them from the
-// driver's assignment list (reassigned to next leg driver).
+// Atomic key for delivered data: stores both IDs and snapshots together
+// to prevent inconsistent state if the app is killed mid-write.
+const DRIVER_DELIVERED_ATOMIC_KEY = "@autohaul:driver_delivered_atomic_v2";
+
+// Legacy keys (read on startup for migration, then removed)
 const DRIVER_DELIVERED_KEY = "@autohaul:driver_delivered_loads_v1";
-// Stores full Load snapshots for loads the driver delivered that
-// the platform may have removed from the driver's assignments.
 const DRIVER_DELIVERED_SNAPSHOTS_KEY = "@autohaul:driver_delivered_snapshots_v1";
+
+/** Immediately persist delivered data — no debounce for critical writes. */
+function persistDeliveredImmediate(ids: string[], snapshots: Load[]) {
+  const payload = JSON.stringify({ ids, snapshots });
+  AsyncStorage.setItem(DRIVER_DELIVERED_ATOMIC_KEY, payload).catch((err) =>
+    console.warn("[Loads] Failed to persist delivered data:", err),
+  );
+}
 
 // ─── Helper: convert company platform load → driver app Load ─────────────────
 
@@ -386,7 +393,18 @@ export function LoadsProvider({
   // Local loads: use mock data only in demo mode (no real driverCode)
   // When a real driver is authenticated, start with empty local loads
   const isDemoMode = !driverCode || driverCode === "D-00001";
-  const [localLoads, setLocalLoads] = useState<Load[]>(isDemoMode ? MOCK_LOADS : []);
+  const [localLoads, setLocalLoadsRaw] = useState<Load[]>(isDemoMode ? MOCK_LOADS : []);
+  const localLoadsInitRef = React.useRef(false);
+
+  // Wrap setLocalLoads to auto-persist
+  const setLocalLoads = React.useCallback((updater: Load[] | ((prev: Load[]) => Load[])) => {
+    setLocalLoadsRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      debouncedAsyncWrite(LOADS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   // Platform loads fetched from company platform
   const [platformLoads, setPlatformLoads] = useState<Load[]>([]);
   const [isLoadingPlatformLoads, setIsLoadingPlatformLoads] = useState(false);
@@ -401,36 +419,58 @@ export function LoadsProvider({
   // removed from the driver's assignment list (e.g. reassigned to next leg).
   const [deliveredSnapshots, setDeliveredSnapshots] = useState<Load[]>([]);
 
-  // Load persisted driver-delivered IDs and snapshots on startup
+  // Load persisted driver-delivered data on startup (atomic key, with legacy migration)
   useEffect(() => {
-    AsyncStorage.getItem(DRIVER_DELIVERED_KEY).then((val) => {
-      if (val) {
-        try {
-          const ids = JSON.parse(val) as string[];
+    (async () => {
+      try {
+        const atomicVal = await AsyncStorage.getItem(DRIVER_DELIVERED_ATOMIC_KEY);
+        if (atomicVal) {
+          const { ids, snapshots } = JSON.parse(atomicVal) as { ids: string[]; snapshots: Load[] };
           driverDeliveredRef.current = new Set(ids);
-        } catch { /* ignore */ }
-      }
-    });
-    AsyncStorage.getItem(DRIVER_DELIVERED_SNAPSHOTS_KEY).then((val) => {
-      if (val) {
-        try {
-          setDeliveredSnapshots(JSON.parse(val) as Load[]);
-        } catch { /* ignore */ }
-      }
-    });
+          setDeliveredSnapshots(snapshots);
+          return;
+        }
+        // Migrate from legacy separate keys
+        const [legacyIds, legacySnaps] = await Promise.all([
+          AsyncStorage.getItem(DRIVER_DELIVERED_KEY),
+          AsyncStorage.getItem(DRIVER_DELIVERED_SNAPSHOTS_KEY),
+        ]);
+        const ids: string[] = legacyIds ? JSON.parse(legacyIds) : [];
+        const snapshots: Load[] = legacySnaps ? JSON.parse(legacySnaps) : [];
+        if (ids.length > 0 || snapshots.length > 0) {
+          driverDeliveredRef.current = new Set(ids);
+          setDeliveredSnapshots(snapshots);
+          persistDeliveredImmediate(ids, snapshots);
+          AsyncStorage.multiRemove([DRIVER_DELIVERED_KEY, DRIVER_DELIVERED_SNAPSHOTS_KEY]).catch(() => {});
+        }
+      } catch { /* ignore */ }
+    })();
   }, []);
 
-  // Helper: mark a load as driver-delivered and snapshot it
+  // Load persisted local (non-platform) loads on startup
+  useEffect(() => {
+    if (isDemoMode || localLoadsInitRef.current) return;
+    localLoadsInitRef.current = true;
+    AsyncStorage.getItem(LOADS_STORAGE_KEY).then((val) => {
+      if (val) {
+        try {
+          const cached = JSON.parse(val) as Load[];
+          if (cached.length > 0) setLocalLoadsRaw(cached);
+        } catch { /* ignore */ }
+      }
+    });
+  }, [isDemoMode]);
+
+  // Helper: mark a load as driver-delivered and snapshot it.
+  // Uses immediate (non-debounced) atomic write so data survives app kills.
   const markDriverDelivered = React.useCallback((loadId: string, load: Load) => {
     driverDeliveredRef.current.add(loadId);
-    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
-    // Save a snapshot so we can show it even if the platform drops the load
     setDeliveredSnapshots((prev) => {
       const exists = prev.some((l) => l.id === loadId);
       const updated = exists
         ? prev.map((l) => (l.id === loadId ? { ...load, status: "delivered" as LoadStatus } : l))
         : [...prev, { ...load, status: "delivered" as LoadStatus }];
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
   }, []);
@@ -893,7 +933,7 @@ export function LoadsProvider({
     });
     setDeliveredSnapshots((prev) => {
       const updated = archiveFn(prev);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
   }, [geocacheReady]);
@@ -902,35 +942,28 @@ export function LoadsProvider({
 
   // ── deleteLoad: remove a single non-platform load ───────────────────────────
   const deleteLoad = useCallback((loadId: string) => {
-    // Guard: never delete platform-assigned loads
     if (loadId.startsWith("platform-")) return;
     setLocalLoads((prev) => prev.filter((l) => l.id !== loadId));
-    // Also remove from delivered snapshots if it ended up there
+    driverDeliveredRef.current.delete(loadId);
     setDeliveredSnapshots((prev) => {
       const updated = prev.filter((l) => l.id !== loadId);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
-    // Remove from driver-delivered tracking set
-    driverDeliveredRef.current.delete(loadId);
-    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
   }, []);
 
   // ── clearNonPlatformLoads: wipe all demo/mock/manual loads ───────────────────
   const clearNonPlatformLoads = useCallback(() => {
     setLocalLoads([]);
-    // Remove any non-platform snapshots from delivered snapshots
-    setDeliveredSnapshots((prev) => {
-      const updated = prev.filter((l) => l.id.startsWith("platform-"));
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
-      return updated;
-    });
-    // Clean up driver-delivered tracking for non-platform IDs
     const platformOnly = new Set(
       [...driverDeliveredRef.current].filter((id) => id.startsWith("platform-"))
     );
     driverDeliveredRef.current = platformOnly;
-    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...platformOnly]));
+    setDeliveredSnapshots((prev) => {
+      const updated = prev.filter((l) => l.id.startsWith("platform-"));
+      persistDeliveredImmediate([...platformOnly], updated);
+      return updated;
+    });
   }, []);
 
   const patchLoad = useCallback((loadId: string, patch: Partial<Load>) => {
@@ -944,7 +977,7 @@ export function LoadsProvider({
     });
     setDeliveredSnapshots((prev) => {
       const updated = mergeFn(prev);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
   }, []);
@@ -962,7 +995,7 @@ export function LoadsProvider({
     });
     setDeliveredSnapshots((prev) => {
       const updated = archiveFn(prev);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
   }, []);
@@ -978,7 +1011,7 @@ export function LoadsProvider({
     });
     setDeliveredSnapshots((prev) => {
       const updated = patchFn(prev);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
       return updated;
     });
   }, []);
@@ -991,11 +1024,6 @@ export function LoadsProvider({
       debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
       return updated;
     });
-    setDeliveredSnapshots((prev) => {
-      const updated = removeFn(prev);
-      debouncedAsyncWrite(DRIVER_DELIVERED_SNAPSHOTS_KEY, JSON.stringify(updated));
-      return updated;
-    });
     const archivedIds = new Set(
       [...driverDeliveredRef.current].filter((id) => {
         const allLoads = [...localLoads, ...platformLoads, ...deliveredSnapshots];
@@ -1004,7 +1032,11 @@ export function LoadsProvider({
       })
     );
     for (const id of archivedIds) driverDeliveredRef.current.delete(id);
-    debouncedAsyncWrite(DRIVER_DELIVERED_KEY, JSON.stringify([...driverDeliveredRef.current]));
+    setDeliveredSnapshots((prev) => {
+      const updated = removeFn(prev);
+      persistDeliveredImmediate([...driverDeliveredRef.current], updated);
+      return updated;
+    });
   }, [localLoads, platformLoads, deliveredSnapshots]);
 
   return (

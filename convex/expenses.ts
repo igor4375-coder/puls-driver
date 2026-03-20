@@ -20,20 +20,36 @@ export const add = mutation({
 export const getByLoad = query({
   args: { loadId: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const expenses = await ctx.db
       .query("loadExpenses")
       .withIndex("by_loadId", (q) => q.eq("loadId", args.loadId))
       .collect();
+    return Promise.all(
+      expenses.map(async (e) => ({
+        ...e,
+        receiptUrl: e.receiptStorageId
+          ? await ctx.storage.getUrl(e.receiptStorageId)
+          : e.receiptUrl ?? null,
+      })),
+    );
   },
 });
 
 export const getByDriver = query({
   args: { driverCode: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const expenses = await ctx.db
       .query("loadExpenses")
       .withIndex("by_driverCode", (q) => q.eq("driverCode", args.driverCode))
       .collect();
+    return Promise.all(
+      expenses.map(async (e) => ({
+        ...e,
+        receiptUrl: e.receiptStorageId
+          ? await ctx.storage.getUrl(e.receiptStorageId)
+          : e.receiptUrl ?? null,
+      })),
+    );
   },
 });
 
