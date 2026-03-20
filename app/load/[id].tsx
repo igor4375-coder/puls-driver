@@ -45,6 +45,7 @@ import {
   getPaymentLabel,
 } from "@/lib/data";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
+import { photoQueue } from "@/lib/photo-queue";
 import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import { haversineDistanceMiles, DELIVERY_PROXIMITY_THRESHOLD_MILES } from "@/lib/geo-utils";
@@ -861,19 +862,31 @@ export default function LoadDetailScreen() {
       }).catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
     }
 
-    // Fire-and-forget: sync to platform
+    // Fire-and-forget: resolve uploaded URLs from photo queue before syncing
     if (isPlatformLoad && platformTripId && driverCode) {
-      const pickupPhotos = load.vehicles.flatMap(
-        (v) => v.pickupInspection?.photos ?? []
-      );
-      markAsPickedUpAction({
-        loadNumber: load.loadNumber,
-        legId: platformTripId,
-        driverCode,
-        pickupTime: new Date().toISOString(),
-        pickupGPS: { lat: 0, lng: 0 },
-        pickupPhotos,
-      }).catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
+      (async () => {
+        try {
+          const urls: string[] = [];
+          for (const v of load.vehicles) {
+            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
+            urls.push(...vUrls);
+          }
+          const existingHttp = load.vehicles.flatMap(
+            (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+          );
+          const pickupPhotos = [...new Set([...existingHttp, ...urls])];
+          await markAsPickedUpAction({
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            pickupTime: new Date().toISOString(),
+            pickupGPS: { lat: 0, lng: 0 },
+            pickupPhotos,
+          });
+        } catch (err) {
+          console.warn("[LoadDetail] Platform sync failed:", err);
+        }
+      })();
     }
   };
 
@@ -919,34 +932,46 @@ export default function LoadDetailScreen() {
     }
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      const dlvPhotos = load.vehicles.flatMap(
-        (v) => v.deliveryInspection?.photos ?? []
-      );
-      markAsDeliveredAction({
-        loadNumber: load.loadNumber,
-        legId: platformTripId,
-        driverCode,
-        deliveryTime: new Date().toISOString(),
-        deliveryGPS: { lat: 0, lng: 0 },
-        deliveryPhotos: dlvPhotos,
-      }).catch((err) => console.warn("[LoadDetail] Platform delivery sync failed:", err));
+      (async () => {
+        try {
+          const urls: string[] = [];
+          for (const v of load.vehicles) {
+            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
+            urls.push(...vUrls);
+          }
+          const existingHttp = load.vehicles.flatMap(
+            (v) => (v.deliveryInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+          );
+          const dlvPhotos = [...new Set([...existingHttp, ...urls])];
 
-      // Sync handoff note to the platform if provided
-      if (handoffNote && load.vehicles[0]) {
-        syncInspectionAction({
-          loadNumber: load.loadNumber,
-          legId: platformTripId,
-          driverCode,
-          inspectionType: "delivery",
-          vehicleVin: load.vehicles[0].vin || "",
-          photos: dlvPhotos,
-          damages: [],
-          noDamage: true,
-          gps: { lat: 0, lng: 0 },
-          timestamp: new Date().toISOString(),
-          handoffNote,
-        }).catch((err) => console.warn("[LoadDetail] Handoff note sync failed:", err));
-      }
+          await markAsDeliveredAction({
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            deliveryTime: new Date().toISOString(),
+            deliveryGPS: { lat: 0, lng: 0 },
+            deliveryPhotos: dlvPhotos,
+          });
+
+          if (handoffNote && load.vehicles[0]) {
+            await syncInspectionAction({
+              loadNumber: load.loadNumber,
+              legId: platformTripId,
+              driverCode,
+              inspectionType: "delivery",
+              vehicleVin: load.vehicles[0].vin || "",
+              photos: dlvPhotos,
+              damages: [],
+              noDamage: true,
+              gps: { lat: 0, lng: 0 },
+              timestamp: new Date().toISOString(),
+              handoffNote,
+            });
+          }
+        } catch (err) {
+          console.warn("[LoadDetail] Platform delivery sync failed:", err);
+        }
+      })();
     }
   };
 

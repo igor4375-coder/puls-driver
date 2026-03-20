@@ -14,6 +14,7 @@
  */
 
 import { useRef, useState, useCallback } from "react";
+import { photoQueue } from "@/lib/photo-queue";
 import {
   View,
   Text,
@@ -318,19 +319,29 @@ export default function PickupSignatureScreen() {
       : null;
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      const pickupPhotos = load.vehicles.flatMap(
-        (v) => v.pickupInspection?.photos ?? []
-      );
-      markAsPickedUpAction({
-        loadNumber: load.loadNumber,
-        legId: platformTripId,
-        driverCode,
-        pickupTime: new Date().toISOString(),
-        pickupGPS: { lat: 0, lng: 0 },
-        pickupPhotos,
-      }).catch((err) =>
-        console.warn("[PickupSignature] Platform sync failed:", err)
-      );
+      (async () => {
+        try {
+          const urls: string[] = [];
+          for (const v of load.vehicles) {
+            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
+            urls.push(...vUrls);
+          }
+          const existingHttp = load.vehicles.flatMap(
+            (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+          );
+          const pickupPhotos = [...new Set([...existingHttp, ...urls])];
+          await markAsPickedUpAction({
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            pickupTime: new Date().toISOString(),
+            pickupGPS: { lat: 0, lng: 0 },
+            pickupPhotos,
+          });
+        } catch (err) {
+          console.warn("[PickupSignature] Platform sync failed:", err);
+        }
+      })();
     }
   }, [load, isConfirming, customerNotAvailable, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, driverCode, updateLoadStatus, saveSignatureMutation, markAsPickedUpAction]);
 
