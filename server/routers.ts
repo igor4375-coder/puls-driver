@@ -404,8 +404,18 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
+        // #region agent log
+        const _stampStart = Date.now();
+        const _inputLen = input.base64.length;
+        console.log(`[stampPhoto] START base64len=${_inputLen} inspType=${input.inspectionType} driver=${input.driverCode} loc=${input.locationLabel}`);
+        // #endregion
         const { stampPhotoBuffer } = await import("./photo-stamp-server.js");
         const inputBuffer = Buffer.from(input.base64, "base64");
+        // #region agent log
+        const _sharp = (await import("sharp")).default;
+        const _inMeta = await _sharp(inputBuffer).metadata();
+        console.log(`[stampPhoto] INPUT ${_inMeta.width}x${_inMeta.height} orient=${_inMeta.orientation} format=${_inMeta.format} bufSize=${inputBuffer.length}`);
+        // #endregion
 
         let line1 = input.line1 ?? "";
         let line2 = input.line2 ?? "";
@@ -429,6 +439,10 @@ export const appRouter = router({
         }
 
         const stamped = await stampPhotoBuffer(inputBuffer, { line1, line2 });
+        // #region agent log
+        const _outMeta = await _sharp(stamped).metadata();
+        console.log(`[stampPhoto] OUTPUT ${_outMeta.width}x${_outMeta.height} stampedSize=${stamped.length} elapsed=${Date.now()-_stampStart}ms`);
+        // #endregion
         return { base64: stamped.toString("base64"), mimeType: "image/jpeg" };
       }),
 
