@@ -55,7 +55,7 @@ export async function stampPhotoBuffer(
   <text
     x="${textX}"
     y="${textStartY}"
-    font-family="Arial, Helvetica, sans-serif"
+    font-family="Liberation Sans, DejaVu Sans, Arial, Helvetica, sans-serif"
     font-size="${fontSize}"
     font-weight="700"
     fill="#FFFFFF"
@@ -65,7 +65,7 @@ export async function stampPhotoBuffer(
   <text
     x="${textX}"
     y="${textStartY + Math.round(fontSize2 * 1.45)}"
-    font-family="Arial, Helvetica, sans-serif"
+    font-family="Liberation Sans, DejaVu Sans, Arial, Helvetica, sans-serif"
     font-size="${fontSize2}"
     font-weight="400"
     fill="rgba(255,255,255,0.75)"
