@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { photoQueue } from "@/lib/photo-queue";
 import {
   View,
   Text,
@@ -148,9 +149,15 @@ export default function AlternateDeliveryScreen() {
         }
       } catch { /* GPS unavailable */ }
 
-      const deliveryPhotos = load.vehicles.flatMap(
-        (v) => (v as any).deliveryInspection?.photos ?? []
+      const queueUrls: string[] = [];
+      for (const v of load.vehicles) {
+        const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id).catch(() => [] as string[]);
+        queueUrls.push(...vUrls);
+      }
+      const existingHttp = load.vehicles.flatMap(
+        (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
       );
+      const deliveryPhotos = [...new Set([...existingHttp, ...queueUrls])];
       markAsDeliveredAction({
         loadNumber: load.loadNumber,
         legId: platformTripId,

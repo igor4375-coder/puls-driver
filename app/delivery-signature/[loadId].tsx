@@ -13,6 +13,7 @@
  */
 
 import { useRef, useState, useCallback } from "react";
+import { photoQueue } from "@/lib/photo-queue";
 import {
   View,
   Text,
@@ -309,19 +310,29 @@ export default function DeliverySignatureScreen() {
       : null;
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      const deliveryPhotos = load.vehicles.flatMap(
-        (v) => (v as any).deliveryInspection?.photos ?? []
-      );
-      markAsDeliveredAction({
-        loadNumber: load.loadNumber,
-        legId: platformTripId,
-        driverCode,
-        deliveryTime: new Date().toISOString(),
-        deliveryGPS: { lat: 0, lng: 0 },
-        deliveryPhotos,
-      }).catch((err) =>
-        console.warn("[DeliverySignature] Platform sync failed:", err)
-      );
+      (async () => {
+        try {
+          const urls: string[] = [];
+          for (const v of load.vehicles) {
+            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
+            urls.push(...vUrls);
+          }
+          const existingHttp = load.vehicles.flatMap(
+            (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
+          );
+          const deliveryPhotos = [...new Set([...existingHttp, ...urls])];
+          await markAsDeliveredAction({
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            deliveryTime: new Date().toISOString(),
+            deliveryGPS: { lat: 0, lng: 0 },
+            deliveryPhotos,
+          });
+        } catch (err) {
+          console.warn("[DeliverySignature] Platform sync failed:", err);
+        }
+      })();
     }
   }, [load, driverCode, updateLoadStatus, markAsDeliveredAction, saveSignatureMutation, isConfirming, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, customerNotAvailable]);
 
