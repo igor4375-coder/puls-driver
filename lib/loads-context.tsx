@@ -25,6 +25,7 @@ function debouncedAsyncWrite(key: string, value: string, delayMs = 500) {
 // ─── Persistence key ──────────────────────────────────────────────────────────
 
 const LOADS_STORAGE_KEY = "autohaul_loads_v2";
+const DEMO_CLEARED_KEY = "@autohaul:demo_cleared";
 const PLATFORM_LOADS_KEY = "autohaul_platform_loads_v7";
 
 // Atomic key for delivered data: stores both IDs and snapshots together
@@ -391,9 +392,11 @@ export function LoadsProvider({
   driverCode?: string | null;
 }) {
   // Local loads: use mock data only in demo mode (no real driverCode)
-  // When a real driver is authenticated, start with empty local loads
+  // When a real driver is authenticated, start with empty local loads.
+  // Start empty; demo mock data is loaded in the useEffect below only if
+  // the user hasn't previously cleared it.
   const isDemoMode = !driverCode || driverCode === "D-00001";
-  const [localLoads, setLocalLoadsRaw] = useState<Load[]>(isDemoMode ? MOCK_LOADS : []);
+  const [localLoads, setLocalLoadsRaw] = useState<Load[]>([]);
   const localLoadsInitRef = React.useRef(false);
 
   // Wrap setLocalLoads to auto-persist
@@ -447,18 +450,29 @@ export function LoadsProvider({
     })();
   }, []);
 
-  // Load persisted local (non-platform) loads on startup
+  // Load persisted local (non-platform) loads on startup.
+  // In demo mode, seed MOCK_LOADS only on the very first launch;
+  // once the user clears them they stay cleared across restarts.
   useEffect(() => {
-    if (isDemoMode || localLoadsInitRef.current) return;
+    if (localLoadsInitRef.current) return;
     localLoadsInitRef.current = true;
-    AsyncStorage.getItem(LOADS_STORAGE_KEY).then((val) => {
-      if (val) {
-        try {
-          const cached = JSON.parse(val) as Load[];
-          if (cached.length > 0) setLocalLoadsRaw(cached);
-        } catch { /* ignore */ }
+    (async () => {
+      if (isDemoMode) {
+        const cleared = await AsyncStorage.getItem(DEMO_CLEARED_KEY).catch(() => null);
+        if (cleared) return; // user cleared demo data — stay empty
       }
-    });
+      const cached = await AsyncStorage.getItem(LOADS_STORAGE_KEY).catch(() => null);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as Load[];
+          if (parsed.length > 0) setLocalLoadsRaw(parsed);
+        } catch { /* ignore corrupt data */ }
+        return;
+      }
+      if (isDemoMode) {
+        setLocalLoadsRaw(MOCK_LOADS);
+      }
+    })();
   }, [isDemoMode]);
 
   // Helper: mark a load as driver-delivered and snapshot it.
@@ -954,7 +968,9 @@ export function LoadsProvider({
 
   // ── clearNonPlatformLoads: wipe all demo/mock/manual loads ───────────────────
   const clearNonPlatformLoads = useCallback(() => {
-    setLocalLoads([]);
+    setLocalLoadsRaw([]);
+    AsyncStorage.setItem(LOADS_STORAGE_KEY, "[]").catch(() => {});
+    AsyncStorage.setItem(DEMO_CLEARED_KEY, "1").catch(() => {});
     const platformOnly = new Set(
       [...driverDeliveredRef.current].filter((id) => id.startsWith("platform-"))
     );
