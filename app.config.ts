@@ -118,6 +118,12 @@ const config: ExpoConfig = {
       },
     ],
   ],
+  updates: {
+    url: "https://u.expo.dev/cc2a03cc-5910-464c-8b9a-7dc09c2eda48",
+  },
+  runtimeVersion: {
+    policy: "appVersion",
+  },
   extra: {
     eas: {
       projectId: "cc2a03cc-5910-464c-8b9a-7dc09c2eda48",
