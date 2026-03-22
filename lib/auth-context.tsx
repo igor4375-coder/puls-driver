@@ -21,6 +21,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded, signOut } = useClerkAuth();
   const { user: clerkUser } = useUser();
 
+  // #region agent log
+  const _renderCount = React.useRef(0); _renderCount.current++;
+  fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ed9d0'},body:JSON.stringify({sessionId:'6ed9d0',location:'auth-context.tsx:render',message:'AuthProvider render',data:{renderNum:_renderCount.current,clerkLoaded,isSignedIn:!!isSignedIn,hasClerkUser:!!clerkUser},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+  // #endregion
+
   const getOrCreateProfile = useMutation(api.driverProfiles.getOrCreateProfile);
   const updateProfile = useMutation(api.driverProfiles.updateProfile);
   const registerPlatformToken = useAction(api.platform.registerPushToken);

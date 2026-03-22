@@ -17,7 +17,14 @@ export default function WelcomeScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // #region agent log
+  fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ed9d0'},body:JSON.stringify({sessionId:'6ed9d0',location:'welcome.tsx:render',message:'Welcome screen render',data:{isSignedIn:!!isSignedIn},timestamp:Date.now(),hypothesisId:'H1,H4'})}).catch(()=>{});
+  // #endregion
+
   if (isSignedIn) {
+    // #region agent log
+    fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ed9d0'},body:JSON.stringify({sessionId:'6ed9d0',location:'welcome.tsx:alreadySignedIn',message:'Already signed in - redirecting back',data:{isSignedIn:true},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
     router.replace("/(tabs)");
     return null;
   }

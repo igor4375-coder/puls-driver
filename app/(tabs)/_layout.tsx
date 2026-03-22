@@ -5,7 +5,7 @@ import { useColors } from "@/hooks/use-colors";
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 export default function TabLayout() {
   const colors = useColors();
@@ -14,11 +14,26 @@ export default function TabLayout() {
   const bottomPadding = Platform.OS === "web" ? 10 : Math.max(insets.bottom - 8, 4);
   const tabBarHeight = 50 + bottomPadding;
 
+  const [authSettled, setAuthSettled] = useState(false);
+
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.replace("/(auth)/welcome" as any);
+    if (isLoading) return;
+
+    if (isAuthenticated) {
+      setAuthSettled(false);
+      return;
     }
-  }, [isAuthenticated, isLoading]);
+
+    if (!authSettled) {
+      setAuthSettled(true);
+      return;
+    }
+
+    // #region agent log
+    fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6ed9d0'},body:JSON.stringify({sessionId:'6ed9d0',location:'tabs/_layout.tsx:REDIRECT',message:'REDIRECTING to welcome after auth settled',data:{isLoading,isAuthenticated,authSettled},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    router.replace("/(auth)/welcome" as any);
+  }, [isAuthenticated, isLoading, authSettled]);
 
   return (
     <Tabs

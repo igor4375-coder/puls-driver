@@ -20,7 +20,10 @@ import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useColors } from "@/hooks/use-colors";
 import { useAuth } from "@/lib/auth-context";
+import { useLoads } from "@/lib/loads-context";
+import { cameraSessionStore } from "@/lib/camera-session-store";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import type { Load } from "@/lib/data";
 
 export default function FieldPickupReportScreen() {
   const colors = useColors();
@@ -34,6 +37,7 @@ export default function FieldPickupReportScreen() {
     trim: string;
   }>();
   const { driver } = useAuth();
+  const { addLoad } = useLoads();
   const reportToCompany = useAction(api.platform.reportFieldPickup);
   const saveLocally = useMutation(api.fieldPickups.save);
   const markSynced = useMutation(api.fieldPickups.markSynced);
@@ -96,6 +100,57 @@ export default function FieldPickupReportScreen() {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const createFieldPickupLoad = useCallback((fieldPickupId?: string): Load => {
+    const vin = params.vin ?? "";
+    const vehicleId = `v-fp-${vin.slice(-6) || Date.now()}`;
+    const loadId = `fp-${Date.now()}`;
+    const now = new Date().toISOString();
+    const emptyContact = { name: "", company: "", phone: "", email: "", address: "", city: "", state: "", zip: "" };
+    const load: Load = {
+      id: loadId,
+      loadNumber: `FP-${vin.slice(-6).toUpperCase()}`,
+      status: "new",
+      vehicles: [{
+        id: vehicleId,
+        vin,
+        year: params.year || "",
+        make: params.make || "",
+        model: params.model || "",
+        color: color.trim() || "",
+        bodyType: params.bodyType || undefined,
+      }],
+      pickup: {
+        contact: gps?.address
+          ? { ...emptyContact, address: gps.address }
+          : emptyContact,
+        date: now,
+        lat: gps?.lat ?? 0,
+        lng: gps?.lng ?? 0,
+      },
+      delivery: { contact: emptyContact, date: "", lat: 0, lng: 0 },
+      driverPay: 0,
+      paymentType: "cod",
+      notes: notes.trim(),
+      assignedAt: now,
+      isFieldPickup: true,
+      fieldPickupId: fieldPickupId ?? undefined,
+    };
+    return load;
+  }, [params, color, notes, gps]);
+
+  const startInspection = useCallback((load: Load) => {
+    const vehicle = load.vehicles[0];
+    if (!vehicle) return;
+    cameraSessionStore.open(null, {
+      loadId: load.id,
+      vehicleId: vehicle.id,
+      nextRoute: `/inspection/${load.id}/${vehicle.id}`,
+      pickupConfirm: true,
+    });
+    router.dismissAll();
+    router.replace("/camera-session" as any);
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!driverCode) {
       Alert.alert("Error", "Driver profile not loaded. Please try again.");
@@ -130,29 +185,46 @@ export default function FieldPickupReportScreen() {
       clerkUserId: driver?.id ?? "",
     });
 
+    const showInspectionChoice = (fieldPickupId?: string) => {
+      Alert.alert(
+        "Reported",
+        `${vehicleLabel} has been reported to your company.\n\nWould you like to start the pickup inspection now?`,
+        [
+          {
+            text: "Start Inspection",
+            onPress: () => {
+              const load = createFieldPickupLoad(fieldPickupId);
+              addLoad(load);
+              startInspection(load);
+            },
+          },
+          {
+            text: "Later",
+            style: "cancel",
+            onPress: () => {
+              const load = createFieldPickupLoad(fieldPickupId);
+              addLoad(load);
+              router.dismissAll();
+              router.replace("/(tabs)/" as any);
+            },
+          },
+        ],
+      );
+    };
+
     try {
       await reportToCompany(reportData);
       await markSynced({ id: localId });
-
-      Alert.alert(
-        "Reported",
-        `${vehicleLabel} has been reported to your company. They'll create a load for this vehicle.`,
-        [{ text: "OK", onPress: () => { router.dismissAll(); router.replace("/(tabs)/" as any); } }],
-      );
+      showInspectionChoice(localId as unknown as string);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.warn("[FieldPickup] Platform sync failed:", msg);
       await markFailed({ id: localId, platformResponse: msg });
-
-      Alert.alert(
-        "Saved Locally",
-        "Report saved on your device but couldn't reach the company platform right now. It will be synced later.",
-        [{ text: "OK", onPress: () => { router.dismissAll(); router.replace("/(tabs)/" as any); } }],
-      );
+      showInspectionChoice(localId as unknown as string);
     } finally {
       setSubmitting(false);
     }
-  }, [driverCode, params, color, notes, photos, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed]);
+  }, [driverCode, params, color, notes, photos, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed, createFieldPickupLoad, addLoad, startInspection]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>

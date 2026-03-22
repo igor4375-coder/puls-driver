@@ -181,6 +181,11 @@ export interface Load {
     city?: string;
     province?: string;
   };
+  /** True when the load was created from a field pickup scan (VIN not on any assigned load).
+   *  Pickup/delivery details are placeholders until the company assigns the real leg info. */
+  isFieldPickup?: boolean;
+  /** Convex fieldPickup record ID, if this load originated from a field pickup report */
+  fieldPickupId?: string;
 }
 
 export interface Driver {

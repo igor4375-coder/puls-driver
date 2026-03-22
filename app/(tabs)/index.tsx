@@ -142,7 +142,12 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
           <Text style={[styles.loadNumber, { color: colors.muted }]}>#{load.loadNumber}</Text>
           <StatusBadge status={load.status} />
         </View>
-        {load.orgName ? (
+        {load.isFieldPickup ? (
+          <View style={[styles.orgBadge, { backgroundColor: colors.warning + "14" }]}>
+            <IconSymbol name="exclamationmark.triangle.fill" size={11} color={colors.warning} />
+            <Text style={[styles.orgBadgeText, { color: colors.warning }]} numberOfLines={1}>Field Pickup</Text>
+          </View>
+        ) : load.orgName ? (
           <View style={[styles.orgBadge, { backgroundColor: colors.primary + "14" }]}>
             <IconSymbol name="building.2.fill" size={11} color={colors.primary} />
             <Text style={[styles.orgBadgeText, { color: colors.primary }]} numberOfLines={1}>{load.orgName}</Text>
@@ -151,25 +156,43 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>
-        <View style={styles.routeRow}>
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: colors.success }]} />
-            <Text style={[styles.routeCity, { color: colors.foreground }]} numberOfLines={1}>
-              {settings.routeDisplayMode === "facility"
-                ? (load.pickup.contact.company || load.pickup.contact.city || "—")
-                : `${load.pickup.contact.city || "—"}, ${load.pickup.contact.state || "—"}`}
-            </Text>
+        {load.isFieldPickup ? (
+          <View style={styles.routeRow}>
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: colors.warning }]} />
+              <Text style={[styles.routeCity, { color: colors.muted }]} numberOfLines={1}>
+                {load.pickup.contact.address || "Scanned location"}
+              </Text>
+            </View>
+            <View style={[styles.routeLine, { backgroundColor: colors.border }]} />
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: colors.muted }]} />
+              <Text style={[styles.routeCity, { color: colors.muted, fontStyle: "italic" }]} numberOfLines={1}>
+                Awaiting dispatch
+              </Text>
+            </View>
           </View>
-          <View style={[styles.routeLine, { backgroundColor: colors.border }]} />
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: colors.error }]} />
-            <Text style={[styles.routeCity, { color: colors.foreground }]} numberOfLines={1}>
-              {settings.routeDisplayMode === "facility"
-                ? (load.delivery.contact.company || load.delivery.contact.city || "—")
-                : `${load.delivery.contact.city || "—"}, ${load.delivery.contact.state || "—"}`}
-            </Text>
+        ) : (
+          <View style={styles.routeRow}>
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: colors.success }]} />
+              <Text style={[styles.routeCity, { color: colors.foreground }]} numberOfLines={1}>
+                {settings.routeDisplayMode === "facility"
+                  ? (load.pickup.contact.company || load.pickup.contact.city || "—")
+                  : `${load.pickup.contact.city || "—"}, ${load.pickup.contact.state || "—"}`}
+              </Text>
+            </View>
+            <View style={[styles.routeLine, { backgroundColor: colors.border }]} />
+            <View style={styles.routePoint}>
+              <View style={[styles.routeDot, { backgroundColor: colors.error }]} />
+              <Text style={[styles.routeCity, { color: colors.foreground }]} numberOfLines={1}>
+                {settings.routeDisplayMode === "facility"
+                  ? (load.delivery.contact.company || load.delivery.contact.city || "—")
+                  : `${load.delivery.contact.city || "—"}, ${load.delivery.contact.state || "—"}`}
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
         <View style={styles.datesRow}>
           <Text style={[styles.dateText, { color: colors.muted }]}>
             Pickup: {formatDate(load.pickup.date)}
