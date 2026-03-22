@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { AppState, type AppStateStatus } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useUser, useAuth as useClerkAuth } from "@clerk/expo";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -16,10 +17,26 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 const PUSH_TOKEN_KEY = "autohaul_push_token_sent";
+const WAS_AUTHENTICATED_KEY = "@autohaul:was_authenticated";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded, signOut } = useClerkAuth();
   const { user: clerkUser } = useUser();
+
+  // Persisted flag: true once the user has ever authenticated on this device.
+  // Prevents transient isSignedIn=false (token refresh) from triggering redirects.
+  const [hadSession, setHadSession] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(WAS_AUTHENTICATED_KEY).then((v) => setHadSession(v === "1")).catch(() => setHadSession(false));
+  }, []);
+
+  useEffect(() => {
+    if (isSignedIn && hadSession !== true) {
+      setHadSession(true);
+      AsyncStorage.setItem(WAS_AUTHENTICATED_KEY, "1").catch(() => {});
+    }
+  }, [isSignedIn, hadSession]);
 
   const getOrCreateProfile = useMutation(api.driverProfiles.getOrCreateProfile);
   const updateProfile = useMutation(api.driverProfiles.updateProfile);
@@ -122,6 +139,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [driver?.driverCode, clerkUser?.id]);
 
   const logout = async () => {
+    setHadSession(false);
+    AsyncStorage.removeItem(WAS_AUTHENTICATED_KEY).catch(() => {});
     try {
       await signOut();
     } catch (err) {
@@ -130,7 +149,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfileCreated(false);
   };
 
-  const isLoading = !clerkLoaded;
+  // Stay in "loading" while Clerk hasn't loaded, OR while we know the user
+  // had a previous session but Clerk hasn't confirmed sign-in yet (token hydration).
+  const isLoading = !clerkLoaded || hadSession === null || (hadSession && !isSignedIn);
 
   return (
     <AuthContext.Provider
