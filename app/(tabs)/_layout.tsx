@@ -5,7 +5,7 @@ import { useColors } from "@/hooks/use-colors";
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/lib/auth-context";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function TabLayout() {
   const colors = useColors();
@@ -14,15 +14,21 @@ export default function TabLayout() {
   const bottomPadding = Platform.OS === "web" ? 10 : Math.max(insets.bottom - 8, 4);
   const tabBarHeight = 50 + bottomPadding;
 
+  const wasAuthenticated = useRef(false);
   const [authSettled, setAuthSettled] = useState(false);
 
   useEffect(() => {
     if (isLoading) return;
 
     if (isAuthenticated) {
+      wasAuthenticated.current = true;
       setAuthSettled(false);
       return;
     }
+
+    // Once authenticated in this session, stop auto-redirecting.
+    // Explicit sign-out navigates to welcome from the Profile screen.
+    if (wasAuthenticated.current) return;
 
     if (!authSettled) {
       setAuthSettled(true);
