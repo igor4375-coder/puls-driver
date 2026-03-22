@@ -292,7 +292,6 @@ interface LoadsContextType {
   ) => void;
   addLoad: (load: Load) => void;
   refreshPlatformLoads: () => void;
-  revertVehicleToPickupPending: (loadId: string, vehicleId: string, reason: string) => void;
   /** Move all delivered loads to "archived" status immediately. */
   archiveAllDelivered: () => void;
   /** Move a single load to "archived" status. Works for both platform and local loads. */
@@ -891,30 +890,6 @@ export function LoadsProvider({
     setLocalLoads((prev) => [load, ...prev]);
   }, []);
 
-  // Revert a vehicle back to pending.
-  // The frozen inspection snapshot is preserved; the live pickupInspection is cleared
-  // so the driver starts fresh if they re-inspect.
-  const revertVehicleToPickupPending = useCallback(
-    (loadId: string, vehicleId: string, _reason: string) => {
-      const updateFn = (prev: Load[]) =>
-        prev.map((l) => {
-          if (l.id !== loadId) return l;
-          return {
-            ...l,
-            status: "new" as const,
-            vehicles: l.vehicles.map((v) =>
-              v.id === vehicleId
-                ? { ...v, pickupStatus: "pending" as const, pickupInspection: undefined }
-                : v
-            ),
-          };
-        });
-      setLocalLoads(updateFn);
-      setPlatformLoads(updateFn);
-    },
-    []
-  );
-
   const refreshPlatformLoads = useCallback(() => {
     doFetchLoads();
   }, [doFetchLoads]);
@@ -1069,7 +1044,6 @@ export function LoadsProvider({
         updateVehicleInfo,
         addLoad,
         refreshPlatformLoads,
-        revertVehicleToPickupPending,
         archiveAllDelivered,
         archiveSingleLoad,
         clearAllArchived,

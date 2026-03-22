@@ -207,8 +207,6 @@ function VehicleCard({
   driverCode: string;
 }) {
   const colors = useColors();
-  const { revertVehicleToPickupPending } = useLoads();
-  const revertPickupAction = useAction(api.platform.revertPickup);
   const { entries: queueEntries } = usePhotoQueue();
 
   // Count pending/uploading/failed photos for this specific vehicle
@@ -239,36 +237,6 @@ function VehicleCard({
   const isReviewable = loadStatus === "delivered" || loadStatus === "archived";
   const pickupPhotos = vehicle.pickupInspection?.photos ?? [];
   const deliveryPhotos = vehicle.deliveryInspection?.photos ?? [];
-
-  const [showRevertModal, setShowRevertModal] = useState(false);
-  const [revertReason, setRevertReason] = useState("");
-
-  const handleRevertToPending = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setRevertReason("");
-    setShowRevertModal(true);
-  };
-
-  const confirmRevert = () => {
-    const reason = revertReason.trim();
-    if (!reason) return;
-    setShowRevertModal(false);
-    revertVehicleToPickupPending(loadId, vehicle.id, reason);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    pickupHighlightStore.signal("new", "Vehicle moved back to Pending tab");
-    const isPlatformLoad = loadId.startsWith("platform-");
-    if (isPlatformLoad && platformTripId && driverCode) {
-      revertPickupAction({
-        loadNumber,
-        legId: platformTripId,
-        driverCode,
-        reason,
-      }).catch((err) => {
-        console.warn("[VehicleCard] revertPickup platform sync failed:", err);
-      });
-    }
-    router.back();
-  };
 
   const inspectionTypeForVehicle = loadStatus === "new" ? "pickup" : "delivery";
   const currentInspection = inspectionTypeForVehicle === "delivery" ? vehicle.deliveryInspection : vehicle.pickupInspection;
@@ -490,68 +458,6 @@ function VehicleCard({
             {lightboxIndex + 1} / {lightboxPhotos.length}
           </Text>
         </View>
-      </Modal>
-      {loadStatus === "picked_up" && (
-        <View style={{ marginTop: 16 }}>
-          <View style={[styles.dangerDivider, { borderColor: colors.border }]} />
-          <Text style={[styles.dangerLabel, { color: colors.muted }]}>DANGER ZONE</Text>
-          <TouchableOpacity
-            style={[styles.dangerBtn, { borderColor: colors.error }]}
-            onPress={handleRevertToPending}
-            activeOpacity={0.8}
-          >
-            <IconSymbol name="arrow.uturn.left" size={14} color={colors.error} />
-            <Text style={[styles.dangerBtnText, { color: colors.error }]}>Move Back to Pending</Text>
-          </TouchableOpacity>
-          <Text style={[styles.dangerHint, { color: colors.muted }]}>
-            {hasPickupInspection
-              ? "Original inspection is locked — you'll need to provide a reason"
-              : "Load will move back to Pending tab"}
-          </Text>
-        </View>
-      )}
-
-      {/* Revert reason modal */}
-      <Modal visible={showRevertModal} transparent animationType="fade" onRequestClose={() => setShowRevertModal(false)}>
-        <View style={styles.revertBackdrop} />
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.revertKAV}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowRevertModal(false)} />
-          <View style={[styles.revertModal, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.revertModalTitle, { color: colors.foreground }]}>Why are you reverting?</Text>
-            <Text style={[styles.revertModalHint, { color: colors.muted }]}>
-              This will be sent to dispatch. The original inspection is locked and can't be modified.
-            </Text>
-            <TextInput
-              style={[styles.revertModalInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
-              placeholder={"e.g. \"Vehicle won't start\" or \"Customer refused release\""}
-              placeholderTextColor={colors.muted}
-              value={revertReason}
-              onChangeText={setRevertReason}
-              multiline
-              numberOfLines={3}
-              autoFocus={false}
-            />
-            <View style={styles.revertModalButtons}>
-              <TouchableOpacity
-                style={[styles.revertModalBtn, { backgroundColor: colors.border }]}
-                onPress={() => setShowRevertModal(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.revertModalBtnText, { color: colors.foreground }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.revertModalBtn, { backgroundColor: revertReason.trim() ? colors.error : colors.border, flex: 2 }]}
-                onPress={confirmRevert}
-                activeOpacity={0.8}
-                disabled={!revertReason.trim()}
-              >
-                <Text style={[styles.revertModalBtnText, { color: revertReason.trim() ? "#FFFFFF" : colors.muted }]}>
-                  Revert to Pending
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1127,6 +1033,19 @@ export default function LoadDetailScreen() {
               }]}>{getStatusLabel(load.status)}</Text>
             </View>
           </View>
+          {/* Field Pickup banner */}
+          {load.isFieldPickup && (
+            <View style={[styles.fieldPickupBanner, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "40" }]}>
+              <IconSymbol name="exclamationmark.triangle.fill" size={16} color={colors.warning} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={[styles.fieldPickupTitle, { color: colors.warning }]}>Field Pickup</Text>
+                <Text style={[styles.fieldPickupSubtitle, { color: colors.muted }]}>
+                  Route and payment details will be updated by dispatch once this vehicle is assigned to a load.
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Vehicle — always one per load */}
           {load.vehicles.map((v) => (
             <VehicleCard
@@ -1141,56 +1060,81 @@ export default function LoadDetailScreen() {
           ))}
 
           {/* Pickup Info */}
-          <SectionHeader title="PICKUP INFORMATION" />
-          <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
-              <View style={[styles.contactDot, { backgroundColor: colors.success }]} />
-              <Text style={[styles.contactName, { color: colors.foreground }]}>
-                {load.pickup.contact.company || load.pickup.contact.name}
-              </Text>
-              <TouchableOpacity onPress={handleCallPickup} activeOpacity={0.7}>
-                <View style={[styles.callBtn, { backgroundColor: colors.success + "18" }]}>
-                  <IconSymbol name="phone.fill" size={14} color={colors.success} />
+          {load.isFieldPickup ? (
+            <>
+              <SectionHeader title="PICKUP INFORMATION" />
+              <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border, paddingVertical: 16, paddingHorizontal: 16 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <IconSymbol name="clock.fill" size={16} color={colors.muted} />
+                  <Text style={{ color: colors.muted, fontSize: 14 }}>Awaiting dispatch details</Text>
                 </View>
-              </TouchableOpacity>
-            </View>
-            {load.pickup.contact.name && load.pickup.contact.name !== load.pickup.contact.company && (
-              <InfoRow label="Contact" value={load.pickup.contact.name} copyable />
-            )}
-            <InfoRow label="Phone" value={load.pickup.contact.phone} onPress={handleCallPickup} copyable />
-            <InfoRow
-              label="Address"
-              value={`${load.pickup.contact.address}, ${load.pickup.contact.city}, ${load.pickup.contact.state} ${load.pickup.contact.zip}`.replace(/,\s*,/g, ",").trim()}
-              navigable
-            />
-            <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
-          </View>
+                {load.pickup.contact.address ? (
+                  <InfoRow label="Scanned at" value={load.pickup.contact.address} navigable />
+                ) : null}
+                <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
+              </View>
+              <SectionHeader title="DELIVERY INFORMATION" />
+              <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border, paddingVertical: 16, paddingHorizontal: 16 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <IconSymbol name="clock.fill" size={16} color={colors.muted} />
+                  <Text style={{ color: colors.muted, fontSize: 14 }}>Awaiting dispatch details</Text>
+                </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <SectionHeader title="PICKUP INFORMATION" />
+              <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
+                  <View style={[styles.contactDot, { backgroundColor: colors.success }]} />
+                  <Text style={[styles.contactName, { color: colors.foreground }]}>
+                    {load.pickup.contact.company || load.pickup.contact.name}
+                  </Text>
+                  <TouchableOpacity onPress={handleCallPickup} activeOpacity={0.7}>
+                    <View style={[styles.callBtn, { backgroundColor: colors.success + "18" }]}>
+                      <IconSymbol name="phone.fill" size={14} color={colors.success} />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+                {load.pickup.contact.name && load.pickup.contact.name !== load.pickup.contact.company && (
+                  <InfoRow label="Contact" value={load.pickup.contact.name} copyable />
+                )}
+                <InfoRow label="Phone" value={load.pickup.contact.phone} onPress={handleCallPickup} copyable />
+                <InfoRow
+                  label="Address"
+                  value={`${load.pickup.contact.address}, ${load.pickup.contact.city}, ${load.pickup.contact.state} ${load.pickup.contact.zip}`.replace(/,\s*,/g, ",").trim()}
+                  navigable
+                />
+                <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
+              </View>
 
-          {/* Delivery Info */}
-          <SectionHeader title="DELIVERY INFORMATION" />
-          <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
-              <View style={[styles.contactDot, { backgroundColor: colors.error }]} />
-              <Text style={[styles.contactName, { color: colors.foreground }]}>
-                {load.delivery.contact.company || load.delivery.contact.name}
-              </Text>
-              <TouchableOpacity onPress={handleCallDelivery} activeOpacity={0.7}>
-                <View style={[styles.callBtn, { backgroundColor: colors.error + "18" }]}>
-                  <IconSymbol name="phone.fill" size={14} color={colors.error} />
+              {/* Delivery Info */}
+              <SectionHeader title="DELIVERY INFORMATION" />
+              <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={[styles.contactHeader, { borderBottomColor: colors.border }]}>
+                  <View style={[styles.contactDot, { backgroundColor: colors.error }]} />
+                  <Text style={[styles.contactName, { color: colors.foreground }]}>
+                    {load.delivery.contact.company || load.delivery.contact.name}
+                  </Text>
+                  <TouchableOpacity onPress={handleCallDelivery} activeOpacity={0.7}>
+                    <View style={[styles.callBtn, { backgroundColor: colors.error + "18" }]}>
+                      <IconSymbol name="phone.fill" size={14} color={colors.error} />
+                    </View>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
-            </View>
-            {load.delivery.contact.name && load.delivery.contact.name !== load.delivery.contact.company && (
-              <InfoRow label="Contact" value={load.delivery.contact.name} copyable />
-            )}
-            <InfoRow label="Phone" value={load.delivery.contact.phone} onPress={handleCallDelivery} copyable />
-            <InfoRow
-              label="Address"
-              value={`${load.delivery.contact.address}, ${load.delivery.contact.city}, ${load.delivery.contact.state} ${load.delivery.contact.zip}`.replace(/,\s*,/g, ",").trim()}
-              navigable
-            />
-            <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
-          </View>
+                {load.delivery.contact.name && load.delivery.contact.name !== load.delivery.contact.company && (
+                  <InfoRow label="Contact" value={load.delivery.contact.name} copyable />
+                )}
+                <InfoRow label="Phone" value={load.delivery.contact.phone} onPress={handleCallDelivery} copyable />
+                <InfoRow
+                  label="Address"
+                  value={`${load.delivery.contact.address}, ${load.delivery.contact.city}, ${load.delivery.contact.state} ${load.delivery.contact.zip}`.replace(/,\s*,/g, ",").trim()}
+                  navigable
+                />
+                <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
+              </View>
+            </>
+          )}
 
           {/* Alternate delivery notice */}
           {load.wasAlternateDelivery && load.actualDeliveryLocation && (
@@ -1216,8 +1160,8 @@ export default function LoadDetailScreen() {
             </View>
           )}
 
-          {/* Payment Info — hidden when rates not visible */}
-          {canViewRates && (
+          {/* Payment Info — hidden when rates not visible or field pickup with no pay set */}
+          {canViewRates && !(load.isFieldPickup && load.driverPay === 0) && (
             <>
               <SectionHeader title="PAYMENT" />
               <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -1236,9 +1180,9 @@ export default function LoadDetailScreen() {
               </View>
             </>
           ) : null}
-          {/* Gate Pass Section */}
-          <SectionHeader title="GATE PASS" />
-          {load.gatePassUrl ? (() => {
+          {/* Gate Pass Section — hidden for field pickups */}
+          {!load.isFieldPickup && <SectionHeader title="GATE PASS" />}
+          {!load.isFieldPickup && (load.gatePassUrl ? (() => {
             const now = new Date();
             const expires = load.gatePassExpiresAt ? new Date(load.gatePassExpiresAt) : null;
             const isExpired = expires ? now > expires : false;
@@ -1284,9 +1228,9 @@ export default function LoadDetailScreen() {
                 <Text style={{ color: colors.muted, fontSize: 12, marginTop: 2, opacity: 0.7 }}>The dispatcher has not attached a gate pass to this order</Text>
               </View>
             </View>
-          )}
+          ))}
           {/* Storage Expiry row — only shown when a gate pass is attached */}
-          {load.storageExpiryDate && load.gatePassUrl ? (() => {
+          {!load.isFieldPickup && load.storageExpiryDate && load.gatePassUrl ? (() => {
             const now = new Date();
             const expiry = new Date(load.storageExpiryDate!);
             const isExpired = now > expiry;
@@ -1981,6 +1925,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
   },
+  fieldPickupBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  fieldPickupTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  fieldPickupSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 17,
+  },
   altDeliveryCard: {
     marginHorizontal: 16,
     marginTop: 8,
@@ -2020,37 +1981,6 @@ const styles = StyleSheet.create({
   },
   backLink: {
     fontSize: 16,
-  },
-  dangerDivider: {
-    borderTopWidth: 1,
-    marginBottom: 10,
-  },
-  dangerLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  dangerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: "transparent",
-  },
-  dangerBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  dangerHint: {
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: 6,
-    opacity: 0.7,
   },
   vehicleUploadBanner: {
     flexDirection: "row",
@@ -2444,57 +2374,5 @@ const expenseSheetStyles = StyleSheet.create({
     minHeight: 50,
     textAlignVertical: "top",
     padding: 0,
-  },
-  revertBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  revertKAV: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  revertModal: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    paddingBottom: 36,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 12,
-  },
-  revertModalTitle: {
-    fontSize: 19,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-  revertModalHint: {
-    fontSize: 14,
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  revertModalInput: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 14,
-    fontSize: 15,
-    minHeight: 100,
-    textAlignVertical: "top",
-    marginBottom: 20,
-  },
-  revertModalButtons: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  revertModalBtn: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  revertModalBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
   },
 });

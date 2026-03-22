@@ -155,6 +155,13 @@ export default function VINScannerScreen() {
   const [manualDecoding, setManualDecoding] = useState(false);
 
   const lastScannedRef = useRef<string>("");
+  const partialFallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const partialResultRef = useRef<string | null>(null);
+  const [partialWaiting, setPartialWaiting] = useState(false);
+
+  const ALL_BARCODE_TYPES = ["code39", "code128", "pdf417", "qr", "datamatrix", "code93", "aztec"] as const;
+  const LINEAR_ONLY_TYPES = ["code39", "code128", "pdf417", "code93"] as const;
+  const [barcodeTypes, setBarcodeTypes] = useState<readonly string[]>(ALL_BARCODE_TYPES);
 
   // ── Match toast state ─────────────────────────────────────────────────────
   const [matchToast, setMatchToast] = useState<string | null>(null);
@@ -203,6 +210,12 @@ export default function VINScannerScreen() {
     }
   }, [permission]);
 
+  useEffect(() => {
+    return () => {
+      if (partialFallbackTimer.current) clearTimeout(partialFallbackTimer.current);
+    };
+  }, []);
+
   // ── Deliver result — route based on launch context ───────────────────────
 
   const handleConfirmResult = useCallback((result: VINDecodeResult) => {
@@ -219,7 +232,7 @@ export default function VINScannerScreen() {
         const label = [result.year, result.make, result.model].filter(Boolean).join(" ") || result.vin;
         Alert.alert(
           "No Matching Load",
-          `"${label}" doesn't match any assigned load.\n\nWhat would you like to do?`,
+          `"${label}" doesn't match any assigned load.\n\nThis vehicle will be reported to your company for dispatch.`,
           [
             {
               text: "Report to Company",
@@ -235,21 +248,6 @@ export default function VINScannerScreen() {
                     engineSize: result.engineSize,
                     trim: result.trim,
                   },
-                });
-              },
-            },
-            {
-              text: "Create Local Load",
-              onPress: () => {
-                showNoMatchToast({
-                  prefillVin: result.vin,
-                  prefillYear: result.year,
-                  prefillMake: result.make,
-                  prefillModel: result.model,
-                  prefillBodyType: result.bodyType,
-                  prefillEngineSize: result.engineSize,
-                  prefillTrim: result.trim,
-                  prefillIsPartial: result.isPartial ? "1" : "0",
                 });
               },
             },
@@ -306,23 +304,51 @@ export default function VINScannerScreen() {
   const onBarcodeScanned = useCallback(
     ({ data }: BarcodeScanningResult) => {
       if (scanned || decoding || decodedResult) return;
+      if (partialResultRef.current && data === lastScannedRef.current) return;
       if (data === lastScannedRef.current) return;
       lastScannedRef.current = data;
 
-      // Extract VIN: some barcodes have prefix chars before the 17-char VIN
       const cleaned = data.replace(/[^A-HJ-NPR-Z0-9]/gi, "").toUpperCase();
       const vinMatch = cleaned.match(/[A-HJ-NPR-Z0-9]{17}/i);
       const vin = vinMatch ? vinMatch[0] : cleaned;
 
-      if (!isFullVIN(vin)) {
-        // Not a valid VIN barcode — ignore silently and keep scanning
-        setTimeout(() => { lastScannedRef.current = ""; }, 2000);
+      if (isFullVIN(vin)) {
+        if (partialFallbackTimer.current) {
+          clearTimeout(partialFallbackTimer.current);
+          partialFallbackTimer.current = null;
+          partialResultRef.current = null;
+          setPartialWaiting(false);
+          setBarcodeTypes(ALL_BARCODE_TYPES);
+        }
+        Vibration.vibrate(80);
+        setScanned(true);
+        handleFullVINDecode(vin);
         return;
       }
 
-      Vibration.vibrate(80);
-      setScanned(true);
-      handleFullVINDecode(vin);
+      if (cleaned.length >= 6) {
+        if (partialResultRef.current) return;
+        Vibration.vibrate(80);
+        partialResultRef.current = cleaned;
+        lastScannedRef.current = "";
+        setPartialWaiting(true);
+        setBarcodeTypes(LINEAR_ONLY_TYPES);
+        partialFallbackTimer.current = setTimeout(() => {
+          partialFallbackTimer.current = null;
+          partialResultRef.current = null;
+          setPartialWaiting(false);
+          setBarcodeTypes(ALL_BARCODE_TYPES);
+          setScanned(true);
+          setDecodedResult({
+            vin: cleaned,
+            year: "", make: "", model: "", bodyType: "", engineSize: "", trim: "",
+            isPartial: true,
+          });
+        }, 6000);
+        return;
+      }
+
+      setTimeout(() => { lastScannedRef.current = ""; }, 2000);
     },
     [scanned, decoding, decodedResult, handleFullVINDecode]
   );
@@ -614,7 +640,7 @@ export default function VINScannerScreen() {
         facing="back"
         enableTorch={flashOn}
         barcodeScannerSettings={{
-          barcodeTypes: ["code39", "code128", "pdf417", "qr", "datamatrix", "code93", "aztec"],
+          barcodeTypes: barcodeTypes as any,
         }}
         onBarcodeScanned={scanned || decoding ? undefined : onBarcodeScanned}
       />
@@ -651,11 +677,19 @@ export default function VINScannerScreen() {
             )}
           </View>
           <Text style={styles.scanHint}>
-            Align the VIN barcode within the frame{"\n"}(door jamb, dashboard, or windshield)
+            {partialWaiting
+              ? "Partial code detected — now scan the barcode\nunder the printed VIN number"
+              : "Align the VIN barcode within the frame\n(door jamb, dashboard, or windshield)"}
           </Text>
-          <View style={[styles.tipBox, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
-            <Text style={styles.tipText}>💡 Tip: The barcode is usually on the driver-side door jamb</Text>
-          </View>
+          {partialWaiting ? (
+            <View style={[styles.tipBox, { backgroundColor: "rgba(249,115,22,0.7)" }]}>
+              <Text style={styles.tipText}>Point at the long barcode under the VIN text</Text>
+            </View>
+          ) : (
+            <View style={[styles.tipBox, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
+              <Text style={styles.tipText}>💡 Tip: The barcode is usually on the driver-side door jamb</Text>
+            </View>
+          )}
         </View>
 
         {/* Bottom */}

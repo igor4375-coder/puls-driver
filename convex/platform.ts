@@ -177,27 +177,6 @@ export const markAsDelivered = action({
   },
 });
 
-export const revertPickup = action({
-  args: {
-    loadNumber: v.string(),
-    legId: v.union(v.number(), v.string()),
-    driverCode: v.string(),
-    reason: v.optional(v.string()),
-  },
-  handler: async (_ctx, args) => {
-    return await callTRPC(
-      "driversApi.revertPickup",
-      {
-        loadId: args.loadNumber,
-        legId: args.legId,
-        driverCode: args.driverCode,
-        reason: args.reason,
-      },
-      "mutation",
-    );
-  },
-});
-
 export const updateTripStatus = action({
   args: {
     tripId: v.number(),

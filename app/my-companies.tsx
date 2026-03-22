@@ -144,16 +144,9 @@ export default function MyCompaniesScreen() {
               <IconSymbol name="building.2.fill" size={24} color={colors.primary} />
             </View>
             <View style={styles.companyInfo}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={[styles.companyName, { color: colors.foreground }]}>
-                  {item.company?.name ?? "Unknown Company"}
-                </Text>
-                {item.exclusive && (
-                  <View style={[styles.exclusiveBadge, { backgroundColor: "#E65100" }]}>
-                    <Text style={styles.exclusiveBadgeText}>Exclusive</Text>
-                  </View>
-                )}
-              </View>
+              <Text style={[styles.companyName, { color: colors.foreground }]}>
+                {item.company?.name ?? "Unknown Company"}
+              </Text>
               <View style={styles.companyMeta}>
                 {item.company?.companyCode ? (
                   <View style={[styles.companyCodeBadge, { backgroundColor: colors.primary + "15" }]}>
@@ -166,6 +159,11 @@ export default function MyCompaniesScreen() {
                   <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
                   <Text style={[styles.statusText, { color: colors.success }]}>Active</Text>
                 </View>
+                {item.exclusive && (
+                  <View style={[styles.exclusiveBadge, { backgroundColor: "#E65100" }]}>
+                    <Text style={styles.exclusiveBadgeText}>Exclusive</Text>
+                  </View>
+                )}
               </View>
             </View>
             <TouchableOpacity

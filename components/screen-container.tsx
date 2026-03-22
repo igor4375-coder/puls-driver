@@ -49,6 +49,7 @@ export function ScreenContainer({
 }: ScreenContainerProps) {
   return (
     <View
+      style={{ flex: 1 }}
       className={cn(
         "flex-1",
         "bg-background",
@@ -59,9 +60,9 @@ export function ScreenContainer({
       <SafeAreaView
         edges={edges}
         className={cn("flex-1", safeAreaClassName)}
-        style={style}
+        style={[{ flex: 1 }, style]}
       >
-        <View className={cn("flex-1", className)}>{children}</View>
+        <View style={{ flex: 1 }} className={cn("flex-1", className)}>{children}</View>
       </SafeAreaView>
     </View>
   );
