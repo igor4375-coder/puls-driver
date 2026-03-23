@@ -658,10 +658,14 @@ export default function LoadsScreen() {
         return { desc, vin6, loadNumber: l.loadNumber };
       })
     );
+    const uniquePickupCount = new Set(pickupPins.map((p) => `${p.lat},${p.lng}`)).size;
+    const uniqueDropoffCount = new Set(dropoffPins.map((p) => `${p.lat},${p.lng}`)).size;
     return {
       totalVehicles,
       pickupPins,
       dropoffPins,
+      uniquePickupCount,
+      uniqueDropoffCount,
       vehicleList,
       deliveredThisMonth,
       deliveredThisYear,
@@ -943,7 +947,7 @@ export default function LoadsScreen() {
         {/* Stats Bar — Pickup Spots / Drop-off Spots / Vehicles */}
         <View style={[styles.statsBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <View style={styles.statItem}>
-            <Text style={[styles.statValue, { color: colors.primary }]}>{tabStats.pickupPins.length}</Text>
+            <Text style={[styles.statValue, { color: colors.primary }]}>{tabStats.uniquePickupCount}</Text>
             <Text style={[styles.statLabel, { color: colors.muted }]}>PICKUP SPOTS</Text>
             <TouchableOpacity
               onPress={() => {
@@ -957,7 +961,7 @@ export default function LoadsScreen() {
           </View>
           <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
           <View style={styles.statItem}>
-            <Text style={[styles.statValue, { color: colors.primary }]}>{tabStats.dropoffPins.length}</Text>
+            <Text style={[styles.statValue, { color: colors.primary }]}>{tabStats.uniqueDropoffCount}</Text>
             <Text style={[styles.statLabel, { color: colors.muted }]}>DROP-OFF SPOTS</Text>
             <TouchableOpacity
               onPress={() => {
