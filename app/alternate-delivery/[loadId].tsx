@@ -106,11 +106,11 @@ export default function AlternateDeliveryScreen() {
         altLocation = { name: opts.newLocation.name, address: opts.newLocation.address, city: opts.newLocation.city, province: opts.newLocation.province };
       }
 
+      updateLoadStatus(load.id, "delivered");
+
       if (altLocation) {
         patchLoad(load.id, { wasAlternateDelivery: true, actualDeliveryLocation: altLocation });
       }
-
-      updateLoadStatus(load.id, "delivered");
 
       const isFinal = load.isFinalLeg !== false;
       const toastMsg = isFinal
