@@ -164,6 +164,8 @@ export default function VINScannerScreen() {
   const [barcodeTypes, setBarcodeTypes] = useState<readonly string[]>(ALL_BARCODE_TYPES);
 
   // ── Match toast state ─────────────────────────────────────────────────────
+  const [partialResetHint, setPartialResetHint] = useState(false);
+
   const [matchToast, setMatchToast] = useState<string | null>(null);
   const toastOpacity = useRef(new Animated.Value(0)).current;
   const toastScale = useRef(new Animated.Value(0.9)).current;
@@ -336,14 +338,12 @@ export default function VINScannerScreen() {
         partialFallbackTimer.current = setTimeout(() => {
           partialFallbackTimer.current = null;
           partialResultRef.current = null;
+          lastScannedRef.current = "";
           setPartialWaiting(false);
           setBarcodeTypes(ALL_BARCODE_TYPES);
-          setScanned(true);
-          setDecodedResult({
-            vin: cleaned,
-            year: "", make: "", model: "", bodyType: "", engineSize: "", trim: "",
-            isPartial: true,
-          });
+          // Never accept a partial — reset and prompt the driver to scan the linear barcode
+          setPartialResetHint(true);
+          setTimeout(() => setPartialResetHint(false), 3500);
         }, 6000);
         return;
       }
@@ -677,11 +677,17 @@ export default function VINScannerScreen() {
             )}
           </View>
           <Text style={styles.scanHint}>
-            {partialWaiting
+            {partialResetHint
+              ? "Couldn't read full VIN — aim at the long\nbarcode printed under the VIN number"
+              : partialWaiting
               ? "Partial code detected — now scan the barcode\nunder the printed VIN number"
               : "Align the VIN barcode within the frame\n(door jamb, dashboard, or windshield)"}
           </Text>
-          {partialWaiting ? (
+          {partialResetHint ? (
+            <View style={[styles.tipBox, { backgroundColor: "rgba(220,38,38,0.7)" }]}>
+              <Text style={styles.tipText}>Full 17-digit VIN required — try the barcode on the door jamb</Text>
+            </View>
+          ) : partialWaiting ? (
             <View style={[styles.tipBox, { backgroundColor: "rgba(249,115,22,0.7)" }]}>
               <Text style={styles.tipText}>Point at the long barcode under the VIN text</Text>
             </View>
