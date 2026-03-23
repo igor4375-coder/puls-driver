@@ -149,6 +149,8 @@ export default defineSchema({
     platformResponse: v.optional(v.string()),
     reportedAt: v.string(),
     syncedAt: v.optional(v.string()),
+    resentCount: v.optional(v.number()),
+    lastResentAt: v.optional(v.string()),
   })
     .index("by_driverCode", ["driverCode"])
     .index("by_clerkUserId", ["clerkUserId"])

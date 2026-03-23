@@ -493,6 +493,10 @@ export default function LoadDetailScreen() {
   const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
   const syncInspectionAction = useAction(api.platform.syncInspection);
   const saveSignatureMutation = useMutation(api.signatures.save);
+  const resendFieldPickupAction = useAction(api.fieldPickups.resend);
+
+  // Field pickup resend state
+  const [resending, setResending] = useState(false);
 
   // Inline handoff note for delivery (visible above "Mark Delivered" when no inspection photos)
   const [pendingHandoffNote, setPendingHandoffNote] = useState("");
@@ -543,6 +547,15 @@ export default function LoadDetailScreen() {
   const addExpenseConvex = useMutation(api.expenses.add);
   const deleteExpenseConvex = useMutation(api.expenses.remove);
   const generateUploadUrl = useMutation(api.expenses.generateUploadUrl);
+
+  // Field pickup record — only queried when this is a field pickup load
+  const load = getLoad(id);
+  const fieldPickupRecord = useConvexQuery(
+    api.fieldPickups.getById,
+    load?.isFieldPickup && load?.fieldPickupId
+      ? { id: load.fieldPickupId as any }
+      : "skip",
+  );
 
   const launchReceiptCamera = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -624,7 +637,39 @@ export default function LoadDetailScreen() {
     ]);
   }, [driverCode, deleteExpenseConvex]);
 
-  const load = getLoad(id);
+  const handleResendFieldPickup = useCallback(async () => {
+    if (!load?.fieldPickupId) return;
+    setResending(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const result = await resendFieldPickupAction({ id: load.fieldPickupId as any });
+      if (!result.ok) {
+        if (result.reason === "cooldown" && "availableAt" in result) {
+          const minutesLeft = Math.ceil((result.availableAt - Date.now()) / 60_000);
+          Alert.alert(
+            "Please Wait",
+            `You can resend this report again in ${minutesLeft} minute${minutesLeft !== 1 ? "s" : ""}.`,
+          );
+        } else if (result.reason === "limit_reached") {
+          Alert.alert(
+            "Resend Limit Reached",
+            "This report has already been resent the maximum number of times (3). Contact dispatch directly if needed.",
+          );
+        }
+      } else {
+        const remaining = 3 - result.resentCount;
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert(
+          "Report Resent",
+          `Your field pickup report has been sent to dispatch again.${remaining > 0 ? `\n\nYou have ${remaining} resend${remaining !== 1 ? "s" : ""} remaining.` : "\n\nThis was your last resend."}`,
+        );
+      }
+    } catch (err) {
+      Alert.alert("Error", "Failed to resend report. Please try again.");
+    } finally {
+      setResending(false);
+    }
+  }, [load?.fieldPickupId, resendFieldPickupAction]);
 
   if (!load) {
     return (
@@ -689,7 +734,7 @@ export default function LoadDetailScreen() {
               setRequireCustomerSignature(false);
               pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
               showToast("Vehicle picked up — moved to Picked Up tab");
-              router.back();
+              if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)/" as any); }
               const savedSigPaths = settings.driverSignaturePaths;
               const driverSigStr = savedSigPaths.length > 0
                 ? savedSigPaths.map((p) => p.d).join(" ")
@@ -749,7 +794,11 @@ export default function LoadDetailScreen() {
     setRequireCustomerSignature(false);
     pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
     showToast("Vehicle picked up — moved to Picked Up tab");
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)/" as any);
+    }
 
     // Fire-and-forget: save signature record with customerNotAvailable=true
     const savedSigPaths = settings.driverSignaturePaths;
@@ -819,7 +868,7 @@ export default function LoadDetailScreen() {
     setRequireDeliverySignature(false);
     pickupHighlightStore.signal("delivered", deliveryToastMsg);
     showToast(deliveryToastMsg);
-    router.back();
+    if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)/" as any); }
 
     const savedSigPaths = settings.driverSignaturePaths;
     const driverSigStr = savedSigPaths.length > 0
@@ -942,7 +991,13 @@ export default function LoadDetailScreen() {
           {/* Left: back button */}
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={() => router.back()}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/(tabs)/" as any);
+              }
+            }}
             activeOpacity={0.7}
           >
             <IconSymbol name="arrow.left" size={22} color="#FFFFFF" />
@@ -1043,6 +1098,47 @@ export default function LoadDetailScreen() {
                   Route and payment details will be updated by dispatch once this vehicle is assigned to a load.
                 </Text>
               </View>
+            </View>
+          )}
+
+          {/* Field Pickup — Resend to Dispatch */}
+          {load.isFieldPickup && load.fieldPickupId && (
+            <View style={[styles.resendCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <View style={styles.resendCardTop}>
+                <IconSymbol name="paperplane.fill" size={15} color={colors.primary} />
+                <Text style={[styles.resendCardTitle, { color: colors.foreground }]}>Resend to Dispatch</Text>
+                {fieldPickupRecord && (fieldPickupRecord.resentCount ?? 0) > 0 && (
+                  <View style={[styles.resendCountBadge, { backgroundColor: colors.primary + "18" }]}>
+                    <Text style={[styles.resendCountText, { color: colors.primary }]}>
+                      {3 - (fieldPickupRecord.resentCount ?? 0)} left
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[styles.resendCardBody, { color: colors.muted }]}>
+                If dispatch dismissed your report by mistake, tap below to send it again.
+              </Text>
+              {fieldPickupRecord && (fieldPickupRecord.resentCount ?? 0) >= 3 ? (
+                <Text style={[styles.resendLimitText, { color: colors.muted }]}>
+                  Resend limit reached (3/3). Contact dispatch directly.
+                </Text>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.resendBtn, { backgroundColor: colors.primary, opacity: resending ? 0.6 : 1 }]}
+                  onPress={handleResendFieldPickup}
+                  disabled={resending}
+                  activeOpacity={0.8}
+                >
+                  {resending ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <>
+                      <IconSymbol name="arrow.clockwise" size={15} color="#fff" />
+                      <Text style={styles.resendBtnText}>Resend Report</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -1941,6 +2037,57 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
     lineHeight: 17,
+  },
+  resendCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 8,
+  },
+  resendCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  resendCardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    flex: 1,
+  },
+  resendCountBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  resendCountText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  resendCardBody: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  resendBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingVertical: 11,
+    borderRadius: 10,
+    marginTop: 2,
+  },
+  resendBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  resendLimitText: {
+    fontSize: 12,
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingVertical: 6,
   },
   altDeliveryCard: {
     marginHorizontal: 16,
