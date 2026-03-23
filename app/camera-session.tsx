@@ -37,10 +37,9 @@ import { router } from "expo-router";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { photoQueue, type PhotoQueueEntry } from "@/lib/photo-queue";
+import { photoQueue, type PhotoQueueEntry, type StampMeta } from "@/lib/photo-queue";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { getCurrentGPS, reverseGeocodeCoords, type GPSCoords } from "@/lib/photo-stamp";
-import { stampPhotoViaServer } from "@/lib/stamp-photo-client";
 import { useAuth } from "@/lib/auth-context";
 import { useLoads } from "@/lib/loads-context";
 
@@ -81,7 +80,6 @@ export default function CameraSessionScreen() {
   const meta = cameraSessionStore.getMeta();
   const sessionLoad = meta?.loadId ? getLoad(meta.loadId) : null;
   const sessionVehicle = sessionLoad?.vehicles.find((v) => v.id === meta?.vehicleId);
-  const pendingStampsRef = useRef(0);
 
   // ── Fetch GPS once when screen mounts ────────────────────────────────────
   useEffect(() => {
@@ -112,25 +110,10 @@ export default function CameraSessionScreen() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleDone = useCallback(async () => {
-    // Wait for any in-flight stamps to finish (max 8s)
-    if (pendingStampsRef.current > 0) {
-      await new Promise<void>((resolve) => {
-        const start = Date.now();
-        const check = () => {
-          if (pendingStampsRef.current <= 0 || Date.now() - start > 8000) {
-            resolve();
-            return;
-          }
-          setTimeout(check, 100);
-        };
-        check();
-      });
-    }
-
+  const handleDone = useCallback(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const resolvedUris = items.map(({ uri, clientId }) => {
-      if (clientId && !clientId.startsWith("pending-")) {
+      if (clientId) {
         return photoQueue.resolvedUri(clientId) ?? uri;
       }
       return uri;
@@ -184,61 +167,33 @@ export default function CameraSessionScreen() {
         base64: false,
         shutterSound: false,
       });
-      // Release shutter as soon as we have the raw image
       setTaking(false);
       if (photo?.uri) {
-        // Show raw thumbnail immediately so the driver sees it
-        const tempId = `pending-${Date.now()}`;
-        setItems((prev) => [
-          ...prev,
-          { uri: photo.uri, clientId: tempId, type: "photo" },
-        ]);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-        // Stamp + enqueue in background (non-blocking)
-        pendingStampsRef.current += 1;
-        (async () => {
-          try {
-            const inspType = meta?.inspectionType === "delivery" ? "Delivery Condition" : "Pickup Condition";
-            const stampOpts = {
-              coords: gpsCoords,
-              locationLabel,
-              capturedAt: new Date().toISOString(),
-              driverCode: driver?.driverCode,
-              companyName: sessionLoad?.orgName ?? "Puls Dispatch",
-              inspectionType: inspType,
-              vin: sessionVehicle?.vin ?? undefined,
-            };
-            const finalUri = await stampPhotoViaServer(photo.uri, stampOpts);
-            const entry = await photoQueue.enqueue(finalUri, meta);
-            setItems((prev) =>
-              prev.map((item) =>
-                item.clientId === tempId
-                  ? { ...item, uri: entry.localUri, clientId: entry.clientId }
-                  : item
-              )
-            );
-          } catch {
-            // Stamp failed — enqueue raw photo so we don't lose it
-            try {
-              const entry = await photoQueue.enqueue(photo.uri, meta);
-              setItems((prev) =>
-                prev.map((item) =>
-                  item.clientId === tempId
-                    ? { ...item, clientId: entry.clientId }
-                    : item
-                )
-              );
-            } catch {}
-          } finally {
-            pendingStampsRef.current -= 1;
-          }
-        })();
+        const inspType = meta?.inspectionType === "delivery" ? "Delivery Condition" : "Pickup Condition";
+        const stampMeta: StampMeta = {
+          driverCode: driver?.driverCode,
+          companyName: sessionLoad?.orgName ?? "Puls Dispatch",
+          inspectionType: inspType,
+          vin: sessionVehicle?.vin ?? undefined,
+          locationLabel,
+          lat: gpsCoords?.latitude ?? null,
+          lng: gpsCoords?.longitude ?? null,
+          capturedAt: new Date().toISOString(),
+        };
+
+        // Enqueue immediately — stamp + upload happen in the queue's background pipeline
+        const entry = await photoQueue.enqueue(photo.uri, { ...meta, stampMeta });
+        setItems((prev) => [
+          ...prev,
+          { uri: entry.localUri, clientId: entry.clientId, type: "photo" },
+        ]);
       }
     } catch {
       setTaking(false);
     }
-  }, [taking, meta, gpsCoords, locationLabel, driver]);
+  }, [taking, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle]);
 
   const handleStartRecording = useCallback(async () => {
     if (recording || !cameraRef.current || Platform.OS === "web") return;

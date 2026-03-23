@@ -20,6 +20,17 @@ import { compressImage } from "./image-compress";
 
 export type PhotoStatus = "pending" | "uploading" | "done" | "failed";
 
+export interface StampMeta {
+  driverCode?: string;
+  companyName?: string;
+  inspectionType?: string;
+  vin?: string | null;
+  locationLabel?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  capturedAt?: string;
+}
+
 export interface PhotoQueueEntry {
   clientId: string;
   localUri: string;
@@ -31,6 +42,8 @@ export interface PhotoQueueEntry {
   loadId?: string;
   vehicleId?: string;
   createdAt: number;
+  stampMeta?: StampMeta;
+  stamped?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -157,7 +170,7 @@ export class PhotoQueue {
 
   async enqueue(
     tempUri: string,
-    meta?: { loadId?: string; vehicleId?: string }
+    meta?: { loadId?: string; vehicleId?: string; stampMeta?: StampMeta }
   ): Promise<PhotoQueueEntry> {
     await this.load();
 
@@ -187,13 +200,15 @@ export class PhotoQueue {
       loadId: meta?.loadId,
       vehicleId: meta?.vehicleId,
       createdAt: Date.now(),
+      stampMeta: meta?.stampMeta,
+      stamped: !meta?.stampMeta,
     };
 
     this.entries.push(entry);
     await this.persist();
     this.emit();
-    // Start uploading immediately in the background so most photos are
-    // already on S3 by the time the driver hits Save.
+    // Start stamp+upload immediately in the background so most photos are
+    // already on R2 by the time the driver hits Save.
     this.uploadEntry(entry).catch((err) => console.warn("[PhotoQueue]", err));
     return entry;
   }
@@ -304,8 +319,33 @@ export class PhotoQueue {
     this.updateEntry(entry.clientId, { status: "uploading" });
 
     try {
+      // Stamp the photo if stamp metadata is present and not yet stamped
+      let sourceUri = entry.localUri;
+      if (entry.stampMeta && !entry.stamped) {
+        try {
+          const { stampPhotoViaServer } = await import("./stamp-photo-client");
+          const sm = entry.stampMeta;
+          const stampedUri = await stampPhotoViaServer(sourceUri, {
+            inspectionType: sm.inspectionType,
+            driverCode: sm.driverCode,
+            companyName: sm.companyName,
+            vin: sm.vin,
+            locationLabel: sm.locationLabel,
+            coords: sm.lat != null && sm.lng != null
+              ? { latitude: sm.lat, longitude: sm.lng }
+              : null,
+            capturedAt: sm.capturedAt,
+          });
+          sourceUri = stampedUri;
+          this.updateEntry(entry.clientId, { stamped: true, localUri: stampedUri });
+        } catch (stampErr) {
+          console.warn("[PhotoQueue] Stamp failed, uploading raw:", stampErr);
+          this.updateEntry(entry.clientId, { stamped: true });
+        }
+      }
+
       // Compress before upload (reduces file size ~10-15x)
-      const compressedUri = await compressImage(entry.localUri);
+      const compressedUri = await compressImage(sourceUri);
       const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
       const apiBase = getUploadApiBase();
 

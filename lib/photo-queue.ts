@@ -6,7 +6,7 @@
  */
 
 export { PhotoQueue } from "./photo-queue-class";
-export type { PhotoQueueEntry, PhotoStatus } from "./photo-queue-class";
+export type { PhotoQueueEntry, PhotoStatus, StampMeta } from "./photo-queue-class";
 
 import { PhotoQueue } from "./photo-queue-class";
 
