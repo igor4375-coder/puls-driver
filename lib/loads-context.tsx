@@ -600,7 +600,22 @@ export function LoadsProvider({
       const rawLoads = await fetchAssignedLoads({ driverCode });
       const converted = (rawLoads as PlatformLoad[]).map(platformLoadToLoad);
       const geocoded = await geocodePlatformLoads(converted);
+
+      // Capture any picked-up platform loads about to be dropped (computed
+      // inside the functional updater so we see the true current state).
+      // We snapshot them AFTER setPlatformLoads to avoid calling setState
+      // inside another setState callback.
+      let droppedPickedUp: Load[] = [];
+
       setPlatformLoads((prev) => {
+        const newIds = new Set(geocoded.map((l) => l.id));
+        droppedPickedUp = prev.filter(
+          (l) =>
+            l.status === "picked_up" &&
+            !newIds.has(l.id) &&
+            !driverDeliveredRef.current.has(l.id)
+        );
+
         const inspectionMap = new Map<string, Map<string, { pickup?: VehicleInspection; delivery?: VehicleInspection; frozen?: VehicleInspection }>>();
         for (const l of prev) {
           for (const v of l.vehicles) {
@@ -662,6 +677,27 @@ export function LoadsProvider({
         debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(current));
         return current;
       });
+
+      // Snapshot any picked-up loads that were dropped from the platform response.
+      // This preserves them so the driver can still complete the delivery flow
+      // even if dispatch dismisses or unassigns the load.
+      if (droppedPickedUp.length > 0) {
+        setDeliveredSnapshots((prev) => {
+          let updated = [...prev];
+          for (const l of droppedPickedUp) {
+            driverDeliveredRef.current.add(l.id);
+            const exists = updated.some((s) => s.id === l.id);
+            const snapshot = { ...l, status: "picked_up" as LoadStatus };
+            if (exists) {
+              updated = updated.map((s) => (s.id === l.id ? snapshot : s));
+            } else {
+              updated = [...updated, snapshot];
+            }
+          }
+          persistDeliveredImmediate([...driverDeliveredRef.current], updated);
+          return updated;
+        });
+      }
     } catch (err: any) {
       setPlatformLoadError(err?.message ?? "Failed to fetch platform loads");
     } finally {
@@ -739,12 +775,12 @@ export function LoadsProvider({
     }
 
     // 3. Delivered snapshots — loads the platform removed from the driver's
-    //    assignment list after the driver delivered them (e.g. reassigned to
-    //    next leg). These MUST still appear in the Delivered tab.
+    //    assignment list after they were delivered OR picked up. Preserve
+    //    their stored status so picked_up loads stay in Picked Up tab.
     for (const l of deliveredSnapshots) {
       if (!seen.has(l.id)) {
         seen.add(l.id);
-        result.push({ ...l, status: "delivered" as LoadStatus });
+        result.push(l);
       }
     }
 
