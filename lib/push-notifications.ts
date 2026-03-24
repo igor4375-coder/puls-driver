@@ -59,6 +59,12 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 300, 200, 300],
     });
+    await Notifications.setNotificationChannelAsync("load-updates", {
+      name: "Load Updates",
+      description: "Notifications when loads are assigned, updated, or removed",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 300, 200, 300],
+    });
     await Notifications.setNotificationChannelAsync("location-requests", {
       name: "Location Requests",
       description: "Dispatcher requests for your current location",
