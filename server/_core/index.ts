@@ -157,6 +157,139 @@ async function startServer() {
     }
   });
 
+  /**
+   * Webhook: called by the company platform when a load's details are updated.
+   * The platform POSTs { driverCode, loadNumber, vehicleDescription, changeDescription }
+   * where changeDescription is a short human-readable summary of what changed,
+   * e.g. "Rate updated to $850", "Delivery location changed to IAA Toronto".
+   *
+   * Security: same shared WEBHOOK_SECRET header as load-assigned.
+   */
+  app.post("/api/webhooks/load-updated", async (req, res) => {
+    try {
+      const secret = process.env.WEBHOOK_SECRET;
+      if (secret) {
+        const provided = req.headers["x-webhook-secret"];
+        if (provided !== secret) {
+          res.status(401).json({ error: "Invalid webhook secret" });
+          return;
+        }
+      }
+
+      const { driverCode, loadNumber, vehicleDescription, changeDescription } = req.body as {
+        driverCode?: string;
+        loadNumber?: string;
+        vehicleDescription?: string;
+        changeDescription?: string;
+      };
+
+      if (!driverCode) {
+        res.status(400).json({ error: "driverCode is required" });
+        return;
+      }
+
+      let profile = await db.getDriverProfileByCode(driverCode);
+      if (!profile) {
+        profile = await db.getDriverProfileByPlatformCode(driverCode);
+      }
+      if (!profile?.pushToken) {
+        console.log(`[Webhook] No push token for driver ${driverCode} — skipping load-updated notification`);
+        res.json({ success: true, notified: false, reason: "no_push_token" });
+        return;
+      }
+
+      if (profile.notifyNewLoad === false) {
+        res.json({ success: true, notified: false, reason: "notifications_disabled" });
+        return;
+      }
+
+      const vehicle = vehicleDescription ?? `Load ${loadNumber ?? ""}`;
+      const body = changeDescription
+        ? `${vehicle}: ${changeDescription}`
+        : `${vehicle} has been updated by dispatch`;
+
+      await sendPushNotification(
+        profile.pushToken,
+        "Load Updated",
+        body,
+        { type: "load_updated", loadNumber, driverCode },
+        "loads"
+      );
+
+      console.log(`[Webhook] load-updated push sent to driver ${driverCode} for load ${loadNumber}`);
+      res.json({ success: true, notified: true });
+    } catch (err) {
+      console.error("[Webhook] load-updated error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * Webhook: called by the company platform when a load is removed/unassigned from a driver.
+   * The platform POSTs { driverCode, loadNumber, vehicleDescription, reason }
+   * where reason is optional context, e.g. "Load cancelled", "Reassigned to another driver".
+   *
+   * Security: same shared WEBHOOK_SECRET header as load-assigned.
+   */
+  app.post("/api/webhooks/load-removed", async (req, res) => {
+    try {
+      const secret = process.env.WEBHOOK_SECRET;
+      if (secret) {
+        const provided = req.headers["x-webhook-secret"];
+        if (provided !== secret) {
+          res.status(401).json({ error: "Invalid webhook secret" });
+          return;
+        }
+      }
+
+      const { driverCode, loadNumber, vehicleDescription, reason } = req.body as {
+        driverCode?: string;
+        loadNumber?: string;
+        vehicleDescription?: string;
+        reason?: string;
+      };
+
+      if (!driverCode) {
+        res.status(400).json({ error: "driverCode is required" });
+        return;
+      }
+
+      let profile = await db.getDriverProfileByCode(driverCode);
+      if (!profile) {
+        profile = await db.getDriverProfileByPlatformCode(driverCode);
+      }
+      if (!profile?.pushToken) {
+        console.log(`[Webhook] No push token for driver ${driverCode} — skipping load-removed notification`);
+        res.json({ success: true, notified: false, reason: "no_push_token" });
+        return;
+      }
+
+      if (profile.notifyNewLoad === false) {
+        res.json({ success: true, notified: false, reason: "notifications_disabled" });
+        return;
+      }
+
+      const vehicle = vehicleDescription ?? `Load ${loadNumber ?? ""}`;
+      const body = reason
+        ? `${vehicle}: ${reason}`
+        : `${vehicle} has been removed from your assignments`;
+
+      await sendPushNotification(
+        profile.pushToken,
+        "Load Removed",
+        body,
+        { type: "load_removed", loadNumber, driverCode },
+        "loads"
+      );
+
+      console.log(`[Webhook] load-removed push sent to driver ${driverCode} for load ${loadNumber}`);
+      res.json({ success: true, notified: true });
+    } catch (err) {
+      console.error("[Webhook] load-removed error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // ─── Driver Location Ping Endpoint ───────────────────────────────────────────
   app.post("/api/driver-location", async (req, res) => {
     try {

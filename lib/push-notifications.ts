@@ -103,13 +103,8 @@ export function setupNotificationResponseListener(): () => void {
     setTimeout(() => {
       if (type === "invite") {
         router.push("/(tabs)/profile");
-      } else if (type === "load_assigned") {
-        const loadId = data?.loadId as string | undefined;
-        if (loadId) {
-          router.push("/(tabs)" as any);
-        } else {
-          router.push("/(tabs)");
-        }
+      } else if (type === "load_assigned" || type === "load_updated" || type === "load_removed") {
+        router.push("/(tabs)");
       } else if (type === "location_request") {
         // Tapped the location request notification — send ping and show confirmation
         sendImmediateLocationPing()
