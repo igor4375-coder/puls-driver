@@ -322,17 +322,39 @@ export default function DeliverySignatureScreen() {
           );
           const deliveryPhotos = [...new Set([...existingHttp, ...urls])];
           const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+
+          const allDamages = load.vehicles.flatMap(
+            (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
+              id: d.id,
+              zone: d.zone,
+              type: d.type,
+              severity: d.severity,
+              x: d.xPct != null ? d.xPct / 100 : 0.5,
+              y: d.yPct != null ? d.yPct / 100 : 0.5,
+              diagramView: d.diagramView,
+              note: d.description || undefined,
+            }))
+          );
+          const firstVehicle = load.vehicles[0];
+          const deliveryInsp = (firstVehicle as any)?.deliveryInspection;
+
           await markAsDeliveredAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
             deliveryTime: new Date().toISOString(),
-            deliveryGPS: { lat: 0, lng: 0 },
+            deliveryGPS: {
+              lat: deliveryInsp?.locationLat ?? 0,
+              lng: deliveryInsp?.locationLng ?? 0,
+            },
             deliveryPhotos,
             ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
             ...(customerSigStr ? { customerSig: customerSigStr } : {}),
             ...(driverSigStr ? { driverSig: driverSigStr } : {}),
             customerNotAvailable: isNotAvailable,
+            damages: allDamages,
+            noDamage: allDamages.length === 0,
+            vehicleVin: firstVehicle?.vin || "",
           });
         } catch (err) {
           console.warn("[DeliverySignature] Platform sync failed:", err);

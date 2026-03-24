@@ -158,6 +158,21 @@ export default function AlternateDeliveryScreen() {
         (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
       );
       const deliveryPhotos = [...new Set([...existingHttp, ...queueUrls])];
+
+      const allDamages = load.vehicles.flatMap(
+        (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }))
+      );
+      const firstVehicle = load.vehicles[0];
+
       markAsDeliveredAction({
         loadNumber: load.loadNumber,
         legId: platformTripId,
@@ -171,6 +186,9 @@ export default function AlternateDeliveryScreen() {
         ...(opts?.newLocation ? { newLocation: opts.newLocation } : {}),
         ...(driverSigStr ? { driverSig: driverSigStr } : {}),
         customerNotAvailable: true,
+        damages: allDamages,
+        noDamage: allDamages.length === 0,
+        vehicleVin: firstVehicle?.vin || "",
       }).catch((err) => console.warn("[AlternateDelivery] Platform sync failed:", err));
 
       setIsDelivering(false);

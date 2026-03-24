@@ -32,6 +32,7 @@ import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
+import { useSettings } from "@/lib/settings-context";
 import {
   type Damage,
   type DamageType,
@@ -561,6 +562,7 @@ export default function InspectionScreen() {
   const { driver } = useAuth();
   const syncInspectionAction = useAction(api.platform.syncInspection);
   const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
+  const { settings } = useSettings();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
 
@@ -986,6 +988,37 @@ export default function InspectionScreen() {
       const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
 
       if (isPlatformLoad && legId && driverCode && load) {
+        const syncDamages = damages.map((d) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }));
+        const additionalData: Record<string, unknown> = {};
+        if (odometer) additionalData.odometer = odometer;
+        if (drivable !== null) additionalData.drivable = drivable;
+        if (windscreen !== null) additionalData.windscreen = windscreen;
+        if (glassesIntact !== null) additionalData.glassesIntact = glassesIntact;
+        if (titlePresent !== null) additionalData.titlePresent = titlePresent;
+        if (billOfSale !== null) additionalData.billOfSale = billOfSale;
+        if (keys !== null) additionalData.keys = keys;
+        if (remotes !== null) additionalData.remotes = remotes;
+        if (headrests !== null) additionalData.headrests = headrests;
+        if (cargoCover !== null) additionalData.cargoCover = cargoCover;
+        if (spareTire !== null) additionalData.spareTire = spareTire;
+        if (radio !== null) additionalData.radio = radio;
+        if (manuals !== null) additionalData.manuals = manuals;
+        if (navigationDisk !== null) additionalData.navigationDisk = navigationDisk;
+        if (pluginChargerCable !== null) additionalData.pluginChargerCable = pluginChargerCable;
+        if (headphones !== null) additionalData.headphones = headphones;
+
+        const savedSigPaths = settings.driverSignaturePaths.filter((p) => !p.d.startsWith("__live__"));
+        const driverSigStr = savedSigPaths.length > 0 ? savedSigPaths.map((p) => p.d).join(" ") : undefined;
+
         try {
           await markAsPickedUpAction({
             loadNumber: load.loadNumber,
@@ -994,40 +1027,18 @@ export default function InspectionScreen() {
             pickupTime: new Date().toISOString(),
             pickupGPS: { lat: gpsLat, lng: gpsLng },
             pickupPhotos: uploadedUrls,
+            customerNotAvailable: true,
+            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+            damages: syncDamages,
+            noDamage,
+            vehicleVin: vehicle?.vin || "",
+            ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
           });
         } catch (platformErr) {
           console.warn("[CompletePickup] Platform markAsPickedUp failed:", platformErr);
         }
 
         try {
-          const syncDamages = damages.map((d) => ({
-            id: d.id,
-            zone: d.zone,
-            type: d.type,
-            severity: d.severity,
-            x: d.xPct != null ? d.xPct / 100 : 0.5,
-            y: d.yPct != null ? d.yPct / 100 : 0.5,
-            diagramView: d.diagramView,
-            note: d.description || undefined,
-          }));
-          const additionalData: Record<string, unknown> = {};
-          if (odometer) additionalData.odometer = odometer;
-          if (drivable !== null) additionalData.drivable = drivable;
-          if (windscreen !== null) additionalData.windscreen = windscreen;
-          if (glassesIntact !== null) additionalData.glassesIntact = glassesIntact;
-          if (titlePresent !== null) additionalData.titlePresent = titlePresent;
-          if (billOfSale !== null) additionalData.billOfSale = billOfSale;
-          if (keys !== null) additionalData.keys = keys;
-          if (remotes !== null) additionalData.remotes = remotes;
-          if (headrests !== null) additionalData.headrests = headrests;
-          if (cargoCover !== null) additionalData.cargoCover = cargoCover;
-          if (spareTire !== null) additionalData.spareTire = spareTire;
-          if (radio !== null) additionalData.radio = radio;
-          if (manuals !== null) additionalData.manuals = manuals;
-          if (navigationDisk !== null) additionalData.navigationDisk = navigationDisk;
-          if (pluginChargerCable !== null) additionalData.pluginChargerCable = pluginChargerCable;
-          if (headphones !== null) additionalData.headphones = headphones;
-
           await syncInspectionAction({
             loadNumber: load.loadNumber,
             legId,
@@ -1040,7 +1051,7 @@ export default function InspectionScreen() {
             gps: { lat: gpsLat, lng: gpsLng },
             timestamp: new Date().toISOString(),
             notes: notes || undefined,
-            ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
+            ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
           });
         } catch (syncErr) {
           console.error("[CompletePickup] syncInspection failed:", syncErr);

@@ -126,6 +126,10 @@ export const markAsPickedUp = action({
     customerSig: v.optional(v.string()),
     driverSig: v.optional(v.string()),
     customerNotAvailable: v.optional(v.boolean()),
+    damages: v.optional(v.array(v.any())),
+    noDamage: v.optional(v.boolean()),
+    additionalInspection: v.optional(v.any()),
+    vehicleVin: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     const payload: Record<string, unknown> = {
@@ -141,6 +145,10 @@ export const markAsPickedUp = action({
     if (args.customerSig) payload.customerSig = args.customerSig;
     if (args.driverSig) payload.driverSig = args.driverSig;
     if (args.customerNotAvailable !== undefined) payload.customerNotAvailable = args.customerNotAvailable;
+    if (args.damages && args.damages.length > 0) payload.damages = args.damages;
+    if (args.noDamage !== undefined) payload.noDamage = args.noDamage;
+    if (args.additionalInspection) payload.additionalInspection = args.additionalInspection;
+    if (args.vehicleVin) payload.vehicleVin = args.vehicleVin;
     return await callTRPC("driversApi.markAsPickedUp", payload, "mutation");
   },
 });
@@ -168,6 +176,10 @@ export const markAsDelivered = action({
     customerSig: v.optional(v.string()),
     driverSig: v.optional(v.string()),
     customerNotAvailable: v.optional(v.boolean()),
+    damages: v.optional(v.array(v.any())),
+    noDamage: v.optional(v.boolean()),
+    additionalInspection: v.optional(v.any()),
+    vehicleVin: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     const payload: Record<string, unknown> = {
@@ -189,6 +201,10 @@ export const markAsDelivered = action({
     if (args.customerSig) payload.customerSig = args.customerSig;
     if (args.driverSig) payload.driverSig = args.driverSig;
     if (args.customerNotAvailable !== undefined) payload.customerNotAvailable = args.customerNotAvailable;
+    if (args.damages && args.damages.length > 0) payload.damages = args.damages;
+    if (args.noDamage !== undefined) payload.noDamage = args.noDamage;
+    if (args.additionalInspection) payload.additionalInspection = args.additionalInspection;
+    if (args.vehicleVin) payload.vehicleVin = args.vehicleVin;
     return await callTRPC("driversApi.markAsDelivered", payload, "mutation");
   },
 });

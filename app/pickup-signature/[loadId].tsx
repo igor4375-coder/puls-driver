@@ -331,17 +331,39 @@ export default function PickupSignatureScreen() {
           );
           const pickupPhotos = [...new Set([...existingHttp, ...urls])];
           const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+
+          const allDamages = load.vehicles.flatMap(
+            (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
+              id: d.id,
+              zone: d.zone,
+              type: d.type,
+              severity: d.severity,
+              x: d.xPct != null ? d.xPct / 100 : 0.5,
+              y: d.yPct != null ? d.yPct / 100 : 0.5,
+              diagramView: d.diagramView,
+              note: d.description || undefined,
+            }))
+          );
+          const firstVehicle = load.vehicles[0];
+          const firstInspection = firstVehicle?.pickupInspection;
+
           await markAsPickedUpAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
             pickupTime: new Date().toISOString(),
-            pickupGPS: { lat: 0, lng: 0 },
+            pickupGPS: {
+              lat: firstInspection?.locationLat ?? 0,
+              lng: firstInspection?.locationLng ?? 0,
+            },
             pickupPhotos,
             ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
             ...(customerSigStr ? { customerSig: customerSigStr } : {}),
             ...(driverSigStr ? { driverSig: driverSigStr } : {}),
             customerNotAvailable: isNotAvailable,
+            damages: allDamages,
+            noDamage: allDamages.length === 0,
+            vehicleVin: firstVehicle?.vin || "",
           });
         } catch (err) {
           console.warn("[PickupSignature] Platform sync failed:", err);

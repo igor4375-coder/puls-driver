@@ -300,6 +300,10 @@ export interface MarkAsPickedUpInput {
   customerSig?: string;   // SVG path d-attribute string
   driverSig?: string;     // SVG path d-attribute string
   customerNotAvailable?: boolean;
+  damages?: SyncInspectionDamage[];
+  noDamage?: boolean;
+  additionalInspection?: SyncInspectionAdditional;
+  vehicleVin?: string;
 }
 
 export interface MarkAsPickedUpResult {
@@ -331,6 +335,10 @@ export async function markAsPickedUp(
   if (input.customerSig) platformPayload.customerSig = input.customerSig;
   if (input.driverSig) platformPayload.driverSig = input.driverSig;
   if (input.customerNotAvailable !== undefined) platformPayload.customerNotAvailable = input.customerNotAvailable;
+  if (input.damages && input.damages.length > 0) platformPayload.damages = input.damages;
+  if (input.noDamage !== undefined) platformPayload.noDamage = input.noDamage;
+  if (input.additionalInspection) platformPayload.additionalInspection = input.additionalInspection;
+  if (input.vehicleVin) platformPayload.vehicleVin = input.vehicleVin;
   return callTRPC<MarkAsPickedUpResult>(
     "driversApi.markAsPickedUp",
     platformPayload,
@@ -351,6 +359,10 @@ export interface MarkAsDeliveredInput {
   customerSig?: string;   // SVG path d-attribute string
   driverSig?: string;     // SVG path d-attribute string
   customerNotAvailable?: boolean;
+  damages?: SyncInspectionDamage[];
+  noDamage?: boolean;
+  additionalInspection?: SyncInspectionAdditional;
+  vehicleVin?: string;
 }
 
 export interface MarkAsDeliveredResult {
@@ -394,6 +406,10 @@ export async function markAsDelivered(
   if (input.customerSig) platformPayload.customerSig = input.customerSig;
   if (input.driverSig) platformPayload.driverSig = input.driverSig;
   if (input.customerNotAvailable !== undefined) platformPayload.customerNotAvailable = input.customerNotAvailable;
+  if (input.damages && input.damages.length > 0) platformPayload.damages = input.damages;
+  if (input.noDamage !== undefined) platformPayload.noDamage = input.noDamage;
+  if (input.additionalInspection) platformPayload.additionalInspection = input.additionalInspection;
+  if (input.vehicleVin) platformPayload.vehicleVin = input.vehicleVin;
   return callTRPC<MarkAsDeliveredResult>(
     "driversApi.markAsDelivered",
     platformPayload,
