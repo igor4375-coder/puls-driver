@@ -39,11 +39,13 @@ type Tab = "search" | "new";
 
 export default function AlternateDeliveryScreen() {
   const colors = useColors();
-  const { loadId } = useLocalSearchParams<{ loadId: string }>();
+  const { loadId, handoffNote: handoffNoteParam } = useLocalSearchParams<{ loadId: string; handoffNote?: string }>();
+  const handoffNote = handoffNoteParam ? decodeURIComponent(handoffNoteParam) : "";
   const { getLoad, updateLoadStatus, patchLoad } = useLoads();
   const { driver } = useAuth();
   const { settings } = useSettings();
   const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
+  const syncInspectionAction = useAction(api.platform.syncInspection);
   const getLocationsAction = useAction(api.platform.getLocations);
   const saveSignatureMutation = useMutation(api.signatures.save);
 
@@ -189,6 +191,22 @@ export default function AlternateDeliveryScreen() {
         damages: allDamages,
         noDamage: allDamages.length === 0,
         vehicleVin: firstVehicle?.vin || "",
+      }).then(() => {
+        if (handoffNote && firstVehicle) {
+          syncInspectionAction({
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            inspectionType: "delivery",
+            vehicleVin: firstVehicle.vin || "",
+            photos: deliveryPhotos,
+            damages: [],
+            noDamage: true,
+            gps: { lat: gpsLat, lng: gpsLng },
+            timestamp: new Date().toISOString(),
+            handoffNote,
+          }).catch(() => {});
+        }
       }).catch((err) => console.warn("[AlternateDelivery] Platform sync failed:", err));
 
       setIsDelivering(false);

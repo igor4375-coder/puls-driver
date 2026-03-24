@@ -750,6 +750,14 @@ export default function LoadDetailScreen() {
                 }).catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
               }
               if (isPlatformLoad && platformTripId && driverCode) {
+                const allDamages = load.vehicles.flatMap(
+                  (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
+                    id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+                    x: d.xPct != null ? d.xPct / 100 : 0.5,
+                    y: d.yPct != null ? d.yPct / 100 : 0.5,
+                    diagramView: d.diagramView, note: d.description || undefined,
+                  }))
+                );
                 markAsPickedUpAction({
                   loadNumber: load.loadNumber,
                   legId: platformTripId,
@@ -757,6 +765,11 @@ export default function LoadDetailScreen() {
                   pickupTime: new Date().toISOString(),
                   pickupGPS: { lat: 0, lng: 0 },
                   pickupPhotos: [],
+                  customerNotAvailable: true,
+                  ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+                  damages: allDamages,
+                  noDamage: allDamages.length === 0,
+                  vehicleVin: load.vehicles[0]?.vin || "",
                 }).catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
               }
             },
@@ -830,13 +843,33 @@ export default function LoadDetailScreen() {
             (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
           );
           const pickupPhotos = [...new Set([...existingHttp, ...urls])];
+
+          const allDamages = load.vehicles.flatMap(
+            (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
+              id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+              x: d.xPct != null ? d.xPct / 100 : 0.5,
+              y: d.yPct != null ? d.yPct / 100 : 0.5,
+              diagramView: d.diagramView, note: d.description || undefined,
+            }))
+          );
+          const firstVehicle = load.vehicles[0];
+          const firstInspection = firstVehicle?.pickupInspection;
+
           await markAsPickedUpAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
             pickupTime: new Date().toISOString(),
-            pickupGPS: { lat: 0, lng: 0 },
+            pickupGPS: {
+              lat: firstInspection?.locationLat ?? 0,
+              lng: firstInspection?.locationLng ?? 0,
+            },
             pickupPhotos,
+            customerNotAvailable: true,
+            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+            damages: allDamages,
+            noDamage: allDamages.length === 0,
+            vehicleVin: firstVehicle?.vin || "",
           });
         } catch (err) {
           console.warn("[LoadDetail] Platform sync failed:", err);
@@ -899,13 +932,32 @@ export default function LoadDetailScreen() {
           );
           const dlvPhotos = [...new Set([...existingHttp, ...urls])];
 
+          const allDeliveryDamages = load.vehicles.flatMap(
+            (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
+              id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+              x: d.xPct != null ? d.xPct / 100 : 0.5,
+              y: d.yPct != null ? d.yPct / 100 : 0.5,
+              diagramView: d.diagramView, note: d.description || undefined,
+            }))
+          );
+          const dlvFirstVehicle = load.vehicles[0];
+          const dlvInspection = (dlvFirstVehicle as any)?.deliveryInspection;
+
           await markAsDeliveredAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
             deliveryTime: new Date().toISOString(),
-            deliveryGPS: { lat: 0, lng: 0 },
+            deliveryGPS: {
+              lat: dlvInspection?.locationLat ?? 0,
+              lng: dlvInspection?.locationLng ?? 0,
+            },
             deliveryPhotos: dlvPhotos,
+            customerNotAvailable: true,
+            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+            damages: allDeliveryDamages,
+            noDamage: allDeliveryDamages.length === 0,
+            vehicleVin: dlvFirstVehicle?.vin || "",
           });
 
           if (handoffNote && load.vehicles[0]) {
@@ -1514,7 +1566,7 @@ export default function LoadDetailScreen() {
               {isPlatformLoad && (
                 <TouchableOpacity
                   style={styles.altDeliveryLink}
-                  onPress={() => router.push(`/alternate-delivery/${load.id}` as any)}
+                  onPress={() => router.push(`/alternate-delivery/${load.id}?handoffNote=${encodeURIComponent(pendingHandoffNote.trim())}` as any)}
                   activeOpacity={0.7}
                 >
                   <IconSymbol name="arrow.triangle.branch" size={14} color={colors.muted} />
