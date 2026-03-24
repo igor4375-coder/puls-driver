@@ -321,6 +321,7 @@ export default function DeliverySignatureScreen() {
             (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
           );
           const deliveryPhotos = [...new Set([...existingHttp, ...urls])];
+          const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
           await markAsDeliveredAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
@@ -328,6 +329,10 @@ export default function DeliverySignatureScreen() {
             deliveryTime: new Date().toISOString(),
             deliveryGPS: { lat: 0, lng: 0 },
             deliveryPhotos,
+            ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+            ...(customerSigStr ? { customerSig: customerSigStr } : {}),
+            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+            customerNotAvailable: isNotAvailable,
           });
         } catch (err) {
           console.warn("[DeliverySignature] Platform sync failed:", err);

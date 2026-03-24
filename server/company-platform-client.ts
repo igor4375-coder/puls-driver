@@ -296,6 +296,10 @@ export interface MarkAsPickedUpInput {
   pickupTime: string; // ISO 8601 timestamp
   pickupGPS: { lat: number; lng: number };
   pickupPhotos: string[]; // S3 URLs
+  customerName?: string;
+  customerSig?: string;   // SVG path d-attribute string
+  driverSig?: string;     // SVG path d-attribute string
+  customerNotAvailable?: boolean;
 }
 
 export interface MarkAsPickedUpResult {
@@ -314,7 +318,7 @@ export async function markAsPickedUp(
   //   loadNumber → loadId
   //   pickupGPS.lat/lng → gpsLatitude / gpsLongitude
   //   pickupPhotos → photos
-  const platformPayload = {
+  const platformPayload: Record<string, unknown> = {
     loadId: input.loadNumber,
     legId: input.legId,
     driverCode: input.driverCode,
@@ -323,6 +327,10 @@ export async function markAsPickedUp(
     gpsLongitude: input.pickupGPS.lng,
     photos: input.pickupPhotos,
   };
+  if (input.customerName) platformPayload.customerName = input.customerName;
+  if (input.customerSig) platformPayload.customerSig = input.customerSig;
+  if (input.driverSig) platformPayload.driverSig = input.driverSig;
+  if (input.customerNotAvailable !== undefined) platformPayload.customerNotAvailable = input.customerNotAvailable;
   return callTRPC<MarkAsPickedUpResult>(
     "driversApi.markAsPickedUp",
     platformPayload,
@@ -339,6 +347,10 @@ export interface MarkAsDeliveredInput {
   deliveryTime: string; // ISO 8601
   deliveryGPS: { lat: number; lng: number };
   deliveryPhotos: string[]; // S3 URLs
+  customerName?: string;
+  customerSig?: string;   // SVG path d-attribute string
+  driverSig?: string;     // SVG path d-attribute string
+  customerNotAvailable?: boolean;
 }
 
 export interface MarkAsDeliveredResult {
@@ -378,6 +390,10 @@ export async function markAsDelivered(
     gpsLongitude: input.deliveryGPS.lng,
     photos: input.deliveryPhotos,
   };
+  if (input.customerName) platformPayload.customerName = input.customerName;
+  if (input.customerSig) platformPayload.customerSig = input.customerSig;
+  if (input.driverSig) platformPayload.driverSig = input.driverSig;
+  if (input.customerNotAvailable !== undefined) platformPayload.customerNotAvailable = input.customerNotAvailable;
   return callTRPC<MarkAsDeliveredResult>(
     "driversApi.markAsDelivered",
     platformPayload,

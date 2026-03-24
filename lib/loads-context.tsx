@@ -413,6 +413,11 @@ export function LoadsProvider({
   const [platformLoadError, setPlatformLoadError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
+  // Recent local status overrides — maps loadId → timestamp.
+  // Used to give a 3-minute grace period so the platform sync can catch up
+  // before we let the platform status override the local one.
+  const localStatusOverridesRef = React.useRef<Map<string, number>>(new Map());
+
   // ── Driver-delivered tracking ─────────────────────────────────────────────
   // Set of load IDs that the driver explicitly marked as delivered.
   // These survive platform sync so the load stays in the Delivered tab.
@@ -629,18 +634,29 @@ export function LoadsProvider({
             }
           }
         }
+        const GRACE_MS = 3 * 60 * 1000;
+        const now = Date.now();
+
+        const resolveStatus = (loadId: string, freshStatus: LoadStatus, existingStatus?: LoadStatus) => {
+          if (!existingStatus || existingStatus === freshStatus) return freshStatus;
+          const overrideAt = localStatusOverridesRef.current.get(loadId);
+          if (overrideAt && (now - overrideAt < GRACE_MS)) return existingStatus;
+          return freshStatus;
+        };
+
         if (inspectionMap.size === 0) {
           return geocoded.map((l) => {
             const existing = prev.find((p) => p.id === l.id);
             if (!existing) return l;
+            const mergedStatus = resolveStatus(l.id, l.status, existing.status);
             return {
               ...l,
-              status: existing.status ?? l.status,
+              status: mergedStatus,
               deliveredAt: existing.deliveredAt ?? l.deliveredAt,
-              ...(existing.status === "picked_up" || existing.status === "delivered" || existing.status === "archived"
+              ...(mergedStatus === "picked_up" || mergedStatus === "delivered" || mergedStatus === "archived"
                 ? { pickup: { ...l.pickup, date: existing.pickup.date } }
                 : {}),
-              ...(existing.status === "delivered" || existing.status === "archived"
+              ...(mergedStatus === "delivered" || mergedStatus === "archived"
                 ? { delivery: { ...l.delivery, date: existing.delivery.date } }
                 : {}),
             };
@@ -649,14 +665,15 @@ export function LoadsProvider({
         return geocoded.map((l) => {
           const existing = prev.find((p) => p.id === l.id);
           const loadInsps = inspectionMap.get(l.id);
+          const mergedStatus = resolveStatus(l.id, l.status, existing?.status);
           return {
             ...l,
-            status: existing?.status ?? l.status,
+            status: mergedStatus,
             deliveredAt: existing?.deliveredAt ?? l.deliveredAt,
-            ...(existing && (existing.status === "picked_up" || existing.status === "delivered" || existing.status === "archived")
+            ...(existing && (mergedStatus === "picked_up" || mergedStatus === "delivered" || mergedStatus === "archived")
               ? { pickup: { ...l.pickup, date: existing.pickup.date } }
               : {}),
-            ...(existing && (existing.status === "delivered" || existing.status === "archived")
+            ...(existing && (mergedStatus === "delivered" || mergedStatus === "archived")
               ? { delivery: { ...l.delivery, date: existing.delivery.date } }
               : {}),
             vehicles: l.vehicles.map((v) => {
@@ -793,6 +810,8 @@ export function LoadsProvider({
   );
 
   const updateLoadStatus = useCallback((loadId: string, status: LoadStatus) => {
+    localStatusOverridesRef.current.set(loadId, Date.now());
+
     // When the driver marks a load as delivered, persist that decision locally
     // so it survives platform sync (which may drop the load).
     if (status === "delivered") {

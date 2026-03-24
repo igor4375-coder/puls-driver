@@ -169,6 +169,8 @@ export default function AlternateDeliveryScreen() {
           ? { alternateDropLocationId: opts.alternateDropLocationId }
           : {}),
         ...(opts?.newLocation ? { newLocation: opts.newLocation } : {}),
+        ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+        customerNotAvailable: true,
       }).catch((err) => console.warn("[AlternateDelivery] Platform sync failed:", err));
 
       setIsDelivering(false);

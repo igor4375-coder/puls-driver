@@ -122,9 +122,13 @@ export const markAsPickedUp = action({
     pickupTime: v.string(),
     pickupGPS: v.object({ lat: v.number(), lng: v.number() }),
     pickupPhotos: v.array(v.string()),
+    customerName: v.optional(v.string()),
+    customerSig: v.optional(v.string()),
+    driverSig: v.optional(v.string()),
+    customerNotAvailable: v.optional(v.boolean()),
   },
   handler: async (_ctx, args) => {
-    const payload = {
+    const payload: Record<string, unknown> = {
       loadId: args.loadNumber,
       legId: args.legId,
       driverCode: args.driverCode,
@@ -133,6 +137,10 @@ export const markAsPickedUp = action({
       gpsLongitude: args.pickupGPS.lng,
       photos: args.pickupPhotos,
     };
+    if (args.customerName) payload.customerName = args.customerName;
+    if (args.customerSig) payload.customerSig = args.customerSig;
+    if (args.driverSig) payload.driverSig = args.driverSig;
+    if (args.customerNotAvailable !== undefined) payload.customerNotAvailable = args.customerNotAvailable;
     return await callTRPC("driversApi.markAsPickedUp", payload, "mutation");
   },
 });
@@ -156,6 +164,10 @@ export const markAsDelivered = action({
         lng: v.optional(v.number()),
       }),
     ),
+    customerName: v.optional(v.string()),
+    customerSig: v.optional(v.string()),
+    driverSig: v.optional(v.string()),
+    customerNotAvailable: v.optional(v.boolean()),
   },
   handler: async (_ctx, args) => {
     const payload: Record<string, unknown> = {
@@ -173,6 +185,10 @@ export const markAsDelivered = action({
     if (args.newLocation) {
       payload.newLocation = args.newLocation;
     }
+    if (args.customerName) payload.customerName = args.customerName;
+    if (args.customerSig) payload.customerSig = args.customerSig;
+    if (args.driverSig) payload.driverSig = args.driverSig;
+    if (args.customerNotAvailable !== undefined) payload.customerNotAvailable = args.customerNotAvailable;
     return await callTRPC("driversApi.markAsDelivered", payload, "mutation");
   },
 });

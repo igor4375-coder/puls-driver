@@ -330,6 +330,7 @@ export default function PickupSignatureScreen() {
             (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
           );
           const pickupPhotos = [...new Set([...existingHttp, ...urls])];
+          const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
           await markAsPickedUpAction({
             loadNumber: load.loadNumber,
             legId: platformTripId,
@@ -337,6 +338,10 @@ export default function PickupSignatureScreen() {
             pickupTime: new Date().toISOString(),
             pickupGPS: { lat: 0, lng: 0 },
             pickupPhotos,
+            ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+            ...(customerSigStr ? { customerSig: customerSigStr } : {}),
+            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+            customerNotAvailable: isNotAvailable,
           });
         } catch (err) {
           console.warn("[PickupSignature] Platform sync failed:", err);

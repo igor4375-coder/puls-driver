@@ -1,4 +1,4 @@
-import { Tabs, router } from "expo-router";
+import { Tabs, router, useSegments } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Platform } from "react-native";
 import { useColors } from "@/hooks/use-colors";
@@ -11,14 +11,16 @@ export default function TabLayout() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const inAuthGroup = segments[0] === "(auth)";
   const bottomPadding = Platform.OS === "web" ? 10 : Math.max(insets.bottom - 8, 4);
   const tabBarHeight = 50 + bottomPadding;
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (!isLoading && !isAuthenticated && !inAuthGroup) {
       router.replace("/(auth)/welcome" as any);
     }
-  }, [isAuthenticated, isLoading]);
+  }, [isAuthenticated, isLoading, inAuthGroup]);
 
   return (
     <Tabs

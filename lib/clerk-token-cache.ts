@@ -1,8 +1,11 @@
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
+const _trackedKeys = new Set<string>();
+
 export const tokenCache = {
   async getToken(key: string): Promise<string | null> {
+    _trackedKeys.add(key);
     if (Platform.OS === "web") {
       try {
         return localStorage.getItem(key);
@@ -17,6 +20,7 @@ export const tokenCache = {
     }
   },
   async saveToken(key: string, value: string): Promise<void> {
+    _trackedKeys.add(key);
     if (Platform.OS === "web") {
       try {
         localStorage.setItem(key, value);
@@ -28,6 +32,7 @@ export const tokenCache = {
     } catch {}
   },
   async clearToken(key: string): Promise<void> {
+    _trackedKeys.delete(key);
     if (Platform.OS === "web") {
       try {
         localStorage.removeItem(key);
@@ -39,3 +44,15 @@ export const tokenCache = {
     } catch {}
   },
 };
+
+/**
+ * Force-clear ALL tokens Clerk has ever stored via the cache.
+ * Ensures no stale keychain sessions survive a broken signOut().
+ */
+export async function nukeAllClerkTokens(): Promise<void> {
+  const keys = [..._trackedKeys];
+  for (const key of keys) {
+    await tokenCache.clearToken(key);
+  }
+  _trackedKeys.clear();
+}

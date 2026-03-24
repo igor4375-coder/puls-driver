@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSSO, useAuth } from "@clerk/expo";
+import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -47,6 +48,15 @@ export default function WelcomeScreen() {
     } catch (err: any) {
       console.log("[Welcome] Google auth error:", err?.message);
       console.log("[Welcome] Google auth errors:", JSON.stringify(err?.errors, null, 2));
+      // If Clerk says a session already exists in the keychain, nuke the stale
+      // tokens so the next attempt starts fresh with a real OAuth flow.
+      const code = err?.errors?.[0]?.code ?? "";
+      const msg0 = (err?.errors?.[0]?.longMessage ?? err?.errors?.[0]?.message ?? err?.message ?? "").toLowerCase();
+      if (code === "session_exists" || msg0.includes("already signed in") || msg0.includes("session exists")) {
+        await nukeAllClerkTokens().catch(() => {});
+        setError("Session was stale. Please tap Sign In again.");
+        return;
+      }
       const clerkError = err?.errors?.[0];
       const msg =
         clerkError?.longMessage ??
