@@ -64,7 +64,9 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
-  // #region agent log — temporary debug endpoint (session 887738)
+  // #region agent log — temporary debug endpoints (session 887738)
+  const webhookHits: Array<{ endpoint: string; driverCode: string; ts: string; result: string }> = [];
+
   app.get("/api/debug/push-status", async (req, res) => {
     if (req.query.session !== "887738") { res.status(404).json({ error: "not found" }); return; }
     const code = req.query.driverCode as string;
@@ -83,6 +85,20 @@ async function startServer() {
       notifyNewLoad: profile?.notifyNewLoad ?? null,
       name: profile?.name ?? null,
     });
+  });
+
+  app.get("/api/debug/all-profiles", async (req, res) => {
+    if (req.query.session !== "887738") { res.status(404).json({ error: "not found" }); return; }
+    const d = await db.getDb();
+    if (!d) { res.json([]); return; }
+    const { driverProfiles } = await import("../../drizzle/schema");
+    const rows = await d.select({ id: driverProfiles.id, driverCode: driverProfiles.driverCode, platformDriverCode: driverProfiles.platformDriverCode, hasPush: driverProfiles.pushToken, name: driverProfiles.name }).from(driverProfiles).limit(50);
+    res.json(rows.map(r => ({ ...r, hasPush: !!r.hasPush })));
+  });
+
+  app.get("/api/debug/webhook-hits", async (req, res) => {
+    if (req.query.session !== "887738") { res.status(404).json({ error: "not found" }); return; }
+    res.json(webhookHits.slice(-20));
   });
   // #endregion
 
@@ -116,7 +132,9 @@ async function startServer() {
    */
   app.post("/api/webhooks/load-assigned", async (req, res) => {
     // #region agent log — debug 887738
-    console.log(`[Webhook][887738] load-assigned HIT at ${new Date().toISOString()}`, JSON.stringify({ body: req.body, headers: { secret: req.headers["x-webhook-secret"]?.toString().slice(0, 8) + "..." } }));
+    const hitTs = new Date().toISOString();
+    console.log(`[Webhook][887738] load-assigned HIT at ${hitTs}`, JSON.stringify({ body: req.body, headers: { secret: req.headers["x-webhook-secret"]?.toString().slice(0, 8) + "..." } }));
+    webhookHits.push({ endpoint: "load-assigned", driverCode: req.body?.driverCode ?? "?", ts: hitTs, result: "pending" });
     // #endregion
     try {
       const secret = process.env.WEBHOOK_SECRET;
@@ -199,6 +217,9 @@ async function startServer() {
    * Security: same shared WEBHOOK_SECRET header as load-assigned.
    */
   app.post("/api/webhooks/load-updated", async (req, res) => {
+    // #region agent log
+    webhookHits.push({ endpoint: "load-updated", driverCode: req.body?.driverCode ?? "?", ts: new Date().toISOString(), result: "hit" });
+    // #endregion
     try {
       const secret = process.env.WEBHOOK_SECRET;
       if (secret) {
@@ -265,6 +286,9 @@ async function startServer() {
    * Security: same shared WEBHOOK_SECRET header as load-assigned.
    */
   app.post("/api/webhooks/load-removed", async (req, res) => {
+    // #region agent log
+    webhookHits.push({ endpoint: "load-removed", driverCode: req.body?.driverCode ?? "?", ts: new Date().toISOString(), result: "hit" });
+    // #endregion
     try {
       const secret = process.env.WEBHOOK_SECRET;
       if (secret) {
