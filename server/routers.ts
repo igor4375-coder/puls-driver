@@ -458,6 +458,27 @@ export const appRouter = router({
       }),
   }),
 
+  // ─── Push Token Sync: ensures Railway MySQL has the driver's push token ─────
+  push: router({
+    syncToken: publicProcedure
+      .input(z.object({
+        driverCode: z.string().min(5).max(10),
+        pushToken: z.string().min(10),
+        platformDriverCode: z.string().optional(),
+        name: z.string().optional(),
+        phone: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        await db.upsertDriverPushToken(input.driverCode, input.pushToken, {
+          platformDriverCode: input.platformDriverCode,
+          name: input.name,
+          phone: input.phone,
+        });
+        companyPlatform.registerPushToken(input.driverCode, input.pushToken).catch(() => {});
+        return { success: true };
+      }),
+  }),
+
   // ─── Loads: company platform integration ────────────────────────────────────
   loads: router({
     /**

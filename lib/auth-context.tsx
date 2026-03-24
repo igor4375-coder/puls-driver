@@ -5,6 +5,7 @@ import { useUser, useAuth as useClerkAuth } from "@clerk/expo";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
+import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import type { Driver } from "./data";
 
 interface AuthContextType {
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 const PUSH_TOKEN_KEY = "autohaul_push_token_sent";
 const WAS_AUTHENTICATED_KEY = "@autohaul:was_authenticated";
+const CACHED_PROFILE_KEY = "@autohaul:cached_profile";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded, signOut } = useClerkAuth();
@@ -26,9 +28,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Persisted flag: true once the user has ever authenticated on this device.
   // Prevents transient isSignedIn=false (token refresh) from triggering redirects.
   const [hadSession, setHadSession] = useState<boolean | null>(null);
+  // Cached profile for offline fallback — populated from AsyncStorage on mount,
+  // then kept in sync whenever Convex returns fresh data.
+  const [cachedProfile, setCachedProfile] = useState<typeof convexProfile | null>(null);
+  // Cache clerkUser.id in memory so driver stays alive during token refresh
+  // (when isSignedIn is transiently false but hadSession is true).
+  const [cachedClerkId, setCachedClerkId] = useState<string | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(WAS_AUTHENTICATED_KEY).then((v) => setHadSession(v === "1")).catch(() => setHadSession(false));
+    AsyncStorage.getItem(WAS_AUTHENTICATED_KEY).then((v) => {
+      setHadSession(v === "1");
+    }).catch(() => setHadSession(false));
+    // Load cached profile for offline use
+    AsyncStorage.getItem(CACHED_PROFILE_KEY).then((v) => {
+      if (v) setCachedProfile(JSON.parse(v));
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -46,6 +60,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     api.driverProfiles.getByClerkUserId,
     clerkUser?.id ? { clerkUserId: clerkUser.id } : "skip",
   );
+
+  // Keep AsyncStorage cache in sync whenever we get a fresh profile from Convex
+  useEffect(() => {
+    if (convexProfile) {
+      setCachedProfile(convexProfile);
+      AsyncStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify(convexProfile)).catch(() => {});
+    }
+  }, [convexProfile]);
+
+  // Cache clerkUser.id in memory so it survives token refresh gaps
+  useEffect(() => {
+    if (clerkUser?.id) setCachedClerkId(clerkUser.id);
+  }, [clerkUser?.id]);
+
+  // Use live Convex data when available, fall back to cached profile when offline
+  const activeProfile = convexProfile ?? cachedProfile ?? undefined;
+  // During token refresh (isSignedIn transiently false), keep using cached IDs
+  const effectiveClerkId = clerkUser?.id ?? (hadSession ? cachedClerkId : null);
+  const effectiveSignedIn = isSignedIn || (hadSession === true && !!effectiveClerkId && !!activeProfile);
 
   const [profileCreated, setProfileCreated] = useState(false);
 
@@ -75,14 +108,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // This gives the driver a platformDriverCode that dispatchers can use to invite them.
   const platformRegAttempted = React.useRef(false);
   useEffect(() => {
-    if (!convexProfile || convexProfile.platformDriverCode || platformRegAttempted.current) return;
+    if (!activeProfile || activeProfile.platformDriverCode || platformRegAttempted.current) return;
     if (!clerkUser?.id) return;
     platformRegAttempted.current = true;
 
-    const name = convexProfile.name ?? "Driver";
-    const phone = convexProfile.phone ?? "";
+    const name = activeProfile.name ?? "Driver";
+    const phone = activeProfile.phone ?? "";
 
-    registerDriverOnPlatform({ name, phone, driverCode: convexProfile.driverCode })
+    registerDriverOnPlatform({ name, phone, driverCode: activeProfile.driverCode })
       .then((platformId) => {
         if (platformId && clerkUser?.id) {
           updateProfile({ clerkUserId: clerkUser.id, platformDriverCode: platformId });
@@ -93,59 +126,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn("[Auth] Platform registration failed (non-fatal):", err);
         platformRegAttempted.current = false;
       });
-  }, [convexProfile, clerkUser?.id]);
+  }, [activeProfile, clerkUser?.id]);
 
   const driver: Driver | null = useMemo(() => {
-    if (!isSignedIn || !clerkUser || !convexProfile) return null;
+    if (!effectiveSignedIn || !effectiveClerkId || !activeProfile) return null;
 
     const name =
-      convexProfile.name ??
-      clerkUser.fullName ??
-      ([clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+      activeProfile.name ??
+      clerkUser?.fullName ??
+      ([clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(" ") ||
       "Driver");
 
     return {
-      id: clerkUser.id,
+      id: effectiveClerkId,
       name,
-      email: convexProfile.email ?? clerkUser.primaryEmailAddress?.emailAddress ?? "",
-      phone: convexProfile.phone ?? clerkUser.primaryPhoneNumber?.phoneNumber ?? "",
+      email: activeProfile.email ?? clerkUser?.primaryEmailAddress?.emailAddress ?? "",
+      phone: activeProfile.phone ?? clerkUser?.primaryPhoneNumber?.phoneNumber ?? "",
       company: "",
-      truckNumber: convexProfile.truckNumber ?? "",
-      trailerNumber: convexProfile.trailerNumber ?? "",
+      truckNumber: activeProfile.truckNumber ?? "",
+      trailerNumber: activeProfile.trailerNumber ?? "",
       avatarInitials: name
         .split(" ")
         .map((n) => n[0])
         .join("")
         .toUpperCase()
         .slice(0, 2),
-      driverCode: convexProfile.driverCode,
-      platformDriverCode: convexProfile.platformDriverCode,
+      driverCode: activeProfile.driverCode,
+      platformDriverCode: activeProfile.platformDriverCode,
     };
-  }, [isSignedIn, clerkUser, convexProfile]);
+  }, [effectiveSignedIn, effectiveClerkId, clerkUser, activeProfile]);
+
+  const pushSyncOpts = useMemo(() => ({
+    platformDriverCode: driver?.platformDriverCode ?? undefined,
+    name: driver?.name,
+    phone: driver?.phone,
+  }), [driver?.platformDriverCode, driver?.name, driver?.phone]);
 
   useEffect(() => {
     if (!driver?.driverCode) return;
-    refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser?.id ?? "");
+    refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser?.id ?? "", pushSyncOpts);
   }, [driver?.driverCode]);
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
       if (nextState === "active" && driver?.driverCode && clerkUser?.id) {
-        refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser.id);
+        refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser.id, pushSyncOpts);
       }
     };
     const subscription = AppState.addEventListener("change", handleAppStateChange);
     return () => subscription.remove();
-  }, [driver?.driverCode, clerkUser?.id]);
+  }, [driver?.driverCode, clerkUser?.id, pushSyncOpts]);
 
   const logout = async () => {
     setHadSession(false);
+    setCachedProfile(null);
+    setCachedClerkId(null);
     AsyncStorage.removeItem(WAS_AUTHENTICATED_KEY).catch(() => {});
+    AsyncStorage.removeItem(CACHED_PROFILE_KEY).catch(() => {});
     try {
       await signOut();
     } catch (err) {
       console.warn("[Auth] Sign-out error:", err);
     }
+    // Force-clear all Clerk tokens from SecureStore so no stale
+    // keychain session survives (especially after background resume).
+    await nukeAllClerkTokens().catch(() => {});
     setProfileCreated(false);
   };
 
@@ -172,15 +217,29 @@ async function refreshPushTokenIfNeeded(
   updateProfile: (args: { clerkUserId: string; pushToken?: string }) => Promise<unknown>,
   registerPlatformToken: (args: { driverCode: string; pushToken: string }) => Promise<unknown>,
   clerkUserId: string,
+  opts?: { platformDriverCode?: string; name?: string; phone?: string },
 ): Promise<void> {
   try {
     const token = await registerForPushNotificationsAsync();
     if (!token) return;
-    // Save to driver app's own Convex
     await updateProfile({ clerkUserId, pushToken: token });
-    // Also register with the company platform so dispatchers can send push notifications
     registerPlatformToken({ driverCode, pushToken: token }).catch(() => {});
+    syncPushTokenToRailway(driverCode, token, opts).catch(() => {});
   } catch {}
+}
+
+async function syncPushTokenToRailway(
+  driverCode: string,
+  pushToken: string,
+  opts?: { platformDriverCode?: string; name?: string; phone?: string },
+) {
+  const { getApiBaseUrl } = await import("@/constants/oauth");
+  const url = `${getApiBaseUrl()}/api/trpc/push.syncToken`;
+  await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ json: { driverCode, pushToken, ...opts } }),
+  });
 }
 
 export function useAuth() {

@@ -359,6 +359,48 @@ export async function updateDriverProfile(driverProfileId: number, data: Partial
   await db.update(driverProfiles).set(data).where(eq(driverProfiles.id, driverProfileId));
 }
 
+/**
+ * Upsert a driver profile by driverCode, storing the push token.
+ * Creates a synthetic user row if needed (for Clerk SSO drivers
+ * whose profiles only exist in Convex, not Railway MySQL).
+ */
+export async function upsertDriverPushToken(
+  driverCode: string,
+  pushToken: string,
+  opts?: { platformDriverCode?: string; name?: string; phone?: string },
+) {
+  const db = await getDb();
+  if (!db) return;
+  const upperCode = driverCode.toUpperCase();
+
+  let profile = await getDriverProfileByCode(upperCode);
+  if (!profile && opts?.platformDriverCode) {
+    profile = await getDriverProfileByPlatformCode(opts.platformDriverCode);
+  }
+
+  if (profile) {
+    const updates: Partial<InsertDriverProfile> = { pushToken };
+    if (opts?.platformDriverCode) updates.platformDriverCode = opts.platformDriverCode;
+    if (opts?.name) updates.name = opts.name;
+    await db.update(driverProfiles).set(updates).where(eq(driverProfiles.id, profile.id));
+    return;
+  }
+
+  const openId = `push-sync:${upperCode}`;
+  await upsertUser({ openId, name: opts?.name ?? "Driver", loginMethod: "push-sync", lastSignedIn: new Date() });
+  const user = await getUserByOpenId(openId);
+  if (!user) return;
+
+  await db.insert(driverProfiles).values({
+    userId: user.id,
+    driverCode: upperCode,
+    platformDriverCode: opts?.platformDriverCode ?? null,
+    name: opts?.name ?? "Driver",
+    phone: opts?.phone ?? null,
+    pushToken,
+  });
+}
+
 // ─── Driver-Company Link Helpers ──────────────────────────────────────────────
 
 /**
