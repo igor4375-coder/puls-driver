@@ -64,6 +64,14 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
+  // #region agent log — debug 887738
+  const webhookHits: Array<{ endpoint: string; driverCode: string; ts: string }> = [];
+  app.get("/api/debug/webhook-hits", async (req, res) => {
+    if (req.query.session !== "887738") { res.status(404).json({ error: "not found" }); return; }
+    res.json(webhookHits.slice(-20));
+  });
+  // #endregion
+
   // ─── Presigned Upload URL (photos upload directly to R2) ───────────────────
   app.get("/api/photos/upload-url", async (req, res) => {
     try {
@@ -93,6 +101,7 @@ async function startServer() {
    * The platform must include the header: X-Webhook-Secret: <secret>
    */
   app.post("/api/webhooks/load-assigned", async (req, res) => {
+    webhookHits.push({ endpoint: "load-assigned", driverCode: req.body?.driverCode ?? "?", ts: new Date().toISOString() }); // debug 887738
     try {
       const secret = process.env.WEBHOOK_SECRET;
       if (secret) {
@@ -162,6 +171,7 @@ async function startServer() {
    * Security: same shared WEBHOOK_SECRET header as load-assigned.
    */
   app.post("/api/webhooks/load-updated", async (req, res) => {
+    webhookHits.push({ endpoint: "load-updated", driverCode: req.body?.driverCode ?? "?", ts: new Date().toISOString() }); // debug 887738
     try {
       const secret = process.env.WEBHOOK_SECRET;
       if (secret) {
@@ -228,6 +238,7 @@ async function startServer() {
    * Security: same shared WEBHOOK_SECRET header as load-assigned.
    */
   app.post("/api/webhooks/load-removed", async (req, res) => {
+    webhookHits.push({ endpoint: "load-removed", driverCode: req.body?.driverCode ?? "?", ts: new Date().toISOString() }); // debug 887738
     try {
       const secret = process.env.WEBHOOK_SECRET;
       if (secret) {
