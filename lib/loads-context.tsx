@@ -4,7 +4,9 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -732,6 +734,18 @@ export function LoadsProvider({
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [driverCode, doFetchLoads]);
+
+  // Refresh loads immediately when the app returns to the foreground
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (next: AppStateStatus) => {
+      if (next === "active" && appStateRef.current !== "active") {
+        doFetchLoads();
+      }
+      appStateRef.current = next;
+    });
+    return () => sub.remove();
+  }, [doFetchLoads]);
 
   // Load persisted platform loads on startup (before API responds)
   // Wait for geocache to be loaded from AsyncStorage first (geocacheReady)
