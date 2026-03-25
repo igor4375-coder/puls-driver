@@ -64,17 +64,6 @@ async function startServer() {
     res.json({ ok: true, timestamp: Date.now() });
   });
 
-  // #region agent log
-  let _debugPhotoLog: unknown[] = [];
-  app.post("/api/debug/photo-log", (req, res) => {
-    const entries = req.body?.entries;
-    if (Array.isArray(entries)) { _debugPhotoLog = entries.slice(-100); }
-    res.json({ ok: true, count: _debugPhotoLog.length });
-  });
-  app.get("/api/debug/photo-log", (_req, res) => {
-    res.json(_debugPhotoLog);
-  });
-  // #endregion
 
   // ─── Presigned Upload URL (photos upload directly to R2) ───────────────────
   app.get("/api/photos/upload-url", async (req, res) => {
