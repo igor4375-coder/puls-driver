@@ -16,6 +16,30 @@ import * as Network from "expo-network";
 import { Platform } from "react-native";
 import { compressImage } from "./image-compress";
 
+// #region agent log
+const DEBUG_LOG_KEY = "@autohaul/debug_photo_queue_887738";
+const _dbgBuffer: unknown[] = [];
+function _dbg(msg: string, data?: Record<string, unknown>) {
+  _dbgBuffer.push({ t: Date.now(), msg, ...data });
+  if (_dbgBuffer.length > 100) _dbgBuffer.splice(0, _dbgBuffer.length - 100);
+  _dbgFlush();
+}
+let _flushing = false;
+async function _dbgFlush() {
+  if (_flushing) return;
+  _flushing = true;
+  try {
+    const base = getUploadApiBase();
+    await fetch(`${base}/api/debug/photo-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: _dbgBuffer }),
+    });
+  } catch {}
+  _flushing = false;
+}
+// #endregion
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type PhotoStatus = "pending" | "uploading" | "done" | "failed";
@@ -288,7 +312,9 @@ export class PhotoQueue {
    * Called by the background retry loop and by retryFailed().
    */
   async sync(): Promise<void> {
-    if (this.syncing) return;
+    // #region agent log
+    if (this.syncing) { _dbg('sync-skip-busy',{entries:this.entries.map(e=>({id:e.clientId.slice(-6),s:e.status,a:e.attempts}))}); return; }
+    // #endregion
     await this.load();
 
     const now = Date.now();
@@ -300,9 +326,16 @@ export class PhotoQueue {
       return now - e.lastAttemptAt >= delay;
     });
 
+    // #region agent log
+    _dbg('sync-ready',{readyCt:ready.length,all:this.entries.map(e=>({id:e.clientId.slice(-6),s:e.status,a:e.attempts,la:e.lastAttemptAt,st:e.stamped}))});
+    // #endregion
+
     if (ready.length === 0) return;
 
     const online = await isOnline();
+    // #region agent log
+    _dbg('sync-net',{online,readyCt:ready.length});
+    // #endregion
     if (!online) return;
 
     this.syncing = true;
@@ -316,12 +349,18 @@ export class PhotoQueue {
   }
 
   private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
+    // #region agent log
+    _dbg('upload-start',{id:entry.clientId.slice(-6),s:entry.status,a:entry.attempts,st:entry.stamped,hasMeta:!!entry.stampMeta});
+    // #endregion
     this.updateEntry(entry.clientId, { status: "uploading" });
 
     try {
       // Stamp the photo if stamp metadata is present and not yet stamped
       let sourceUri = entry.localUri;
       if (entry.stampMeta && !entry.stamped) {
+        // #region agent log
+        const _stampStart = Date.now();
+        // #endregion
         try {
           const { stampPhotoViaServer } = await import("./stamp-photo-client");
           const sm = entry.stampMeta;
@@ -336,9 +375,15 @@ export class PhotoQueue {
               : null,
             capturedAt: sm.capturedAt,
           });
+          // #region agent log
+          _dbg('stamp-ok',{id:entry.clientId.slice(-6),ms:Date.now()-_stampStart});
+          // #endregion
           sourceUri = stampedUri;
           this.updateEntry(entry.clientId, { stamped: true, localUri: stampedUri });
         } catch (stampErr) {
+          // #region agent log
+          _dbg('stamp-fail',{id:entry.clientId.slice(-6),err:String(stampErr).slice(0,200),ms:Date.now()-_stampStart});
+          // #endregion
           console.warn("[PhotoQueue] Stamp failed, uploading raw:", stampErr);
           this.updateEntry(entry.clientId, { stamped: true });
         }
@@ -395,6 +440,9 @@ export class PhotoQueue {
         throw new Error(`R2 upload failed: HTTP ${uploadResponse.status}`);
       }
 
+      // #region agent log
+      _dbg('upload-ok',{id:entry.clientId.slice(-6),url:publicUrl?.slice(0,80)});
+      // #endregion
       this.updateEntry(entry.clientId, {
         status: "done",
         remoteUrl: publicUrl,
@@ -405,6 +453,9 @@ export class PhotoQueue {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Upload failed";
       const attempts = entry.attempts + 1;
+      // #region agent log
+      _dbg('upload-err',{id:entry.clientId.slice(-6),err:message.slice(0,200),a:attempts,max:MAX_RETRIES});
+      // #endregion
       this.updateEntry(entry.clientId, {
         status: attempts >= MAX_RETRIES ? "failed" : "pending",
         lastError: message,
