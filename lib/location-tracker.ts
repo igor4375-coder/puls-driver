@@ -13,6 +13,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import * as Network from "expo-network";
 import * as Battery from "expo-battery";
+import { Alert, Linking } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
@@ -278,8 +279,24 @@ export async function flushLocationQueue(): Promise<void> {
 /** Send an immediate GPS ping to the platform (e.g. in response to a dispatcher request) */
 export async function sendImmediateLocationPing(): Promise<boolean> {
   try {
-    const { status } = await Location.getForegroundPermissionsAsync();
-    if (status !== "granted") return false;
+    let { status } = await Location.getForegroundPermissionsAsync();
+
+    if (status !== "granted") {
+      const result = await Location.requestForegroundPermissionsAsync();
+      status = result.status;
+    }
+
+    if (status !== "granted") {
+      Alert.alert(
+        "Location Permission Required",
+        "Dispatch has requested your location. Please enable location access in Settings so your position can be shared.",
+        [
+          { text: "Not Now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings() },
+        ],
+      );
+      return false;
+    }
 
     const loc = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.High,

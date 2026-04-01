@@ -112,13 +112,10 @@ export function setupNotificationResponseListener(): () => void {
       } else if (type === "load_assigned" || type === "load_updated" || type === "load_removed") {
         router.push("/(tabs)");
       } else if (type === "location_request") {
-        // Tapped the location request notification — send ping and show confirmation
         sendImmediateLocationPing()
           .then((ok) => {
             if (ok) {
               Alert.alert("Location Shared", "Your current location has been sent to dispatch.");
-            } else {
-              Alert.alert("Location Unavailable", "Could not get your current location. Make sure location services are enabled.");
             }
           })
           .catch(() => {});
