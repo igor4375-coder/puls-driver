@@ -260,7 +260,7 @@ export default function CameraSessionScreen() {
   const cycleFlash = () =>
     setFlash((f) => (f === "off" ? "on" : f === "on" ? "auto" : "off"));
 
-  const cycleZoom = () => setZoom((z) => (z === 0 ? 0.5 : 0));
+  const cycleZoom = () => setZoom((z) => (z === 0 ? 0.25 : 0));
 
   // ── Permission screen ─────────────────────────────────────────────────────
 
@@ -296,7 +296,7 @@ export default function CameraSessionScreen() {
   // ── Flash icon ────────────────────────────────────────────────────────────
 
   const flashLabel = flash === "off" ? "Off" : flash === "on" ? "On" : "Auto";
-  const zoomLabel = zoom === 0 ? "1x" : "2x";
+  const zoomLabel = zoom === 0 ? "0.5x" : "1x";
 
   // ── Main camera UI ────────────────────────────────────────────────────────
 
