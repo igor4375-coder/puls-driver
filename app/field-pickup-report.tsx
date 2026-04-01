@@ -11,11 +11,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
-import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import * as ImagePicker from "expo-image-picker";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useColors } from "@/hooks/use-colors";
@@ -47,7 +45,6 @@ export default function FieldPickupReportScreen() {
 
   const [color, setColor] = useState("");
   const [notes, setNotes] = useState("");
-  const [photos, setPhotos] = useState<string[]>([]);
   const [gps, setGps] = useState<{ lat: number; lng: number; address?: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [gpsLoading, setGpsLoading] = useState(true);
@@ -62,9 +59,9 @@ export default function FieldPickupReportScreen() {
           setGpsLoading(false);
           return;
         }
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        const pos =
+          (await Location.getLastKnownPositionAsync()) ??
+          (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }));
         let address: string | undefined;
         try {
           const [geo] = await Location.reverseGeocodeAsync({
@@ -80,25 +77,6 @@ export default function FieldPickupReportScreen() {
       setGpsLoading(false);
     })();
   }, []);
-
-  const handleAddPhoto = useCallback(async () => {
-    if (photos.length >= 8) {
-      Alert.alert("Limit Reached", "Maximum 8 photos per report.");
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ["images"],
-      quality: 0.8,
-      allowsEditing: false,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setPhotos((prev) => [...prev, result.assets[0].uri]);
-    }
-  }, [photos.length]);
-
-  const handleRemovePhoto = (index: number) => {
-    setPhotos((prev) => prev.filter((_, i) => i !== index));
-  };
 
   const createFieldPickupLoad = useCallback((fieldPickupId?: string): Load => {
     const vin = params.vin ?? "";
@@ -173,7 +151,6 @@ export default function FieldPickupReportScreen() {
       bodyType: params.bodyType || undefined,
       color: color.trim() || undefined,
       notes: notes.trim() || undefined,
-      photoUrls: photos.length > 0 ? photos : undefined,
       gpsLat: gps?.lat,
       gpsLng: gps?.lng,
       gpsAddress: gps?.address,
@@ -224,7 +201,7 @@ export default function FieldPickupReportScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [driverCode, params, color, notes, photos, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed, createFieldPickupLoad, addLoad, startInspection]);
+  }, [driverCode, params, color, notes, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed, createFieldPickupLoad, addLoad, startInspection]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -303,28 +280,6 @@ export default function FieldPickupReportScreen() {
             numberOfLines={4}
             textAlignVertical="top"
           />
-
-          {/* Photos */}
-          <Text style={[styles.formLabel, { color: colors.muted }]}>PHOTOS ({photos.length}/8)</Text>
-          <View style={styles.photosRow}>
-            {photos.map((uri, i) => (
-              <View key={i} style={styles.photoThumb}>
-                <Image source={{ uri }} style={styles.photoImage} />
-                <TouchableOpacity style={styles.photoRemove} onPress={() => handleRemovePhoto(i)}>
-                  <IconSymbol name="xmark.circle.fill" size={22} color="#FF3B30" />
-                </TouchableOpacity>
-              </View>
-            ))}
-            {photos.length < 8 && (
-              <TouchableOpacity
-                style={[styles.addPhotoBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-                onPress={handleAddPhoto}
-              >
-                <IconSymbol name="camera.fill" size={24} color={colors.primary} />
-                <Text style={[styles.addPhotoText, { color: colors.muted }]}>Add</Text>
-              </TouchableOpacity>
-            )}
-          </View>
 
           {/* Submit */}
           <TouchableOpacity
@@ -407,38 +362,6 @@ const styles = StyleSheet.create({
     minHeight: 90,
     paddingTop: 10,
   },
-  photosRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 24,
-  },
-  photoThumb: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    overflow: "hidden",
-  },
-  photoImage: {
-    width: 80,
-    height: 80,
-  },
-  photoRemove: {
-    position: "absolute",
-    top: 2,
-    right: 2,
-  },
-  addPhotoBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 4,
-  },
-  addPhotoText: { fontSize: 11, fontWeight: "600" },
   submitBtn: {
     flexDirection: "row",
     alignItems: "center",
