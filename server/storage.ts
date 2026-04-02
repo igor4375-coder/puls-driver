@@ -129,6 +129,26 @@ export async function storageGet(
   return { key, url: buildPublicUrl(key) };
 }
 
+// ─── Download (for server-side processing like async stamping) ──────────────
+
+export async function storageDownload(relKey: string): Promise<Buffer> {
+  const { bucket } = getR2Config();
+  const key = normalizeKey(relKey);
+  const client = getClient();
+
+  const res = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key })
+  );
+
+  if (!res.Body) throw new Error(`Empty body for key: ${key}`);
+  const chunks: Uint8Array[] = [];
+  // @ts-ignore — Body is a Readable stream in Node
+  for await (const chunk of res.Body) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 // ─── Delete ─────────────────────────────────────────────────────────────────
 
 export async function storageDelete(relKey: string): Promise<void> {

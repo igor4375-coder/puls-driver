@@ -2,20 +2,20 @@
  * PhotoQueue class — exported separately for unit testing.
  * The singleton `photoQueue` lives in photo-queue.ts and imports from here.
  *
- * Upload lifecycle:
- * 1. Photos are enqueued as "pending" — NOT uploaded immediately.
- * 2. flushForVehicle() is called on Save — uploads only the final set for that vehicle.
- * 3. A background retry loop (startBackgroundRetry) runs every BACKGROUND_INTERVAL_MS
- *    and retries any pending/failed photos that are ready for another attempt.
- *    This ensures photos keep uploading even after the driver marks a vehicle as picked up.
+ * Upload lifecycle (v2 — "upload first, stamp later"):
+ * 1. Photos are enqueued as "pending" — immediately compressed and uploaded to R2.
+ * 2. After upload succeeds, a fire-and-forget request asks the server to stamp
+ *    the photo asynchronously (server downloads from R2, stamps, re-uploads).
+ * 3. Uploads run in parallel (UPLOAD_CONCURRENCY at a time) for speed.
+ * 4. An AppState listener resumes uploads when the app returns to foreground.
+ * 5. A background retry loop handles any failures with escalating backoff.
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Network from "expo-network";
-import { Platform } from "react-native";
+import { AppState, type AppStateStatus, Platform } from "react-native";
 import { compressImage } from "./image-compress";
-
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,15 +45,18 @@ export interface PhotoQueueEntry {
   createdAt: number;
   stampMeta?: StampMeta;
   stamped?: boolean;
+  /** R2 key for async stamping after upload */
+  r2Key?: string;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const QUEUE_STORAGE_KEY = "@autohaul/photo_queue_v1";
 const PHOTOS_DIR = (FileSystem.documentDirectory ?? "") + "inspection_photos/";
-const MAX_RETRIES = 10; // Keep retrying until success (up to 10 attempts)
-const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000]; // escalating backoff
-const BACKGROUND_INTERVAL_MS = 20_000; // Check for pending uploads every 20 seconds
+const MAX_RETRIES = 10;
+const RETRY_DELAYS_MS = [3_000, 8_000, 20_000, 45_000, 90_000, 180_000];
+const BACKGROUND_INTERVAL_MS = 15_000;
+const UPLOAD_CONCURRENCY = 4;
 
 function getUploadApiBase(): string {
   const fromEnv =
@@ -100,13 +103,14 @@ export class PhotoQueue {
   private syncing = false;
   private loaded = false;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
+  private appStateSub: { remove: () => void } | null = null;
+  private appState: AppStateStatus = AppState.currentState;
 
   async load() {
     if (this.loaded) return;
     try {
       const raw = await AsyncStorage.getItem(QUEUE_STORAGE_KEY);
       this.entries = raw ? JSON.parse(raw) : [];
-      // Reset any "uploading" entries to "pending" (app was killed mid-upload)
       this.entries = this.entries.map((e) =>
         e.status === "uploading" ? { ...e, status: "pending" as PhotoStatus } : e
       );
@@ -145,27 +149,32 @@ export class PhotoQueue {
     return entry.remoteUrl ?? entry.localUri;
   }
 
-  /**
-   * Start the background retry loop.
-   * Call once at app startup (in _layout.tsx or a top-level provider).
-   * The loop checks every BACKGROUND_INTERVAL_MS for any pending photos
-   * that are ready to upload (respecting backoff delays), and uploads them.
-   * This ensures photos keep uploading even after the driver navigates away
-   * or marks a vehicle as picked up.
-   */
   startBackgroundRetry(): void {
-    if (this.backgroundTimer) return; // already running
-    // Run once immediately on start to catch any pending from a previous session
+    if (this.backgroundTimer) return;
     this.load().then(() => this.sync()).catch((err) => console.warn("[PhotoQueue]", err));
     this.backgroundTimer = setInterval(() => {
       this.sync().catch((err) => console.warn("[PhotoQueue]", err));
     }, BACKGROUND_INTERVAL_MS);
+
+    // Resume uploads immediately when app returns to foreground
+    if (!this.appStateSub) {
+      this.appStateSub = AppState.addEventListener("change", (next: AppStateStatus) => {
+        if (next === "active" && this.appState !== "active") {
+          this.sync().catch(() => {});
+        }
+        this.appState = next;
+      });
+    }
   }
 
   stopBackgroundRetry(): void {
     if (this.backgroundTimer) {
       clearInterval(this.backgroundTimer);
       this.backgroundTimer = null;
+    }
+    if (this.appStateSub) {
+      this.appStateSub.remove();
+      this.appStateSub = null;
     }
   }
 
@@ -208,18 +217,10 @@ export class PhotoQueue {
     this.entries.push(entry);
     await this.persist();
     this.emit();
-    // Start stamp+upload immediately in the background so most photos are
-    // already on R2 by the time the driver hits Save.
-    this.uploadEntry(entry).catch((err) => console.warn("[PhotoQueue]", err));
+    this.uploadEntry(entry).catch(() => {});
     return entry;
   }
 
-  /**
-   * Upload all pending photos for a specific vehicle immediately.
-   * Call this when the driver taps Save on the inspection screen.
-   * Photos deleted before Save are already removed from the queue and never uploaded.
-   * After this returns, the background retry loop will handle any that failed.
-   */
   async flushForVehicle(loadId: string, vehicleId: string): Promise<void> {
     await this.load();
     const pending = this.entries.filter(
@@ -232,12 +233,9 @@ export class PhotoQueue {
     if (pending.length === 0) return;
     const online = await isOnline();
     if (!online) return;
-    const CONCURRENCY = 3;
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      const batch = pending.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < pending.length; i += UPLOAD_CONCURRENCY) {
+      const batch = pending.slice(i, i + UPLOAD_CONCURRENCY);
       await Promise.all(batch.map((snapshot) => {
-        // Re-read current status from the live entries array because the
-        // enqueue-triggered background upload may have already started.
         const live = this.entries.find((e) => e.clientId === snapshot.clientId);
         if (!live || live.status === "done") return Promise.resolve();
         if (live.status === "uploading") {
@@ -263,19 +261,8 @@ export class PhotoQueue {
     });
   }
 
-  /**
-   * Flush all pending uploads for a vehicle AND return the S3 URLs.
-   * This is the method to call before syncInspection to avoid the race condition
-   * where photos: [] is sent because uploads haven't completed yet.
-   *
-   * Returns an array of S3 URLs (http/https) for all successfully uploaded photos
-   * belonging to this vehicle. Local URIs for failed uploads are excluded.
-   */
   async flushAndGetUrls(loadId: string, vehicleId: string): Promise<string[]> {
-    // First, flush all pending uploads (waits for each to complete)
     await this.flushForVehicle(loadId, vehicleId);
-
-    // Now read back the entries — any that succeeded will have remoteUrl set
     const vehicleEntries = this.entries.filter(
       (e) => e.loadId === loadId && e.vehicleId === vehicleId
     );
@@ -284,10 +271,6 @@ export class PhotoQueue {
       .filter((url): url is string => url != null && url.startsWith("http"));
   }
 
-  /**
-   * Sync all pending/failed photos that are ready for upload (respects backoff).
-   * Called by the background retry loop and by retryFailed().
-   */
   async sync(): Promise<void> {
     if (this.syncing) return;
     await this.load();
@@ -296,7 +279,7 @@ export class PhotoQueue {
     const ready = this.entries.filter((e) => {
       if (e.status !== "pending" && e.status !== "failed") return false;
       if (e.attempts >= MAX_RETRIES) return false;
-      if (!e.lastAttemptAt) return true; // never attempted
+      if (!e.lastAttemptAt) return true;
       const delay = RETRY_DELAYS_MS[Math.min(e.attempts - 1, RETRY_DELAYS_MS.length - 1)] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
       return now - e.lastAttemptAt >= delay;
     });
@@ -308,8 +291,9 @@ export class PhotoQueue {
 
     this.syncing = true;
     try {
-      for (const entry of ready) {
-        await this.uploadEntry(entry);
+      for (let i = 0; i < ready.length; i += UPLOAD_CONCURRENCY) {
+        const batch = ready.slice(i, i + UPLOAD_CONCURRENCY);
+        await Promise.all(batch.map((entry) => this.uploadEntry(entry)));
       }
     } finally {
       this.syncing = false;
@@ -320,37 +304,12 @@ export class PhotoQueue {
     this.updateEntry(entry.clientId, { status: "uploading" });
 
     try {
-      // Stamp the photo if stamp metadata is present and not yet stamped
-      let sourceUri = entry.localUri;
-      if (entry.stampMeta && !entry.stamped) {
-        try {
-          const { stampPhotoViaServer } = await import("./stamp-photo-client");
-          const sm = entry.stampMeta;
-          const stampedUri = await stampPhotoViaServer(sourceUri, {
-            inspectionType: sm.inspectionType,
-            driverCode: sm.driverCode,
-            companyName: sm.companyName,
-            vin: sm.vin,
-            locationLabel: sm.locationLabel,
-            coords: sm.lat != null && sm.lng != null
-              ? { latitude: sm.lat, longitude: sm.lng }
-              : null,
-            capturedAt: sm.capturedAt,
-          });
-          sourceUri = stampedUri;
-          this.updateEntry(entry.clientId, { stamped: true, localUri: stampedUri });
-        } catch (stampErr) {
-          console.warn("[PhotoQueue] Stamp failed, uploading raw:", stampErr);
-          this.updateEntry(entry.clientId, { stamped: true });
-        }
-      }
-
-      // Compress before upload (reduces file size ~10-15x)
-      const compressedUri = await compressImage(sourceUri);
+      // Compress before upload (reduces ~8-12MB to ~300-800KB)
+      const compressedUri = await compressImage(entry.localUri);
       const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
       const apiBase = getUploadApiBase();
 
-      // Step 1: Get a presigned upload URL from our server (tiny request)
+      // Step 1: Get a presigned upload URL
       const params = new URLSearchParams({
         ext: "jpg",
         groupKey,
@@ -360,49 +319,54 @@ export class PhotoQueue {
       if (!presignRes.ok) {
         throw new Error(`Presign failed: HTTP ${presignRes.status}`);
       }
-      const { uploadUrl, publicUrl } = await presignRes.json() as {
+      const { uploadUrl, publicUrl, key } = await presignRes.json() as {
         uploadUrl: string;
         publicUrl: string;
         key: string;
         clientId: string;
       };
 
-      // Step 2: Upload the photo directly to R2 (bypasses our server entirely)
-      let uploadResponse: Response;
-
+      // Step 2: Upload compressed photo directly to R2
       if (Platform.OS === "web") {
         const blobRes = await fetch(compressedUri);
         const blob = await blobRes.blob();
-        uploadResponse = await fetch(uploadUrl, {
+        const uploadResponse = await fetch(uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": "image/jpeg" },
           body: blob,
         });
+        if (!uploadResponse.ok) {
+          throw new Error(`R2 upload failed: HTTP ${uploadResponse.status}`);
+        }
       } else {
-        // React Native: use FileSystem.uploadAsync for efficient binary streaming
         const result = await FileSystem.uploadAsync(uploadUrl, compressedUri, {
           httpMethod: "PUT",
           headers: { "Content-Type": "image/jpeg" },
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
         });
         if (result.status < 200 || result.status >= 300) {
           throw new Error(`R2 upload failed: HTTP ${result.status}`);
         }
-        // Create a synthetic Response for the success path
-        uploadResponse = new Response(null, { status: result.status });
       }
 
-      if (Platform.OS === "web" && !uploadResponse.ok) {
-        throw new Error(`R2 upload failed: HTTP ${uploadResponse.status}`);
-      }
-
+      // Mark as done immediately — driver sees ✅ right away
       this.updateEntry(entry.clientId, {
         status: "done",
         remoteUrl: publicUrl,
+        r2Key: key,
         lastError: null,
         lastAttemptAt: Date.now(),
         attempts: entry.attempts + 1,
       });
+
+      // Step 3: Fire-and-forget async stamp on the server
+      if (entry.stampMeta && !entry.stamped) {
+        const sm = entry.stampMeta;
+        this.requestAsyncStamp(apiBase, key, sm).then(() => {
+          this.updateEntry(entry.clientId, { stamped: true });
+        }).catch(() => {});
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Upload failed";
       const attempts = entry.attempts + 1;
@@ -412,6 +376,31 @@ export class PhotoQueue {
         lastAttemptAt: Date.now(),
         attempts,
       });
+    }
+  }
+
+  private async requestAsyncStamp(apiBase: string, r2Key: string, sm: StampMeta): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      await fetch(`${apiBase}/api/photos/stamp-async`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: r2Key,
+          inspectionType: sm.inspectionType,
+          driverCode: sm.driverCode,
+          companyName: sm.companyName,
+          vin: sm.vin,
+          locationLabel: sm.locationLabel,
+          lat: sm.lat,
+          lng: sm.lng,
+          capturedAt: sm.capturedAt,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

@@ -8,7 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import * as db from "../db";
 import { sendPushNotification } from "../push";
-import { createPresignedUploadUrl } from "../storage";
+import { createPresignedUploadUrl, storageDownload, storagePut } from "../storage";
 import { scheduleGatePassExpiryNotifier } from "../gate-pass-notifier";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -82,6 +82,60 @@ async function startServer() {
       console.error("[Photos] presigned URL error:", err);
       const message = err instanceof Error ? err.message : "Failed to create upload URL";
       res.status(500).json({ error: message });
+    }
+  });
+
+  // ─── Async Photo Stamping (fire-and-forget from mobile app) ─────────────────
+  // Mobile uploads the raw photo to R2 first, then calls this endpoint.
+  // Server downloads the photo from R2, burns the evidence stamp, re-uploads.
+  app.post("/api/photos/stamp-async", async (req, res) => {
+    const { key, inspectionType, driverCode, companyName, vin, locationLabel, lat, lng, capturedAt } = req.body as {
+      key?: string;
+      inspectionType?: string;
+      driverCode?: string;
+      companyName?: string;
+      vin?: string;
+      locationLabel?: string;
+      lat?: number;
+      lng?: number;
+      capturedAt?: string;
+    };
+
+    if (!key) {
+      res.status(400).json({ error: "key is required" });
+      return;
+    }
+
+    // Respond immediately — stamping happens in the background
+    res.json({ accepted: true, key });
+
+    try {
+      const { stampPhotoBuffer } = await import("../photo-stamp-server.js");
+      const photoBuffer = await storageDownload(key);
+
+      const ts = capturedAt ? new Date(capturedAt) : new Date();
+      const dateStr = ts.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "numeric" });
+      const timeStr = ts.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+      const inspType = inspectionType ?? "Inspection";
+      const locPart = locationLabel
+        ?? (lat != null && lng != null ? `${lat.toFixed(4)}, ${lng.toFixed(4)}` : "");
+
+      const line1 = locPart
+        ? `${inspType}: ${dateStr}  ${timeStr}, ${locPart}`
+        : `${inspType}: ${dateStr}  ${timeStr}`;
+
+      const parts = [
+        driverCode ? `Driver: ${driverCode}` : "",
+        vin ? `VIN: ${vin}` : "",
+        companyName ?? "Puls Dispatch",
+      ].filter(Boolean);
+      const line2 = parts.join("  ·  ");
+
+      const stamped = await stampPhotoBuffer(photoBuffer, { line1, line2 });
+      await storagePut(key, stamped, "image/jpeg");
+      console.log(`[Photos] async stamp complete for ${key}`);
+    } catch (err) {
+      console.error(`[Photos] async stamp failed for ${key}:`, err);
     }
   });
 
