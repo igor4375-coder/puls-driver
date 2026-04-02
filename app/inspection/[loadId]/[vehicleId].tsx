@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   Dimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -153,10 +154,9 @@ function VehicleDiagram({
   onPinTap?: (damage: Damage) => void;
 }) {
   const colors = useColors();
-  // Image-based diagram: both views in one image
-  // Image aspect ratio is 3:2 (1536 x 1024)
-  const W = 320;
-  const H = Math.round(W / (990 / 751)); // ~243 (cropped image aspect ratio)
+  const screenW = Dimensions.get("window").width;
+  const W = Math.min(screenW - 64, 400);
+  const H = Math.round(W / (990 / 751));
 
   const handleTap = (evt: { nativeEvent: { locationX: number; locationY: number } }) => {
     const { locationX, locationY } = evt.nativeEvent;
@@ -378,36 +378,15 @@ function DamageModal({
   const colors = useColors();
   const [type, setType] = useState<DamageType>("scratch");
   const [severity, setSeverity] = useState<DamageSeverity>("minor");
-  const [description, setDescription] = useState("");
-  const [damagePhotos, setDamagePhotos] = useState<string[]>([]);
-  const [pickingPhoto, setPickingPhoto] = useState(false);
 
   const zoneLabel = DAMAGE_ZONES.find((z) => z.key === zone)?.label ?? zone ?? "Vehicle";
 
-  // Reset state when modal closes
   useEffect(() => {
     if (!visible) {
       setType("scratch");
       setSeverity("minor");
-      setDescription("");
-      setDamagePhotos([]);
     }
   }, [visible]);
-
-  const handleTakePhoto = async () => {
-    setPickingPhoto(true);
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ["images"],
-        quality: 1,  // No compression — preserve original quality
-      });
-      if (!result.canceled && result.assets?.[0]) {
-        setDamagePhotos((prev) => [...prev, result.assets[0].uri]);
-      }
-    } finally {
-      setPickingPhoto(false);
-    }
-  };
 
   const handleSave = () => {
     if (!zone) return;
@@ -416,14 +395,14 @@ function DamageModal({
       zone,
       type,
       severity,
-      description,
-      photos: damagePhotos,
+      description: "",
+      photos: [],
       xPct: pendingXPct,
       yPct: pendingYPct,
       diagramView: pendingView,
     };
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onSave(damage, damagePhotos);
+    onSave(damage, []);
   };
 
   return (
@@ -436,7 +415,6 @@ function DamageModal({
             Mark Damage — {zoneLabel}
           </Text>
 
-          {/* Existing damages in this zone */}
           {existingDamages.length > 0 && (
             <View style={[styles.existingDamages, { backgroundColor: colors.background, borderColor: colors.border }]}>
               <Text style={[styles.existingTitle, { color: colors.muted }]}>
@@ -444,7 +422,7 @@ function DamageModal({
               </Text>
               {existingDamages.map((d) => (
                 <Text key={d.id} style={[styles.existingItem, { color: colors.foreground }]}>
-                  • {d.type} ({d.severity}){d.description ? `: ${d.description}` : ""}
+                  • {d.type} ({d.severity})
                 </Text>
               ))}
             </View>
@@ -493,44 +471,6 @@ function DamageModal({
             })}
           </View>
 
-          <Text style={[styles.fieldLabel, { color: colors.muted }]}>NOTES (OPTIONAL)</Text>
-          <TextInput
-            style={[styles.notesInput, { backgroundColor: colors.background, color: colors.foreground, borderColor: colors.border }]}
-            placeholder="Describe the damage..."
-            placeholderTextColor={colors.muted}
-            value={description}
-            onChangeText={setDescription}
-            multiline
-            numberOfLines={2}
-          />
-
-          {/* Damage Photos */}
-          <Text style={[styles.fieldLabel, { color: colors.muted }]}>DAMAGE PHOTOS (OPTIONAL)</Text>
-          <View style={styles.damagePhotoRow}>
-            <TouchableOpacity
-              style={[styles.damagePhotoAddBtn, { borderColor: colors.border, backgroundColor: colors.background }]}
-              onPress={handleTakePhoto}
-              activeOpacity={0.7}
-              disabled={pickingPhoto}
-            >
-              <Text style={{ fontSize: 22, color: colors.muted }}>📷</Text>
-              <Text style={[styles.damagePhotoAddText, { color: colors.muted }]}>
-                {damagePhotos.length > 0 ? `${damagePhotos.length} photo${damagePhotos.length > 1 ? "s" : ""}` : "Add Photos"}
-              </Text>
-            </TouchableOpacity>
-            {damagePhotos.map((uri, idx) => (
-              <View key={idx} style={styles.damagePhotoThumb}>
-                <Image source={{ uri }} style={styles.damagePhotoThumbImg} />
-                <TouchableOpacity
-                  style={styles.damagePhotoRemove}
-                  onPress={() => setDamagePhotos((prev) => prev.filter((_, i) => i !== idx))}
-                >
-                  <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-
           <View style={styles.modalActions}>
             <TouchableOpacity
               style={[styles.modalCancelBtn, { borderColor: colors.border }]}
@@ -557,6 +497,7 @@ function DamageModal({
 
 export default function InspectionScreen() {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const { loadId, vehicleId } = useLocalSearchParams<{ loadId: string; vehicleId: string }>();
   const { getLoad, savePickupInspection, saveDeliveryInspection, updateVehicleInfo, updateLoadStatus } = useLoads();
   const { driver } = useAuth();
@@ -975,9 +916,12 @@ export default function InspectionScreen() {
         return;
       }
 
+      // 3b. Persist S3 URLs back into the inspection so deferred sync (field pickups) can use them
+      savePickupInspection(loadId, vehicleId, { ...inspection, photos: uploadedUrls });
+
       // 4. Mark load status locally
       updateLoadStatus(loadId, "picked_up");
-      pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
+      pickupHighlightStore.signal("new", "Vehicle picked up — returning to Pending");
 
       // 5. Call markAsPickedUp on the company platform (platform loads only)
       const isPlatformLoad = loadId.startsWith("platform-");
@@ -1081,7 +1025,7 @@ export default function InspectionScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Header */}
-      <View style={[styles.navHeader, { backgroundColor: colors.primary }]}>
+      <View style={[styles.navHeader, { backgroundColor: colors.primary, paddingTop: insets.top + 10 }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
           <IconSymbol name="xmark" size={20} color="#FFFFFF" />
         </TouchableOpacity>
@@ -1544,7 +1488,7 @@ export default function InspectionScreen() {
         >
           <View style={pinViewerStyles.overlay}>
             {/* Header */}
-            <View style={pinViewerStyles.header}>
+            <View style={[pinViewerStyles.header, { paddingTop: insets.top + 10 }]}>
               <TouchableOpacity
                 style={pinViewerStyles.closeBtn}
                 onPress={() => setPinPhotoViewer(null)}
@@ -1623,7 +1567,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 56,
     paddingBottom: 14,
   },
   backBtn: {
@@ -2233,7 +2176,6 @@ const pinViewerStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 56,
     paddingBottom: 12,
   },
   closeBtn: {
