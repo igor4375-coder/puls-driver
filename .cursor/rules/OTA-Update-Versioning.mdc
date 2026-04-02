@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+
+## OTA Update Versioning
+
+When deploying an OTA update via `npx eas update`:
+
+1. Before running the EAS update command, increment the `BUILD_TAG` in `components/update-version-banner.tsx` from the current version to the next sequential version (e.g. v27 → v28 → v29).
+2. The BUILD_TAG format is: `v{NUMBER}-{short-description}` where the description is 2-4 lowercase words separated by hyphens summarizing the main change (e.g. `v27-camera-zoom-fix`, `v28-load-refresh`).
+3. Include the updated `components/update-version-banner.tsx` in the git commit.
+4. Use the BUILD_TAG as the `--message` parameter for the `eas update` command (e.g. `--message "v27-camera-zoom-fix"`).
+5. The current version is tracked by the `BUILD_TAG` constant on line 6 of `components/update-version-banner.tsx`. Always read this file first to determine the current version number before incrementing.
