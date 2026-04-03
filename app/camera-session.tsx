@@ -47,7 +47,7 @@ type SessionMode = "photo" | "video";
 
 const { width: SW } = Dimensions.get("window");
 const TOP_INSET = Platform.OS === "ios" ? 56 : 28;
-const BOTTOM_INSET = Platform.OS === "ios" ? 60 : 44;
+const BOTTOM_INSET = Platform.OS === "ios" ? 60 : 76;
 const THUMB_SIZE = 72;
 
 interface CapturedItem {
