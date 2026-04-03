@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v30-shutter-higher-android";
+const BUILD_TAG = "v31-fix-zoom-levels";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
