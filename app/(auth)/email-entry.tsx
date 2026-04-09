@@ -66,21 +66,31 @@ export default function EmailEntryScreen() {
         if (!si) throw Object.assign(new Error("SignIn unavailable"), { errors: [{ code: "form_identifier_not_found" }] });
         const rawSignIn = await si.create({ identifier: trimmedEmail });
 
+        // #region agent log — deep inspect raw response
+        const rawKeys = Object.keys(rawSignIn ?? {}).join(',');
+        const hasResult = 'result' in (rawSignIn as any ?? {});
+        const hasError = 'error' in (rawSignIn as any ?? {});
+        const rawErrTruthy = !!(rawSignIn as any)?.error;
+        const rawResultTruthy = !!(rawSignIn as any)?.result;
+        _d.push(`raw:[${rawKeys}] hasR=${hasResult} hasE=${hasError} rTruthy=${rawResultTruthy} eTruthy=${rawErrTruthy}`);
+        // #endregion
+
         // Clerk SDK wraps responses in { result, error } — unwrap
         if ((rawSignIn as any)?.error) {
           const returnedErr = (rawSignIn as any).error;
           // #region agent log
-          _d.push(`signIn err → throw`);
-          _d.push(`codes=${returnedErr?.errors?.map((e:any)=>e.code)?.join(',')}`);
-          fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:69',message:'signIn error unwrapped',data:{codes:returnedErr?.errors?.map((e:any)=>e.code)},timestamp:Date.now(),hypothesisId:'H-F'})}).catch(()=>{});
+          _d.push(`signIn err → throw: ${returnedErr?.errors?.map((e:any)=>e.code)?.join(',')}`);
           // #endregion
           throw returnedErr;
         }
         const result = (rawSignIn as any)?.result ?? rawSignIn;
 
         // #region agent log
-        _d.push(`signIn OK, status=${result.status}, factors=${result.supportedFirstFactors?.length ?? 0}`);
-        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:79',message:'signIn unwrapped',data:{status:result.status,factorCount:result.supportedFirstFactors?.length,keys:Object.keys(result??{}).join(',')},timestamp:Date.now(),hypothesisId:'H-F-verify'})}).catch(()=>{});
+        const unwrappedKeys = Object.keys(result ?? {}).slice(0,8).join(',');
+        _d.push(`unwrapped:[${unwrappedKeys}] status=${result.status} factors=${result.supportedFirstFactors?.length ?? 0}`);
+        if (result.supportedFirstFactors?.length > 0) {
+          _d.push(`strats=[${result.supportedFirstFactors.map((f:any)=>f.strategy).join(',')}]`);
+        }
         // #endregion
 
         const allFactors = result.supportedFirstFactors?.map((f: any) => f.strategy) ?? [];
