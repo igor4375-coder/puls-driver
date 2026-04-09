@@ -148,8 +148,23 @@ export default function EmailEntryScreen() {
       fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:135',message:'entering signUp',data:{hasSignUp:!!signUp},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
       // #endregion
       const createResult = await signUp!.create({ emailAddress: trimmedEmail });
+
+      // Same Clerk SDK pattern: errors may be returned as values, not thrown
+      if ((createResult as any)?.error) {
+        const suErr = (createResult as any).error;
+        // #region agent log
+        _d.push(`signUp returned error: ${suErr?.errors?.map((e:any)=>e.code)?.join(',') ?? suErr?.message?.slice(0,60)}`);
+        // #endregion
+        throw suErr;
+      }
+
       // #region agent log
-      _d.push(`signUp OK, status=${createResult.status}`);
+      const suKeys = Object.keys(createResult ?? {}).join(',');
+      _d.push(`signUp OK, status=${createResult.status}, keys=[${suKeys}]`);
+      const hasPrepV = typeof (createResult as any).prepareVerification === 'function';
+      const hasPrepEAV = typeof (createResult as any).prepareEmailAddressVerification === 'function';
+      _d.push(`prepV=${hasPrepV}, prepEAV=${hasPrepEAV}`);
+      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:150',message:'signUp result',data:{status:createResult.status,keys:suKeys,hasPrepV,hasPrepEAV},timestamp:Date.now(),hypothesisId:'H-F-signup'})}).catch(()=>{});
       // #endregion
 
       if (createResult.status === "complete") {
@@ -166,6 +181,11 @@ export default function EmailEntryScreen() {
         await su.prepareEmailAddressVerification();
       } else {
         const fallback = signUp ?? clerk.client?.signUp;
+        // #region agent log
+        const fbPrepV = typeof (fallback as any)?.prepareVerification === 'function';
+        const fbPrepEAV = typeof (fallback as any)?.prepareEmailAddressVerification === 'function';
+        _d.push(`fallback: prepV=${fbPrepV}, prepEAV=${fbPrepEAV}`);
+        // #endregion
         if (fallback && typeof (fallback as any).prepareVerification === "function") {
           await (fallback as any).prepareVerification({ strategy: "email_code" });
         } else if (fallback && typeof (fallback as any).prepareEmailAddressVerification === "function") {
