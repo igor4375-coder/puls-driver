@@ -66,38 +66,24 @@ export default function EmailEntryScreen() {
         if (!si) throw Object.assign(new Error("SignIn unavailable"), { errors: [{ code: "form_identifier_not_found" }] });
         const rawSignIn = await si.create({ identifier: trimmedEmail });
 
-        // #region agent log — deep inspect raw response
-        const rawKeys = Object.keys(rawSignIn ?? {}).join(',');
-        const hasResult = 'result' in (rawSignIn as any ?? {});
-        const hasError = 'error' in (rawSignIn as any ?? {});
-        const rawErrTruthy = !!(rawSignIn as any)?.error;
-        const rawResultTruthy = !!(rawSignIn as any)?.result;
-        _d.push(`raw:[${rawKeys}] hasR=${hasResult} hasE=${hasError} rTruthy=${rawResultTruthy} eTruthy=${rawErrTruthy}`);
-        // #endregion
-
-        // Clerk SDK wraps responses in { result, error } — unwrap
+        // Clerk SDK returns { result, error } — check error first
         if ((rawSignIn as any)?.error) {
-          const returnedErr = (rawSignIn as any).error;
-          // #region agent log
-          _d.push(`signIn err → throw: ${returnedErr?.errors?.map((e:any)=>e.code)?.join(',')}`);
-          // #endregion
-          throw returnedErr;
+          throw (rawSignIn as any).error;
         }
-        const result = (rawSignIn as any)?.result ?? rawSignIn;
+
+        // Clerk hooks mutate in place — read from the hook object, not the return value
+        const siResource = si as any;
 
         // #region agent log
-        const unwrappedKeys = Object.keys(result ?? {}).slice(0,8).join(',');
-        _d.push(`unwrapped:[${unwrappedKeys}] status=${result.status} factors=${result.supportedFirstFactors?.length ?? 0}`);
-        if (result.supportedFirstFactors?.length > 0) {
-          _d.push(`strats=[${result.supportedFirstFactors.map((f:any)=>f.strategy).join(',')}]`);
+        _d.push(`signIn done, hook.status=${siResource.status}, hook.factors=${siResource.supportedFirstFactors?.length ?? 0}`);
+        if (siResource.supportedFirstFactors?.length > 0) {
+          _d.push(`strats=[${siResource.supportedFirstFactors.map((f:any)=>f.strategy).join(',')}]`);
         }
         // #endregion
 
-        const allFactors = result.supportedFirstFactors?.map((f: any) => f.strategy) ?? [];
-
-        const emailCodeFactor = result.supportedFirstFactors?.find(
+        const emailCodeFactor = siResource.supportedFirstFactors?.find(
           (f: any) => f.strategy === "email_code",
-        ) as any;
+        );
 
         if (emailCodeFactor) {
           await si.prepareFirstFactor({
@@ -118,9 +104,9 @@ export default function EmailEntryScreen() {
           return;
         }
 
-        const ssoFactor = result.supportedFirstFactors?.find(
+        const ssoFactor = siResource.supportedFirstFactors?.find(
           (f: any) => f.strategy?.startsWith("oauth_"),
-        ) as any;
+        );
         if (ssoFactor) {
           const provider = ssoFactor.strategy.replace("oauth_", "");
           const label =
@@ -159,48 +145,36 @@ export default function EmailEntryScreen() {
       // #endregion
       const rawSignUp = await signUp!.create({ emailAddress: trimmedEmail });
 
-      // Clerk SDK wraps responses in { result, error } — unwrap
+      // Clerk SDK returns { result, error } — check error first
       if ((rawSignUp as any)?.error) {
-        const suErr = (rawSignUp as any).error;
-        // #region agent log
-        _d.push(`signUp err → throw: ${suErr?.errors?.map((e:any)=>e.code)?.join(',') ?? suErr?.message?.slice(0,60)}`);
-        // #endregion
-        throw suErr;
+        throw (rawSignUp as any).error;
       }
-      const createResult = (rawSignUp as any)?.result ?? rawSignUp;
+
+      // Clerk hooks mutate in place — read from the hook object
+      const suResource = signUp as any;
 
       // #region agent log
-      _d.push(`signUp OK, status=${createResult.status}`);
-      const hasPrepV = typeof createResult.prepareVerification === 'function';
-      const hasPrepEAV = typeof createResult.prepareEmailAddressVerification === 'function';
+      _d.push(`signUp done, hook.status=${suResource?.status}`);
+      const hasPrepV = typeof suResource?.prepareVerification === 'function';
+      const hasPrepEAV = typeof suResource?.prepareEmailAddressVerification === 'function';
       _d.push(`prepV=${hasPrepV}, prepEAV=${hasPrepEAV}`);
-      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:150',message:'signUp unwrapped',data:{status:createResult.status,hasPrepV,hasPrepEAV,keys:Object.keys(createResult??{}).join(',')},timestamp:Date.now(),hypothesisId:'H-F-signup'})}).catch(()=>{});
       // #endregion
 
-      if (createResult.status === "complete") {
-        await setSignUpActive!({ session: createResult.createdSessionId });
+      if (suResource?.status === "complete") {
+        await setSignUpActive!({ session: suResource.createdSessionId });
         router.replace("/(tabs)");
         return;
       }
 
-      const su = createResult as any;
-
-      if (typeof su.prepareVerification === "function") {
-        await su.prepareVerification({ strategy: "email_code" });
-      } else if (typeof su.prepareEmailAddressVerification === "function") {
-        await su.prepareEmailAddressVerification();
+      if (typeof suResource?.prepareVerification === "function") {
+        await suResource.prepareVerification({ strategy: "email_code" });
+      } else if (typeof suResource?.prepareEmailAddressVerification === "function") {
+        await suResource.prepareEmailAddressVerification();
       } else {
-        const fallback = signUp ?? clerk.client?.signUp;
-        if (fallback && typeof (fallback as any).prepareVerification === "function") {
-          await (fallback as any).prepareVerification({ strategy: "email_code" });
-        } else if (fallback && typeof (fallback as any).prepareEmailAddressVerification === "function") {
-          await (fallback as any).prepareEmailAddressVerification();
-        } else {
-          // #region agent log
-          _d.push(`no prepV on unwrapped or fallback`);
-          // #endregion
-          throw new Error("No email verification method found on SignUp");
-        }
+        // #region agent log
+        _d.push(`no prepV on signUp hook`);
+        // #endregion
+        throw new Error("No email verification method found on SignUp");
       }
 
       router.push({
