@@ -66,17 +66,16 @@ export default function EmailEntryScreen() {
         if (!si) throw Object.assign(new Error("SignIn unavailable"), { errors: [{ code: "form_identifier_not_found" }] });
         const result = await si.create({ identifier: trimmedEmail });
         // #region agent log
-        const rawFactors = result.supportedFirstFactors;
-        const factorType = rawFactors === undefined ? 'undefined' : rawFactors === null ? 'null' : Array.isArray(rawFactors) ? `array(${rawFactors.length})` : typeof rawFactors;
         const resultKeys = Object.keys(result ?? {}).join(',');
-        _d.push(`signIn OK`);
-        _d.push(`status=${result.status}`);
-        _d.push(`factors=${factorType}`);
+        const resultErr = (result as any)?.error;
+        const errCodes = resultErr?.errors?.map((e:any) => e.code)?.join(',') ?? 'none';
+        const errMsg = resultErr?.errors?.[0]?.message ?? resultErr?.message ?? JSON.stringify(resultErr)?.slice(0,120) ?? 'N/A';
+        _d.push(`signIn ret`);
         _d.push(`keys=[${resultKeys}]`);
-        if (Array.isArray(rawFactors) && rawFactors.length > 0) {
-          _d.push(`strats=[${rawFactors.map((f:any) => f.strategy).join(',')}]`);
-        }
-        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:66',message:'signIn.create result',data:{status:result.status,factorType,resultKeys,rawFactors:JSON.stringify(rawFactors)?.slice(0,500)},timestamp:Date.now(),hypothesisId:'H-A,H-E'})}).catch(()=>{});
+        _d.push(`status=${result.status}`);
+        _d.push(`errCodes=${errCodes}`);
+        _d.push(`errMsg=${errMsg}`);
+        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:66',message:'signIn.create result',data:{resultKeys,errCodes,errMsg,status:result.status},timestamp:Date.now(),hypothesisId:'H-E,H-F'})}).catch(()=>{});
         // #endregion
 
         const allFactors = result.supportedFirstFactors?.map((f: any) => f.strategy) ?? [];
