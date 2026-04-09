@@ -64,23 +64,23 @@ export default function EmailEntryScreen() {
         fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:58',message:'signIn source',data:{fromHook:!!signIn,fromClient:!!clerk.client?.signIn,email:trimmedEmail},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
         // #endregion
         if (!si) throw Object.assign(new Error("SignIn unavailable"), { errors: [{ code: "form_identifier_not_found" }] });
-        const result = await si.create({ identifier: trimmedEmail });
+        const rawSignIn = await si.create({ identifier: trimmedEmail });
 
-        // Clerk SDK sometimes returns errors as { error } instead of throwing
-        if ((result as any)?.error) {
-          const returnedErr = (result as any).error;
+        // Clerk SDK wraps responses in { result, error } — unwrap
+        if ((rawSignIn as any)?.error) {
+          const returnedErr = (rawSignIn as any).error;
           // #region agent log
-          _d.push(`signIn returned error, re-throwing`);
-          _d.push(`errCodes=${returnedErr?.errors?.map((e:any)=>e.code)?.join(',')}`);
-          fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:69',message:'signIn returned error, converting to throw',data:{codes:returnedErr?.errors?.map((e:any)=>e.code)},timestamp:Date.now(),hypothesisId:'H-F'})}).catch(()=>{});
+          _d.push(`signIn err → throw`);
+          _d.push(`codes=${returnedErr?.errors?.map((e:any)=>e.code)?.join(',')}`);
+          fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:69',message:'signIn error unwrapped',data:{codes:returnedErr?.errors?.map((e:any)=>e.code)},timestamp:Date.now(),hypothesisId:'H-F'})}).catch(()=>{});
           // #endregion
           throw returnedErr;
         }
+        const result = (rawSignIn as any)?.result ?? rawSignIn;
 
         // #region agent log
-        _d.push(`signIn OK, status=${result.status}`);
-        _d.push(`factors=${result.supportedFirstFactors?.length ?? 0}`);
-        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:79',message:'signIn.create success',data:{status:result.status,factorCount:result.supportedFirstFactors?.length},timestamp:Date.now(),hypothesisId:'H-F-verify'})}).catch(()=>{});
+        _d.push(`signIn OK, status=${result.status}, factors=${result.supportedFirstFactors?.length ?? 0}`);
+        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:79',message:'signIn unwrapped',data:{status:result.status,factorCount:result.supportedFirstFactors?.length,keys:Object.keys(result??{}).join(',')},timestamp:Date.now(),hypothesisId:'H-F-verify'})}).catch(()=>{});
         // #endregion
 
         const allFactors = result.supportedFirstFactors?.map((f: any) => f.strategy) ?? [];
@@ -147,24 +147,24 @@ export default function EmailEntryScreen() {
       _d.push(`signUp start, hasSignUp=${!!signUp}`);
       fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:135',message:'entering signUp',data:{hasSignUp:!!signUp},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
       // #endregion
-      const createResult = await signUp!.create({ emailAddress: trimmedEmail });
+      const rawSignUp = await signUp!.create({ emailAddress: trimmedEmail });
 
-      // Same Clerk SDK pattern: errors may be returned as values, not thrown
-      if ((createResult as any)?.error) {
-        const suErr = (createResult as any).error;
+      // Clerk SDK wraps responses in { result, error } — unwrap
+      if ((rawSignUp as any)?.error) {
+        const suErr = (rawSignUp as any).error;
         // #region agent log
-        _d.push(`signUp returned error: ${suErr?.errors?.map((e:any)=>e.code)?.join(',') ?? suErr?.message?.slice(0,60)}`);
+        _d.push(`signUp err → throw: ${suErr?.errors?.map((e:any)=>e.code)?.join(',') ?? suErr?.message?.slice(0,60)}`);
         // #endregion
         throw suErr;
       }
+      const createResult = (rawSignUp as any)?.result ?? rawSignUp;
 
       // #region agent log
-      const suKeys = Object.keys(createResult ?? {}).join(',');
-      _d.push(`signUp OK, status=${createResult.status}, keys=[${suKeys}]`);
-      const hasPrepV = typeof (createResult as any).prepareVerification === 'function';
-      const hasPrepEAV = typeof (createResult as any).prepareEmailAddressVerification === 'function';
+      _d.push(`signUp OK, status=${createResult.status}`);
+      const hasPrepV = typeof createResult.prepareVerification === 'function';
+      const hasPrepEAV = typeof createResult.prepareEmailAddressVerification === 'function';
       _d.push(`prepV=${hasPrepV}, prepEAV=${hasPrepEAV}`);
-      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:150',message:'signUp result',data:{status:createResult.status,keys:suKeys,hasPrepV,hasPrepEAV},timestamp:Date.now(),hypothesisId:'H-F-signup'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:150',message:'signUp unwrapped',data:{status:createResult.status,hasPrepV,hasPrepEAV,keys:Object.keys(createResult??{}).join(',')},timestamp:Date.now(),hypothesisId:'H-F-signup'})}).catch(()=>{});
       // #endregion
 
       if (createResult.status === "complete") {
@@ -181,16 +181,14 @@ export default function EmailEntryScreen() {
         await su.prepareEmailAddressVerification();
       } else {
         const fallback = signUp ?? clerk.client?.signUp;
-        // #region agent log
-        const fbPrepV = typeof (fallback as any)?.prepareVerification === 'function';
-        const fbPrepEAV = typeof (fallback as any)?.prepareEmailAddressVerification === 'function';
-        _d.push(`fallback: prepV=${fbPrepV}, prepEAV=${fbPrepEAV}`);
-        // #endregion
         if (fallback && typeof (fallback as any).prepareVerification === "function") {
           await (fallback as any).prepareVerification({ strategy: "email_code" });
         } else if (fallback && typeof (fallback as any).prepareEmailAddressVerification === "function") {
           await (fallback as any).prepareEmailAddressVerification();
         } else {
+          // #region agent log
+          _d.push(`no prepV on unwrapped or fallback`);
+          // #endregion
           throw new Error("No email verification method found on SignUp");
         }
       }
