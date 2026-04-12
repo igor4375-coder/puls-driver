@@ -67,6 +67,8 @@ export default function CameraSessionScreen() {
   const [mode, setMode] = useState<SessionMode>("photo");
   const [flash, setFlash] = useState<"off" | "on" | "auto">("off");
   const [wideAngle, setWideAngle] = useState(true);
+  const [ultraWideLensId, setUltraWideLensId] = useState<string | null>(null);
+  const lensesFetched = useRef(false);
   const [taking, setTaking] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -98,6 +100,28 @@ export default function CameraSessionScreen() {
       }
     });
     return () => { cancelled = true; };
+  }, []);
+
+  // ── Detect available lenses from the device (iOS only) ───────────────────
+  useEffect(() => {
+    if (Platform.OS !== "ios" || lensesFetched.current || !cameraRef.current) return;
+    const timer = setTimeout(async () => {
+      try {
+        const ref = cameraRef.current as any;
+        if (!ref?.getAvailableLensesAsync) return;
+        const lenses: any[] = await ref.getAvailableLensesAsync();
+        if (!Array.isArray(lenses) || lenses.length === 0) return;
+        lensesFetched.current = true;
+        for (const lens of lenses) {
+          const id = typeof lens === "string" ? lens : lens?.deviceType ?? "";
+          if (/ultra/i.test(id)) {
+            setUltraWideLensId(id);
+            break;
+          }
+        }
+      } catch {}
+    }, 700);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -260,7 +284,10 @@ export default function CameraSessionScreen() {
   const cycleFlash = () =>
     setFlash((f) => (f === "off" ? "on" : f === "on" ? "auto" : "off"));
 
-  const cycleZoom = () => setWideAngle((w) => !w);
+  const cycleZoom = () => {
+    if (!ultraWideLensId) return;
+    setWideAngle((w) => !w);
+  };
 
   // ── Permission screen ─────────────────────────────────────────────────────
 
@@ -296,15 +323,16 @@ export default function CameraSessionScreen() {
   // ── Flash icon ────────────────────────────────────────────────────────────
 
   const flashLabel = flash === "off" ? "Off" : flash === "on" ? "On" : "Auto";
-  const zoomLabel = wideAngle ? "0.5x" : "1x";
+  const activeLens = wideAngle && ultraWideLensId ? ultraWideLensId : undefined;
+  const zoomLabel = activeLens ? "0.5x" : "1x";
 
   // ── Main camera UI ────────────────────────────────────────────────────────
 
   return (
     <View style={s.root}>
-      {/* Full-screen viewfinder — key forces native remount on lens switch */}
+      {/* key forces native remount when switching physical lenses */}
       <CameraView
-        key={wideAngle ? "ultra-wide" : "wide"}
+        key={activeLens ?? "default"}
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         facing="back"
@@ -313,11 +341,7 @@ export default function CameraSessionScreen() {
         mode={mode as any}
         videoQuality="720p"
         videoStabilizationMode="auto"
-        selectedLens={
-          Platform.OS === "ios"
-            ? wideAngle ? "builtInUltraWideCamera" : "builtInWideAngleCamera"
-            : undefined
-        }
+        selectedLens={activeLens as any}
       />
 
       {/* Shutter flash overlay */}
