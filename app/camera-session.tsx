@@ -302,8 +302,9 @@ export default function CameraSessionScreen() {
 
   return (
     <View style={s.root}>
-      {/* Full-screen viewfinder */}
+      {/* Full-screen viewfinder — key forces native remount on lens switch */}
       <CameraView
+        key={wideAngle ? "ultra-wide" : "wide"}
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         facing="back"
@@ -312,9 +313,11 @@ export default function CameraSessionScreen() {
         mode={mode as any}
         videoQuality="720p"
         videoStabilizationMode="auto"
-        {...(Platform.OS === "ios" ? {
-          selectedLens: wideAngle ? "builtInUltraWideCamera" : "builtInWideAngleCamera",
-        } : {})}
+        selectedLens={
+          Platform.OS === "ios"
+            ? wideAngle ? "builtInUltraWideCamera" : "builtInWideAngleCamera"
+            : undefined
+        }
       />
 
       {/* Shutter flash overlay */}

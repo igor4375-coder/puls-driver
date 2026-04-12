@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v38-camera-lens-fix";
+const BUILD_TAG = "v39-camera-lens-remount";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
