@@ -17,10 +17,10 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
 const COUNTRY_CODES = [
-  { code: "+1", flag: "🇺🇸", label: "US/CA" },
-  { code: "+44", flag: "🇬🇧", label: "UK" },
-  { code: "+61", flag: "🇦🇺", label: "AU" },
-  { code: "+52", flag: "🇲🇽", label: "MX" },
+  { code: "+1", flag: "\u{1F1FA}\u{1F1F8}", label: "US/CA" },
+  { code: "+44", flag: "\u{1F1EC}\u{1F1E7}", label: "UK" },
+  { code: "+61", flag: "\u{1F1E6}\u{1F1FA}", label: "AU" },
+  { code: "+52", flag: "\u{1F1F2}\u{1F1FD}", label: "MX" },
 ];
 
 export default function PhoneEntryScreen() {
@@ -32,8 +32,8 @@ export default function PhoneEntryScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
-  const { signUp, setActive: setSignUpActive } = useSignUp();
-  const { signIn, setActive: setSignInActive } = useSignIn();
+  const { signUp } = useSignUp();
+  const { signIn } = useSignIn();
 
   const formatPhone = (raw: string) => {
     const digits = raw.replace(/\D/g, "");
@@ -65,57 +65,103 @@ export default function PhoneEntryScreen() {
     setError("");
     setIsLoading(true);
     const fullNumber = getFullNumber();
+    const si = signIn as any;
+    const su = signUp as any;
 
     try {
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
 
-      // Try sign-in first (existing user)
-      try {
-        const result = await signIn!.create({
-          identifier: fullNumber,
-        });
+      // --- Sign-In attempt (existing user) ---
+      let userNotFound = false;
 
-        const phoneCodeFactor = result.supportedFirstFactors?.find(
-          (f: any) => f.strategy === "phone_code",
-        ) as any;
+      if (si) {
+        const { error: createErr } = await si.create({ identifier: fullNumber });
 
-        if (phoneCodeFactor) {
-          await signIn!.prepareFirstFactor({
-            strategy: "phone_code",
-            phoneNumberId: phoneCodeFactor.phoneNumberId,
-          });
+        if (createErr) {
+          const isNotFound =
+            createErr.code === "form_identifier_not_found" ||
+            createErr.code === "form_param_nil" ||
+            (createErr as any).errors?.some(
+              (e: any) =>
+                e.code === "form_identifier_not_found" ||
+                e.code === "form_param_nil",
+            );
 
-          router.push({
-            pathname: "/(auth)/phone-verify" as any,
-            params: {
-              phoneNumber: fullNumber,
-              displayPhone: `${countryCode} ${formatPhone(phone)}`,
-              displayIdentifier: `${countryCode} ${formatPhone(phone)}`,
-              isExistingUser: "1",
-              flow: "signIn",
-              method: "phone",
-            },
-          });
+          if (!isNotFound) {
+            const msg =
+              (createErr as any).errors?.[0]?.longMessage ??
+              (createErr as any).errors?.[0]?.message ??
+              createErr.longMessage ??
+              createErr.message ??
+              "Sign-in failed";
+            setError(msg);
+            return;
+          }
+          userNotFound = true;
+        } else if (si.status === "needs_first_factor") {
+          const hasPhoneCode = si.supportedFirstFactors?.some(
+            (f: any) => f.strategy === "phone_code",
+          );
+
+          if (hasPhoneCode) {
+            const { error: sendErr } = await si.phoneCode.sendCode();
+            if (sendErr) {
+              setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send code");
+              return;
+            }
+
+            router.push({
+              pathname: "/(auth)/phone-verify" as any,
+              params: {
+                phoneNumber: fullNumber,
+                displayPhone: `${countryCode} ${formatPhone(phone)}`,
+                displayIdentifier: `${countryCode} ${formatPhone(phone)}`,
+                isExistingUser: "1",
+                flow: "signIn",
+                method: "phone",
+              },
+            });
+            return;
+          }
+        } else if (si.status === "complete") {
+          await si.finalize();
+          while (router.canGoBack()) router.back();
+          setTimeout(() => router.replace("/(tabs)"), 100);
           return;
         }
-      } catch (signInErr: any) {
-        // If user doesn't exist, fall through to sign-up
-        if (
-          !signInErr?.errors?.some(
-            (e: any) =>
-              e.code === "form_identifier_not_found" ||
-              e.code === "form_param_nil",
-          )
-        ) {
-          throw signInErr;
-        }
+      } else {
+        userNotFound = true;
       }
 
-      // Sign-up flow (new user)
-      await signUp!.create({ phoneNumber: fullNumber });
-      await signUp!.prepareVerification({ strategy: "phone_code" });
+      if (!userNotFound) return;
+
+      // --- Sign-Up flow (new user) ---
+      if (!su) {
+        setError("Sign-up unavailable. Please try again.");
+        return;
+      }
+
+      const { error: suCreateErr } = await su.create({ phoneNumber: fullNumber });
+
+      if (suCreateErr) {
+        const msg =
+          (suCreateErr as any).errors?.[0]?.longMessage ??
+          (suCreateErr as any).errors?.[0]?.message ??
+          suCreateErr.longMessage ??
+          suCreateErr.message ??
+          "Sign-up failed";
+        setError(msg);
+        return;
+      }
+
+      const { error: sendErr } = await su.verifications.sendPhoneCode();
+
+      if (sendErr) {
+        setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send verification code");
+        return;
+      }
 
       router.push({
         pathname: "/(auth)/phone-verify" as any,
@@ -130,15 +176,12 @@ export default function PhoneEntryScreen() {
       });
     } catch (err: any) {
       console.log("[PhoneEntry] Full error:", JSON.stringify(err, null, 2));
-      console.log("[PhoneEntry] err.errors:", JSON.stringify(err?.errors, null, 2));
-      console.log("[PhoneEntry] err.message:", err?.message);
       const clerkError = err?.errors?.[0];
       const errorMsg =
         clerkError?.longMessage ??
         clerkError?.message ??
         err?.message ??
         "Failed to send verification code. Please try again.";
-      console.log("[PhoneEntry] Displaying error:", errorMsg);
       setError(errorMsg);
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -168,17 +211,16 @@ export default function PhoneEntryScreen() {
             </Text>
           </View>
 
-          {/* Country code picker */}
           <View style={styles.inputRow}>
             <TouchableOpacity
               style={[styles.countryBtn, { borderColor: colors.border, backgroundColor: colors.surface }]}
               onPress={() => setShowCountryPicker(!showCountryPicker)}
             >
               <Text style={[styles.countryFlag, { color: colors.foreground }]}>
-                {COUNTRY_CODES.find((c) => c.code === countryCode)?.flag ?? "🌐"}{" "}
+                {COUNTRY_CODES.find((c) => c.code === countryCode)?.flag ?? "\u{1F310}"}{" "}
                 {countryCode}
               </Text>
-              <Text style={{ color: colors.muted, fontSize: 12 }}>▼</Text>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>{"\u25BC"}</Text>
             </TouchableOpacity>
 
             <TextInput

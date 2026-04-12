@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v32-debug-login";
+const BUILD_TAG = "v38-camera-lens-fix";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
@@ -32,17 +32,8 @@ export function UpdateVersionBanner() {
     })();
   }, []);
 
-  if (Platform.OS === "web") return null;
-
-  const short = updateId ? updateId.slice(0, 8) : "embedded";
-
-  return (
-    <View style={[styles.banner, { top: insets.top + 2 }]}>
-      <Text style={styles.text}>
-        {BUILD_TAG} • {short}{checking ? " • checking…" : ""}
-      </Text>
-    </View>
-  );
+  // Banner hidden for App Store screenshots
+  return null;
 }
 
 const styles = StyleSheet.create({

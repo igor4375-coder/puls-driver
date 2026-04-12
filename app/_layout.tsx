@@ -29,6 +29,7 @@ import { SettingsProvider } from "@/lib/settings-context";
 import { LoadsProvider } from "@/lib/loads-context";
 import { PermissionsProvider } from "@/lib/permissions-context";
 import { SyncStatusBanner } from "@/components/sync-status-banner";
+import { UpdateVersionBanner } from "@/components/update-version-banner";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
 import { photoQueue } from "@/lib/photo-queue";
@@ -140,6 +141,7 @@ function AppContent() {
             <Stack.Screen name="oauth/callback" />
           </Stack>
           <SyncStatusBanner />
+          <UpdateVersionBanner />
           <StatusBar style="auto" />
             </LoadsProviderWithAuth>
           </SettingsProvider>

@@ -42,6 +42,8 @@ export interface PhotoQueueEntry {
   lastError: string | null;
   loadId?: string;
   vehicleId?: string;
+  /** Human-readable load number (e.g. LD-2026-52760) for R2 folder naming */
+  loadNumber?: string;
   createdAt: number;
   stampMeta?: StampMeta;
   stamped?: boolean;
@@ -57,6 +59,8 @@ const MAX_RETRIES = 10;
 const RETRY_DELAYS_MS = [3_000, 8_000, 20_000, 45_000, 90_000, 180_000];
 const BACKGROUND_INTERVAL_MS = 15_000;
 const UPLOAD_CONCURRENCY = 4;
+const STALE_UPLOAD_MS = 60_000;
+const UPLOAD_TIMEOUT_MS = 30_000;
 
 function getUploadApiBase(): string {
   const fromEnv =
@@ -91,6 +95,12 @@ async function isOnline(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = UPLOAD_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // ─── Queue Class ──────────────────────────────────────────────────────────────
@@ -180,7 +190,7 @@ export class PhotoQueue {
 
   async enqueue(
     tempUri: string,
-    meta?: { loadId?: string; vehicleId?: string; stampMeta?: StampMeta }
+    meta?: { loadId?: string; vehicleId?: string; loadNumber?: string; stampMeta?: StampMeta }
   ): Promise<PhotoQueueEntry> {
     await this.load();
 
@@ -209,6 +219,7 @@ export class PhotoQueue {
       lastError: null,
       loadId: meta?.loadId,
       vehicleId: meta?.vehicleId,
+      loadNumber: meta?.loadNumber,
       createdAt: Date.now(),
       stampMeta: meta?.stampMeta,
       stamped: !meta?.stampMeta,
@@ -276,6 +287,21 @@ export class PhotoQueue {
     await this.load();
 
     const now = Date.now();
+
+    // Watchdog: reset entries stuck in "uploading" for over 60 s back to
+    // "pending" so they get retried instead of hanging forever.
+    let rescued = false;
+    for (const e of this.entries) {
+      if (e.status === "uploading" && e.lastAttemptAt && now - e.lastAttemptAt > STALE_UPLOAD_MS) {
+        e.status = "pending";
+        rescued = true;
+      }
+    }
+    if (rescued) {
+      this.persist();
+      this.emit();
+    }
+
     const ready = this.entries.filter((e) => {
       if (e.status !== "pending" && e.status !== "failed") return false;
       if (e.attempts >= MAX_RETRIES) return false;
@@ -301,21 +327,26 @@ export class PhotoQueue {
   }
 
   private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
-    this.updateEntry(entry.clientId, { status: "uploading" });
+    this.updateEntry(entry.clientId, { status: "uploading", lastAttemptAt: Date.now() });
 
     try {
       // Compress before upload (reduces ~8-12MB to ~300-800KB)
       const compressedUri = await compressImage(entry.localUri);
-      const groupKey = [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
+      const vin = entry.stampMeta?.vin;
+      const groupKey = entry.loadNumber && vin
+        ? `${entry.loadNumber}/${vin}`
+        : entry.loadNumber
+          ? entry.loadNumber
+          : [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
       const apiBase = getUploadApiBase();
 
-      // Step 1: Get a presigned upload URL
+      // Step 1: Get a presigned upload URL (with timeout)
       const params = new URLSearchParams({
         ext: "jpg",
         groupKey,
         clientId: entry.clientId,
       });
-      const presignRes = await fetch(`${apiBase}/api/photos/upload-url?${params}`);
+      const presignRes = await fetchWithTimeout(`${apiBase}/api/photos/upload-url?${params}`);
       if (!presignRes.ok) {
         throw new Error(`Presign failed: HTTP ${presignRes.status}`);
       }
@@ -330,7 +361,7 @@ export class PhotoQueue {
       if (Platform.OS === "web") {
         const blobRes = await fetch(compressedUri);
         const blob = await blobRes.blob();
-        const uploadResponse = await fetch(uploadUrl, {
+        const uploadResponse = await fetchWithTimeout(uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": "image/jpeg" },
           body: blob,
@@ -339,12 +370,16 @@ export class PhotoQueue {
           throw new Error(`R2 upload failed: HTTP ${uploadResponse.status}`);
         }
       } else {
-        const result = await FileSystem.uploadAsync(uploadUrl, compressedUri, {
+        const uploadPromise = FileSystem.uploadAsync(uploadUrl, compressedUri, {
           httpMethod: "PUT",
           headers: { "Content-Type": "image/jpeg" },
           uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-          sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
+          sessionType: FileSystem.FileSystemSessionType.FOREGROUND,
         });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("R2 upload timed out")), UPLOAD_TIMEOUT_MS)
+        );
+        const result = await Promise.race([uploadPromise, timeoutPromise]);
         if (result.status < 200 || result.status >= 300) {
           throw new Error(`R2 upload failed: HTTP ${result.status}`);
         }

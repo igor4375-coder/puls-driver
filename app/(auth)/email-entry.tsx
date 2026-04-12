@@ -25,7 +25,7 @@ export default function EmailEntryScreen() {
   const inputRef = useRef<TextInput>(null);
 
   const { isSignedIn } = useAuth();
-  const { signUp, setActive: setSignUpActive } = useSignUp();
+  const { signUp } = useSignUp();
   const { signIn } = useSignIn();
   const clerk = useClerk();
 
@@ -47,134 +47,136 @@ export default function EmailEntryScreen() {
     setError("");
     setIsLoading(true);
     const trimmedEmail = email.trim().toLowerCase();
-    // #region agent log — on-screen debug trace (session 887738)
-    const _d: string[] = [];
-    // #endregion
 
     try {
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
 
-      // Try sign-in first (existing user)
-      try {
-        const si = signIn ?? clerk.client?.signIn;
-        // #region agent log
-        _d.push(`si=${signIn ? 'hook' : si ? 'client' : 'NULL'}`);
-        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:58',message:'signIn source',data:{fromHook:!!signIn,fromClient:!!clerk.client?.signIn,email:trimmedEmail},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-        // #endregion
-        if (!si) throw Object.assign(new Error("SignIn unavailable"), { errors: [{ code: "form_identifier_not_found" }] });
-        const rawSignIn = await si.create({ identifier: trimmedEmail });
+      const si = signIn as any;
 
-        // Clerk SDK returns { result, error } — check error first
-        if ((rawSignIn as any)?.error) {
-          throw (rawSignIn as any).error;
-        }
+      if (!si) {
+        throw Object.assign(new Error("SignIn unavailable"), {
+          errors: [{ code: "form_identifier_not_found" }],
+        });
+      }
 
-        // Clerk hooks mutate in place — read from the hook object, not the return value
-        const siResource = si as any;
+      const { error: createErr } = await si.create({ identifier: trimmedEmail });
 
-        // #region agent log
-        _d.push(`signIn done, hook.status=${siResource.status}, hook.factors=${siResource.supportedFirstFactors?.length ?? 0}`);
-        if (siResource.supportedFirstFactors?.length > 0) {
-          _d.push(`strats=[${siResource.supportedFirstFactors.map((f:any)=>f.strategy).join(',')}]`);
-        }
-        // #endregion
-
-        const emailCodeFactor = siResource.supportedFirstFactors?.find(
-          (f: any) => f.strategy === "email_code",
-        );
-
-        if (emailCodeFactor) {
-          await si.prepareFirstFactor({
-            strategy: "email_code",
-            emailAddressId: emailCodeFactor.emailAddressId,
-          });
-
-          router.push({
-            pathname: "/(auth)/phone-verify" as any,
-            params: {
-              identifier: trimmedEmail,
-              displayIdentifier: trimmedEmail,
-              isExistingUser: "1",
-              flow: "signIn",
-              method: "email",
-            },
-          });
-          return;
-        }
-
-        const ssoFactor = siResource.supportedFirstFactors?.find(
-          (f: any) => f.strategy?.startsWith("oauth_"),
-        );
-        if (ssoFactor) {
-          const provider = ssoFactor.strategy.replace("oauth_", "");
-          const label =
-            provider === "google" ? "Google" : provider === "apple" ? "Apple" : provider;
-          setError(
-            `This account uses ${label} sign-in. Go back and tap "Continue with ${label}".`,
+      if (createErr) {
+        const isNotFound =
+          createErr.code === "form_identifier_not_found" ||
+          createErr.code === "form_param_nil" ||
+          (createErr as any).errors?.some(
+            (e: any) =>
+              e.code === "form_identifier_not_found" ||
+              e.code === "form_param_nil",
           );
+
+        if (!isNotFound) {
+          const msg =
+            (createErr as any).errors?.[0]?.longMessage ??
+            (createErr as any).errors?.[0]?.message ??
+            createErr.longMessage ??
+            createErr.message ??
+            "Sign-in failed";
+          setError(msg);
+          return;
+        }
+      } else {
+        if (si.status === "needs_first_factor") {
+          const hasEmailCode = si.supportedFirstFactors?.some(
+            (f: any) => f.strategy === "email_code",
+          );
+          const ssoFactor = si.supportedFirstFactors?.find(
+            (f: any) => f.strategy?.startsWith("oauth_"),
+          );
+
+          if (hasEmailCode) {
+            const { error: sendErr } = await si.emailCode.sendCode();
+
+            if (sendErr) {
+              setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send code");
+              return;
+            }
+
+            router.push({
+              pathname: "/(auth)/phone-verify" as any,
+              params: {
+                identifier: trimmedEmail,
+                displayIdentifier: trimmedEmail,
+                isExistingUser: "1",
+                flow: "signIn",
+                method: "email",
+              },
+            });
+            return;
+          }
+
+          if (ssoFactor) {
+            const provider = ssoFactor.strategy.replace("oauth_", "");
+            const label =
+              provider === "google"
+                ? "Google"
+                : provider === "apple"
+                  ? "Apple"
+                  : provider;
+            setError(
+              `This account uses ${label} sign-in. Go back and tap "Continue with ${label}".`,
+            );
+            return;
+          }
+
+          setError("No supported sign-in method found for this account.");
           return;
         }
 
-        // #region agent log — show full trace on screen
-        setError(`[DBG-887738] ${_d.join(' | ')}`);
-        // #endregion
-        return;
-      } catch (signInErr: any) {
-        const codes = signInErr?.errors?.map((e: any) => e.code) ?? [];
-        // #region agent log
-        _d.push(`signIn ERR: codes=[${codes.join(',')}] msg=${signInErr?.message?.slice(0,80)}`);
-        fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:117',message:'signIn catch',data:{codes,msg:signInErr?.message?.slice(0,200)},timestamp:Date.now(),hypothesisId:'H-A,H-C,H-D'})}).catch(()=>{});
-        // #endregion
-        const isUserNotFound = signInErr?.errors?.some(
-          (e: any) =>
-            e.code === "form_identifier_not_found" ||
-            e.code === "form_param_nil",
-        );
-        if (!isUserNotFound) {
-          throw signInErr;
+        if (si.status === "complete") {
+          await si.finalize();
+          while (router.canGoBack()) router.back();
+          setTimeout(() => router.replace("/(tabs)"), 100);
+          return;
         }
-        _d.push(`user not found → signup`);
-      }
 
-      // Sign-up flow (new user)
-      // #region agent log
-      _d.push(`signUp start, hasSignUp=${!!signUp}`);
-      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:135',message:'entering signUp',data:{hasSignUp:!!signUp},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
-      // #endregion
-      const rawSignUp = await signUp!.create({ emailAddress: trimmedEmail });
-
-      // Clerk SDK returns { result, error } — check error first
-      if ((rawSignUp as any)?.error) {
-        throw (rawSignUp as any).error;
-      }
-
-      // Clerk hooks mutate in place — read from the hook object
-      const suResource = signUp as any;
-
-      // #region agent log
-      _d.push(`signUp done, hook.status=${suResource?.status}`);
-      const hasPrepV = typeof suResource?.prepareVerification === 'function';
-      const hasPrepEAV = typeof suResource?.prepareEmailAddressVerification === 'function';
-      _d.push(`prepV=${hasPrepV}, prepEAV=${hasPrepEAV}`);
-      // #endregion
-
-      if (suResource?.status === "complete") {
-        await setSignUpActive!({ session: suResource.createdSessionId });
-        router.replace("/(tabs)");
+        setError("Unexpected sign-in state. Please try again.");
         return;
       }
 
-      if (typeof suResource?.prepareVerification === "function") {
-        await suResource.prepareVerification({ strategy: "email_code" });
-      } else if (typeof suResource?.prepareEmailAddressVerification === "function") {
-        await suResource.prepareEmailAddressVerification();
-      } else {
-        // #region agent log
-        _d.push(`no prepV on signUp hook`);
-        // #endregion
-        throw new Error("No email verification method found on SignUp");
+      // --- Sign-Up flow (new user) ---
+      const su = signUp as any;
+
+      if (!su) {
+        setError("Sign-up unavailable. Please try again.");
+        return;
+      }
+
+      const { error: suCreateErr } = await su.create({
+        emailAddress: trimmedEmail,
+      });
+
+      if (suCreateErr) {
+        const msg =
+          (suCreateErr as any).errors?.[0]?.longMessage ??
+          (suCreateErr as any).errors?.[0]?.message ??
+          suCreateErr.longMessage ??
+          suCreateErr.message ??
+          "Sign-up failed";
+        setError(msg);
+        return;
+      }
+
+      if (su.status === "complete") {
+        await su.finalize();
+        while (router.canGoBack()) router.back();
+        setTimeout(() => router.replace("/(tabs)"), 100);
+        return;
+      }
+
+      const { error: sendErr } = await su.verifications.sendEmailCode();
+
+      if (sendErr) {
+        setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send verification code");
+        return;
       }
 
       router.push({
@@ -188,11 +190,6 @@ export default function EmailEntryScreen() {
         },
       });
     } catch (err: any) {
-      // #region agent log
-      _d.push(`OUTER ERR: ${err?.errors?.map((e:any)=>e.code).join(',') || err?.message?.slice(0,80)}`);
-      fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'887738'},body:JSON.stringify({sessionId:'887738',location:'email-entry.tsx:180',message:'outer catch',data:{codes:err?.errors?.map((e:any)=>e.code),msg:err?.message?.slice(0,200),trace:_d.join(' | ')},timestamp:Date.now(),hypothesisId:'H-all'})}).catch(()=>{});
-      // #endregion
-
       const isStaleSession =
         err?.errors?.some(
           (e: any) =>
@@ -208,9 +205,13 @@ export default function EmailEntryScreen() {
         await nukeAllClerkTokens();
         setError("Session cleared. Please try again.");
       } else {
-        // #region agent log — show full trace on screen for outer errors too
-        setError(`[DBG-887738] ${_d.join(' | ')}`);
-        // #endregion
+        const clerkError = err?.errors?.[0];
+        setError(
+          clerkError?.longMessage ??
+            clerkError?.message ??
+            err?.message ??
+            "Sign-in failed. Please try again.",
+        );
       }
       if (Platform.OS !== "web") {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

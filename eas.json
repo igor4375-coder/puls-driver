@@ -17,6 +17,11 @@
       "distribution": "internal",
       "autoIncrement": true,
       "channel": "production"
+    },
+    "store": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "channel": "production"
     }
   }
 }

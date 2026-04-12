@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import React, { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,11 +11,22 @@ import {
   Animated,
   PanResponder,
   Dimensions,
+  Linking,
 } from "react-native";
 import MapView, { Marker, Callout, type Region } from "react-native-maps";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+
+class MapErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() { return this.state.hasError ? this.fallback : this.props.children; }
+  get fallback() { return this.props.fallback; }
+}
 
 export interface MapPin {
   lat: number;
@@ -105,6 +116,80 @@ function buildClusters(pins: MapPin[]): LocationCluster[] {
     }
   }
   return clusters;
+}
+
+function MapFallbackList({
+  clusters,
+  primaryColor,
+  onSelectCluster,
+  selectedClusterKey,
+}: {
+  clusters: LocationCluster[];
+  primaryColor: string;
+  onSelectCluster: (c: LocationCluster) => void;
+  selectedClusterKey: string | null;
+}) {
+  const colors = useColors();
+  const ck = (c: LocationCluster) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`;
+
+  const openInMaps = (lat: number, lng: number, label: string) => {
+    const url = Platform.OS === "ios"
+      ? `maps:?q=${encodeURIComponent(label)}&ll=${lat},${lng}`
+      : `geo:${lat},${lng}?q=${lat},${lng}(${encodeURIComponent(label)})`;
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`);
+    });
+  };
+
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 16, gap: 8 }}>
+      <View style={{ alignItems: "center", marginBottom: 8, gap: 6 }}>
+        <IconSymbol name="map" size={32} color={colors.muted} />
+        <Text style={{ color: colors.muted, fontSize: 13, textAlign: "center" }}>
+          Tap a location to open in your maps app
+        </Text>
+      </View>
+      {clusters.map((cluster, idx) => {
+        const isSelected = ck(cluster) === selectedClusterKey;
+        const count = cluster.vehicles.length;
+        return (
+          <TouchableOpacity
+            key={idx}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
+              padding: 14,
+              borderRadius: 12,
+              backgroundColor: isSelected ? primaryColor + "18" : colors.surface,
+              borderWidth: 1,
+              borderColor: isSelected ? primaryColor : colors.border,
+            }}
+            onPress={() => openInMaps(cluster.lat, cluster.lng, cluster.locationName)}
+            onLongPress={() => onSelectCluster(cluster)}
+            activeOpacity={0.7}
+          >
+            <View style={{
+              width: 36, height: 36, borderRadius: 18,
+              backgroundColor: primaryColor,
+              alignItems: "center", justifyContent: "center",
+            }}>
+              <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>{count}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.foreground, fontWeight: "600", fontSize: 14 }} numberOfLines={1}>
+                {cluster.locationName}
+              </Text>
+              <Text style={{ color: colors.muted, fontSize: 12, marginTop: 2 }}>
+                {count} vehicle{count !== 1 ? "s" : ""} — tap to navigate
+              </Text>
+            </View>
+            <IconSymbol name="location.fill" size={18} color={primaryColor} />
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
 }
 
 export function LocationsMapModal({
@@ -309,7 +394,7 @@ export function LocationsMapModal({
               </Text>
               {clusters.map((c, i) => (
                 <Text key={i} style={[styles.webPin, { color: colors.foreground }]}>
-                  📍 {c.locationName} — {c.vehicles.length} vehicle{c.vehicles.length !== 1 ? "s" : ""}
+                  {c.locationName} — {c.vehicles.length} vehicle{c.vehicles.length !== 1 ? "s" : ""}
                 </Text>
               ))}
             </View>
@@ -324,41 +409,49 @@ export function LocationsMapModal({
               </Text>
             </View>
           ) : (
-            <MapView
-              ref={mapRef}
-              style={styles.map}
-              initialRegion={fitRegion(clusters)}
-              showsUserLocation
-              showsCompass
-              showsScale
+            <MapErrorBoundary
+              fallback={
+                <MapFallbackList
+                  clusters={clusters}
+                  primaryColor={primaryColor}
+                  onSelectCluster={handleSelectCluster}
+                  selectedClusterKey={selectedClusterKey}
+                />
+              }
             >
-              {clusters.map((cluster, idx) => {
-                const isSelected = clusterKey(cluster) === selectedClusterKey;
-                const count = cluster.vehicles.length;
-                const bgColor = isSelected ? HIGHLIGHT_COLOR : primaryColor;
-                return (
-                  <Marker
-                    key={`cluster-${idx}`}
-                    coordinate={{ latitude: cluster.lat, longitude: cluster.lng }}
-                    tracksViewChanges={false}
-                    onPress={() => handleSelectCluster(cluster)}
-                  >
-                    {/* Custom marker: circle with vehicle count badge */}
-                    <View style={[styles.markerWrap]}>
-                      <View style={[styles.markerBubble, { backgroundColor: bgColor }]}>
-                        <Text style={styles.markerCount}>{count}</Text>
+              <MapView
+                ref={mapRef}
+                style={styles.map}
+                initialRegion={fitRegion(clusters)}
+                showsUserLocation
+                showsCompass
+                showsScale
+              >
+                {clusters.map((cluster, idx) => {
+                  const isSelected = clusterKey(cluster) === selectedClusterKey;
+                  const count = cluster.vehicles.length;
+                  const bgColor = isSelected ? HIGHLIGHT_COLOR : primaryColor;
+                  return (
+                    <Marker
+                      key={`cluster-${idx}`}
+                      coordinate={{ latitude: cluster.lat, longitude: cluster.lng }}
+                      tracksViewChanges={Platform.OS === "android"}
+                      onPress={() => handleSelectCluster(cluster)}
+                    >
+                      <View style={styles.markerWrap}>
+                        <View style={[styles.markerBubble, { backgroundColor: bgColor }]}>
+                          <Text style={styles.markerCount}>{count}</Text>
+                        </View>
+                        <View style={[styles.markerTail, { borderTopColor: bgColor }]} />
                       </View>
-                      <View style={[styles.markerTail, { borderTopColor: bgColor }]} />
-                    </View>
-                    {/* Empty Callout prevents the default iOS callout from
-                        intercepting the tap and blocking onPress propagation */}
-                    <Callout tooltip>
-                      <View />
-                    </Callout>
-                  </Marker>
-                );
-              })}
-            </MapView>
+                      <Callout tooltip>
+                        <View />
+                      </Callout>
+                    </Marker>
+                  );
+                })}
+              </MapView>
+            </MapErrorBoundary>
           )}
         </View>
 
@@ -624,7 +717,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   // Custom map marker styles
-  markerWrap: { alignItems: "center" },
+  markerWrap: { alignItems: "center", width: 48, height: 48 },
   markerBubble: {
     minWidth: 36,
     height: 36,

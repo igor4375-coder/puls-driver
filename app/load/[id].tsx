@@ -486,12 +486,9 @@ function getCtaConfig(load: Load): { label: string; action: () => void; color: s
 export default function LoadDetailScreen() {
   const colors = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { getLoad, updateLoadStatus } = useLoads();
+  const { getLoad, updateLoadStatus, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
   const { canViewRates } = usePermissions();
-  const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
-  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
-  const syncInspectionAction = useAction(api.platform.syncInspection);
   const saveSignatureMutation = useMutation(api.signatures.save);
   const resendFieldPickupAction = useAction(api.fieldPickups.resend);
 
@@ -732,8 +729,8 @@ export default function LoadDetailScreen() {
               }
               updateLoadStatus(load.id, "picked_up");
               setRequireCustomerSignature(false);
-              pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
-              showToast("Vehicle picked up — moved to Picked Up tab");
+              pickupHighlightStore.signal("new", "Vehicle picked up");
+              showToast("Vehicle picked up");
               if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)/" as any); }
               const savedSigPaths = settings.driverSignaturePaths;
               const driverSigStr = savedSigPaths.length > 0
@@ -758,19 +755,22 @@ export default function LoadDetailScreen() {
                     diagramView: d.diagramView, note: d.description || undefined,
                   }))
                 );
-                markAsPickedUpAction({
-                  loadNumber: load.loadNumber,
-                  legId: platformTripId,
-                  driverCode,
-                  pickupTime: new Date().toISOString(),
-                  pickupGPS: { lat: 0, lng: 0 },
-                  pickupPhotos: [],
-                  customerNotAvailable: true,
-                  ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-                  damages: allDamages,
-                  noDamage: allDamages.length === 0,
-                  vehicleVin: load.vehicles[0]?.vin || "",
-                }).catch((err) => console.warn("[LoadDetail] Platform sync failed:", err));
+                queuePlatformSync({
+                  type: "markAsPickedUp",
+                  args: {
+                    loadNumber: load.loadNumber,
+                    legId: platformTripId,
+                    driverCode,
+                    pickupTime: new Date().toISOString(),
+                    pickupGPS: { lat: 0, lng: 0 },
+                    pickupPhotos: [],
+                    customerNotAvailable: true,
+                    ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+                    damages: allDamages,
+                    noDamage: allDamages.length === 0,
+                    vehicleVin: load.vehicles[0]?.vin || "",
+                  },
+                });
               }
             },
           },
@@ -805,8 +805,8 @@ export default function LoadDetailScreen() {
     // Default: auto-confirm with "Customer Not Available" using saved driver signature
     updateLoadStatus(load.id, "picked_up");
     setRequireCustomerSignature(false);
-    pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
-    showToast("Vehicle picked up — moved to Picked Up tab");
+    pickupHighlightStore.signal("new", "Vehicle picked up");
+    showToast("Vehicle picked up");
     if (router.canGoBack()) {
       router.back();
     } else {
@@ -855,21 +855,24 @@ export default function LoadDetailScreen() {
           const firstVehicle = load.vehicles[0];
           const firstInspection = firstVehicle?.pickupInspection;
 
-          await markAsPickedUpAction({
-            loadNumber: load.loadNumber,
-            legId: platformTripId,
-            driverCode,
-            pickupTime: new Date().toISOString(),
-            pickupGPS: {
-              lat: firstInspection?.locationLat ?? 0,
-              lng: firstInspection?.locationLng ?? 0,
+          queuePlatformSync({
+            type: "markAsPickedUp",
+            args: {
+              loadNumber: load.loadNumber,
+              legId: platformTripId,
+              driverCode,
+              pickupTime: new Date().toISOString(),
+              pickupGPS: {
+                lat: firstInspection?.locationLat ?? 0,
+                lng: firstInspection?.locationLng ?? 0,
+              },
+              pickupPhotos,
+              customerNotAvailable: true,
+              ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+              damages: allDamages,
+              noDamage: allDamages.length === 0,
+              vehicleVin: firstVehicle?.vin || "",
             },
-            pickupPhotos,
-            customerNotAvailable: true,
-            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-            damages: allDamages,
-            noDamage: allDamages.length === 0,
-            vehicleVin: firstVehicle?.vin || "",
           });
         } catch (err) {
           console.warn("[LoadDetail] Platform sync failed:", err);
@@ -899,7 +902,7 @@ export default function LoadDetailScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     updateLoadStatus(load.id, "delivered");
     setRequireDeliverySignature(false);
-    pickupHighlightStore.signal("delivered", deliveryToastMsg);
+    pickupHighlightStore.signal("picked_up", deliveryToastMsg);
     showToast(deliveryToastMsg);
     if (router.canGoBack()) { router.back(); } else { router.replace("/(tabs)/" as any); }
 
@@ -943,36 +946,42 @@ export default function LoadDetailScreen() {
           const dlvFirstVehicle = load.vehicles[0];
           const dlvInspection = (dlvFirstVehicle as any)?.deliveryInspection;
 
-          await markAsDeliveredAction({
-            loadNumber: load.loadNumber,
-            legId: platformTripId,
-            driverCode,
-            deliveryTime: new Date().toISOString(),
-            deliveryGPS: {
-              lat: dlvInspection?.locationLat ?? 0,
-              lng: dlvInspection?.locationLng ?? 0,
-            },
-            deliveryPhotos: dlvPhotos,
-            customerNotAvailable: true,
-            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-            damages: allDeliveryDamages,
-            noDamage: allDeliveryDamages.length === 0,
-            vehicleVin: dlvFirstVehicle?.vin || "",
-          });
-
-          if (handoffNote && load.vehicles[0]) {
-            await syncInspectionAction({
+          queuePlatformSync({
+            type: "markAsDelivered",
+            args: {
               loadNumber: load.loadNumber,
               legId: platformTripId,
               driverCode,
-              inspectionType: "delivery",
-              vehicleVin: load.vehicles[0].vin || "",
-              photos: dlvPhotos,
-              damages: [],
-              noDamage: true,
-              gps: { lat: 0, lng: 0 },
-              timestamp: new Date().toISOString(),
-              handoffNote,
+              deliveryTime: new Date().toISOString(),
+              deliveryGPS: {
+                lat: dlvInspection?.locationLat ?? 0,
+                lng: dlvInspection?.locationLng ?? 0,
+              },
+              deliveryPhotos: dlvPhotos,
+              customerNotAvailable: true,
+              ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+              damages: allDeliveryDamages,
+              noDamage: allDeliveryDamages.length === 0,
+              vehicleVin: dlvFirstVehicle?.vin || "",
+            },
+          });
+
+          if (handoffNote && load.vehicles[0]) {
+            queuePlatformSync({
+              type: "syncInspection",
+              args: {
+                loadNumber: load.loadNumber,
+                legId: platformTripId,
+                driverCode,
+                inspectionType: "delivery",
+                vehicleVin: load.vehicles[0].vin || "",
+                photos: dlvPhotos,
+                damages: [],
+                noDamage: true,
+                gps: { lat: 0, lng: 0 },
+                timestamp: new Date().toISOString(),
+                handoffNote,
+              },
             });
           }
         } catch (err) {
@@ -991,9 +1000,9 @@ export default function LoadDetailScreen() {
       try {
         const { status } = await Location.getForegroundPermissionsAsync();
         if (status === "granted") {
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
+          const pos =
+            (await Location.getLastKnownPositionAsync()) ??
+            (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }));
           const dist = haversineDistanceMiles(
             pos.coords.latitude,
             pos.coords.longitude,
@@ -1217,7 +1226,7 @@ export default function LoadDetailScreen() {
                   <Text style={{ color: colors.muted, fontSize: 14 }}>Awaiting dispatch details</Text>
                 </View>
                 {load.pickup.contact.address ? (
-                  <InfoRow label="Scanned at" value={load.pickup.contact.address} navigable />
+                  <InfoRow label="Scanned at" value={load.pickup.contact.address} navigable copyable />
                 ) : null}
                 <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
               </View>
@@ -1252,6 +1261,7 @@ export default function LoadDetailScreen() {
                   label="Address"
                   value={`${load.pickup.contact.address}, ${load.pickup.contact.city}, ${load.pickup.contact.state} ${load.pickup.contact.zip}`.replace(/,\s*,/g, ",").trim()}
                   navigable
+                  copyable
                 />
                 <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
               </View>
@@ -1278,6 +1288,7 @@ export default function LoadDetailScreen() {
                   label="Address"
                   value={`${load.delivery.contact.address}, ${load.delivery.contact.city}, ${load.delivery.contact.state} ${load.delivery.contact.zip}`.replace(/,\s*,/g, ",").trim()}
                   navigable
+                  copyable
                 />
                 <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
               </View>

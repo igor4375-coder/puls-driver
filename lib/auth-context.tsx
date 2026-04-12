@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useState, useMemo, useRef } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useUser, useAuth as useClerkAuth } from "@clerk/expo";
@@ -7,6 +7,10 @@ import { api } from "@/convex/_generated/api";
 import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import type { Driver } from "./data";
+
+// #region agent log
+const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => { const p = { sessionId: '887738', location: loc, message: msg, data, timestamp: Date.now() }; console.log(`[DBG-887738] ${loc} | ${msg}`, data ?? ''); fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '887738' }, body: JSON.stringify(p) }).catch(() => {}); };
+// #endregion
 
 interface AuthContextType {
   driver: Driver | null;
@@ -34,6 +38,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Cache clerkUser.id in memory so driver stays alive during token refresh
   // (when isSignedIn is transiently false but hadSession is true).
   const [cachedClerkId, setCachedClerkId] = useState<string | null>(null);
+
+  // Circuit-breaker: if Clerk can't confirm sign-in within 5 s of loading,
+  // treat the session as expired so the driver reaches the sign-in screen
+  // instead of being stuck in a permanent loading state.
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const hydrationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    // #region agent log
+    _dbg('auth-context:circuitBreaker', 'effect fired', { clerkLoaded, hadSession, isSignedIn, sessionExpired });
+    // #endregion
+    if (clerkLoaded && hadSession === true && !isSignedIn) {
+      // #region agent log
+      _dbg('auth-context:circuitBreaker', 'STARTING 5s timer — isSignedIn=false with hadSession', { clerkLoaded, hadSession, isSignedIn });
+      // #endregion
+      hydrationTimer.current = setTimeout(() => {
+        console.warn("[Auth] Session hydration timed out — treating as expired");
+        // #region agent log
+        _dbg('auth-context:circuitBreaker', 'TIMER FIRED — sessionExpired=true', { clerkLoaded, hadSession, isSignedIn });
+        // #endregion
+        setSessionExpired(true);
+      }, 5_000);
+    } else {
+      if (hydrationTimer.current) {
+        clearTimeout(hydrationTimer.current);
+        hydrationTimer.current = null;
+        // #region agent log
+        _dbg('auth-context:circuitBreaker', 'Timer CLEARED', { clerkLoaded, hadSession, isSignedIn });
+        // #endregion
+      }
+      if (isSignedIn) setSessionExpired(false);
+    }
+    return () => {
+      if (hydrationTimer.current) clearTimeout(hydrationTimer.current);
+    };
+  }, [clerkLoaded, hadSession, isSignedIn]);
 
   useEffect(() => {
     AsyncStorage.getItem(WAS_AUTHENTICATED_KEY).then((v) => {
@@ -114,16 +154,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const name = activeProfile.name ?? "Driver";
     const phone = activeProfile.phone ?? "";
+    const email = activeProfile.email
+      ?? clerkUser.primaryEmailAddress?.emailAddress
+      ?? "";
 
-    registerDriverOnPlatform({ name, phone, driverCode: activeProfile.driverCode })
+    console.log("[Auth] Registering driver on company platform:", { name, phone, email, driverCode: activeProfile.driverCode });
+
+    registerDriverOnPlatform({ name, phone, email, driverCode: activeProfile.driverCode })
       .then((platformId) => {
         if (platformId && clerkUser?.id) {
           updateProfile({ clerkUserId: clerkUser.id, platformDriverCode: platformId });
           console.log("[Auth] Registered on company platform:", platformId);
+        } else {
+          console.warn("[Auth] Platform registration returned null — will retry on next mount");
+          platformRegAttempted.current = false;
         }
       })
       .catch((err) => {
-        console.warn("[Auth] Platform registration failed (non-fatal):", err);
+        console.warn("[Auth] Platform registration failed (will retry):", err);
         platformRegAttempted.current = false;
       });
   }, [activeProfile, clerkUser?.id]);
@@ -195,15 +243,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Stay in "loading" while Clerk hasn't loaded, OR while we know the user
-  // had a previous session but Clerk hasn't confirmed sign-in yet (token hydration).
-  const isLoading = !clerkLoaded || hadSession === null || (hadSession && !isSignedIn);
+  // had a previous session but Clerk hasn't confirmed sign-in yet (token
+  // hydration). The sessionExpired flag breaks the deadlock after 5 s so the
+  // driver can reach the sign-in screen instead of waiting forever.
+  const isLoading =
+    !clerkLoaded ||
+    hadSession === null ||
+    (hadSession === true && !isSignedIn && !sessionExpired);
+
+  const computedIsAuthenticated = sessionExpired ? !!isSignedIn : effectiveSignedIn;
+
+  // #region agent log
+  useEffect(() => {
+    _dbg('auth-context:state', 'auth state changed', { isLoading, isAuthenticated: computedIsAuthenticated, sessionExpired, isSignedIn, hadSession, clerkLoaded, effectiveSignedIn, hasDriver: !!driver, hasActiveProfile: !!activeProfile, hasCachedClerkId: !!cachedClerkId });
+  }, [isLoading, computedIsAuthenticated, sessionExpired, isSignedIn, hadSession, clerkLoaded]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      _dbg('auth-context:appState', 'AppState changed', { newState: state, isSignedIn, clerkLoaded, hadSession, sessionExpired, isLoading, isAuthenticated: computedIsAuthenticated });
+    });
+    return () => sub.remove();
+  }, [isSignedIn, clerkLoaded, hadSession, sessionExpired, isLoading, computedIsAuthenticated]);
+  // #endregion
 
   return (
     <AuthContext.Provider
       value={{
         driver,
         isLoading,
-        isAuthenticated: !!isSignedIn,
+        isAuthenticated: computedIsAuthenticated,
         logout,
       }}
     >

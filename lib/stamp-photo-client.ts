@@ -32,13 +32,64 @@ const PHOTOS_DIR = (FileSystem.documentDirectory ?? "") + "inspection_photos/";
  * Returns the URI of the stamped photo saved locally.
  * Falls back to the original URI if anything fails.
  */
+const STAMP_MAX_RETRIES = 3;
+const STAMP_RETRY_DELAY_MS = 1500;
+
+async function callStampServer(base64: string, mimeType: string, opts: StampOptions): Promise<string> {
+  const body = JSON.stringify({
+    "0": {
+      json: {
+        base64,
+        mimeType,
+        inspectionType: opts.inspectionType,
+        driverCode: opts.driverCode,
+        companyName: opts.companyName,
+        vin: opts.vin ?? undefined,
+        locationLabel: opts.locationLabel ?? undefined,
+        lat: opts.coords?.latitude,
+        lng: opts.coords?.longitude,
+      },
+    },
+  });
+
+  const apiBase = getStampApiBase();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await fetch(`${apiBase}/api/trpc/photos.stampPhoto?batch=1`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Stamp server error: HTTP ${response.status}`);
+    }
+
+    const jsonArr = await response.json();
+    const json = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
+    const stampedBase64: string =
+      json?.result?.data?.json?.base64 ??
+      json?.result?.data?.base64 ??
+      json?.base64;
+
+    if (!stampedBase64) {
+      throw new Error("Server returned no stamped image");
+    }
+    return stampedBase64;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function stampPhotoViaServer(
   localUri: string,
   opts: StampOptions
 ): Promise<string> {
+  let base64: string;
   try {
-    // Read photo as base64
-    let base64: string;
     if (Platform.OS === "web") {
       const resp = await fetch(localUri);
       const blob = await resp.blob();
@@ -56,69 +107,43 @@ export async function stampPhotoViaServer(
         encoding: FileSystem.EncodingType.Base64,
       });
     }
-
-    const ext = localUri.split(".").pop()?.toLowerCase() ?? "jpg";
-    const mimeType = ext === "png" ? "image/png" : "image/jpeg";
-
-    // Send structured data — server generates timestamp to prevent tampering
-    const body = JSON.stringify({
-      "0": {
-        json: {
-          base64,
-          mimeType,
-          inspectionType: opts.inspectionType,
-          driverCode: opts.driverCode,
-          companyName: opts.companyName,
-          vin: opts.vin ?? undefined,
-          locationLabel: opts.locationLabel ?? undefined,
-          lat: opts.coords?.latitude,
-          lng: opts.coords?.longitude,
-        },
-      },
-    });
-
-    const apiBase = getStampApiBase();
-    const response = await fetch(`${apiBase}/api/trpc/photos.stampPhoto?batch=1`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Stamp server error: HTTP ${response.status}`);
-    }
-
-    const jsonArr = await response.json();
-    const json = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
-    const stampedBase64: string =
-      json?.result?.data?.json?.base64 ??
-      json?.result?.data?.base64 ??
-      json?.base64;
-
-    if (!stampedBase64) {
-      throw new Error("Server returned no stamped image");
-    }
-
-    // Save stamped image to local file
-    if (Platform.OS !== "web") {
-      // Ensure directory exists
-      const dirInfo = await FileSystem.getInfoAsync(PHOTOS_DIR);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(PHOTOS_DIR, { intermediates: true });
-      }
-      const suffix = Math.random().toString(36).slice(2, 10);
-      const stampedPath = `${PHOTOS_DIR}stamped_${suffix}.jpg`;
-      await FileSystem.writeAsStringAsync(stampedPath, stampedBase64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      return stampedPath;
-    } else {
-      // Web: return as data URI
-      return `data:image/jpeg;base64,${stampedBase64}`;
-    }
   } catch (err) {
-    // Stamping failed — return original photo so inspection is not blocked
-    console.warn("[stampPhotoViaServer] Failed, using original:", err);
+    console.warn("[stampPhoto] Failed to read source photo:", err);
     return localUri;
   }
+
+  const ext = localUri.split(".").pop()?.toLowerCase() ?? "jpg";
+  const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < STAMP_MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, STAMP_RETRY_DELAY_MS));
+        console.log(`[stampPhoto] Retry attempt ${attempt + 1}/${STAMP_MAX_RETRIES}`);
+      }
+      const stampedBase64 = await callStampServer(base64, mimeType, opts);
+
+      if (Platform.OS !== "web") {
+        const dirInfo = await FileSystem.getInfoAsync(PHOTOS_DIR);
+        if (!dirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(PHOTOS_DIR, { intermediates: true });
+        }
+        const suffix = Math.random().toString(36).slice(2, 10);
+        const stampedPath = `${PHOTOS_DIR}stamped_${suffix}.jpg`;
+        await FileSystem.writeAsStringAsync(stampedPath, stampedBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        return stampedPath;
+      } else {
+        return `data:image/jpeg;base64,${stampedBase64}`;
+      }
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[stampPhoto] Attempt ${attempt + 1} failed:`, err);
+    }
+  }
+
+  console.warn("[stampPhoto] All retries exhausted, using original photo:", lastErr);
+  return localUri;
 }

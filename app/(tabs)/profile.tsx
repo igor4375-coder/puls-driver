@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Share, Platform, Switch, Modal, FlatList, PanResponder } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator, Share, Platform, Switch, Modal, FlatList, PanResponder, TextInput, KeyboardAvoidingView } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -103,6 +103,95 @@ function CapacityPicker({
   );
 }
 
+// ─── Cross-platform prompt (Alert.prompt is iOS-only) ─────────────────────────
+function useTextPrompt() {
+  const [state, setState] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    defaultValue: string;
+    onSubmit: (val: string) => void;
+  }>({ visible: false, title: "", message: "", defaultValue: "", onSubmit: () => {} });
+
+  const prompt = useCallback((title: string, message: string, onSubmit: (val: string) => void, defaultValue = "") => {
+    if (Platform.OS === "ios") {
+      Alert.prompt(title, message, (val) => { if (val !== undefined) onSubmit(val); }, "plain-text", defaultValue);
+    } else {
+      setState({ visible: true, title, message, defaultValue, onSubmit });
+    }
+  }, []);
+
+  const dismiss = useCallback(() => setState((s) => ({ ...s, visible: false })), []);
+
+  return { state, prompt, dismiss };
+}
+
+function TextPromptModal({
+  visible,
+  title,
+  message,
+  defaultValue,
+  onSubmit,
+  onDismiss,
+}: {
+  visible: boolean;
+  title: string;
+  message: string;
+  defaultValue: string;
+  onSubmit: (val: string) => void;
+  onDismiss: () => void;
+}) {
+  const colors = useColors();
+  const [value, setValue] = useState(defaultValue);
+  useEffect(() => { if (visible) setValue(defaultValue); }, [visible, defaultValue]);
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDismiss}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+        <View style={{ width: "85%", backgroundColor: colors.surface, borderRadius: 16, padding: 24, gap: 12 }}>
+          <Text style={{ fontSize: 17, fontWeight: "700", color: colors.foreground, textAlign: "center" }}>{title}</Text>
+          {message ? <Text style={{ fontSize: 14, color: colors.muted, textAlign: "center" }}>{message}</Text> : null}
+          <TextInput
+            style={{
+              borderWidth: 1.5,
+              borderColor: colors.border,
+              borderRadius: 10,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              fontSize: 16,
+              color: colors.foreground,
+              backgroundColor: colors.background,
+              marginTop: 4,
+            }}
+            value={value}
+            onChangeText={setValue}
+            autoFocus
+            selectTextOnFocus
+            returnKeyType="done"
+            onSubmitEditing={() => { onSubmit(value); onDismiss(); }}
+          />
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 4 }}>
+            <TouchableOpacity
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", borderWidth: 1.5, borderColor: colors.border }}
+              onPress={onDismiss}
+              activeOpacity={0.7}
+            >
+              <Text style={{ color: colors.muted, fontWeight: "600", fontSize: 15 }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: "center", backgroundColor: colors.primary }}
+              onPress={() => { onSubmit(value); onDismiss(); }}
+              activeOpacity={0.7}
+            >
+              <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const colors = useColors();
@@ -112,6 +201,7 @@ export default function ProfileScreen() {
   const [showEquipmentPicker, setShowEquipmentPicker] = useState(false);
   const { settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths, setLocationTrackingEnabled } = useSettings();
   const { loads, archiveAllDelivered, clearNonPlatformLoads } = useLoads();
+  const textPrompt = useTextPrompt();
 
   // Count non-platform loads (test/manual/demo loads that can be cleared)
   const nonPlatformLoadCount = loads.filter((l) => !l.id.startsWith("platform-")).length;
@@ -371,6 +461,50 @@ export default function ProfileScreen() {
     );
   };
 
+  const deleteProfileMutation = useMutation(api.driverProfiles.deleteProfile);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your Puls Dispatch account, profile, company links, and all associated data. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete My Account",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Are you absolutely sure?",
+              "Your account and all data will be permanently removed.",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Yes, Delete Everything",
+                  style: "destructive",
+                  onPress: async () => {
+                    setDeletingAccount(true);
+                    try {
+                      if (clerkUserId) {
+                        await deleteProfileMutation({ clerkUserId });
+                      }
+                      await logout();
+                      router.replace("/(auth)/welcome" as any);
+                    } catch (err: any) {
+                      Alert.alert("Error", err.message ?? "Failed to delete account. Please try again.");
+                    } finally {
+                      setDeletingAccount(false);
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   const handleCopyCode = async (code: string) => {
     await Clipboard.setStringAsync(code);
     setCodeCopied(true);
@@ -455,17 +589,16 @@ export default function ProfileScreen() {
           style={[styles.avatarCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
           activeOpacity={0.7}
           onPress={() => {
-            Alert.prompt(
+            textPrompt.prompt(
               "Display Name",
               "This name will be shown to companies you connect with.",
               (val) => {
-                if (val !== undefined && val.trim().length > 0 && clerkUserId) {
+                if (val.trim().length > 0 && clerkUserId) {
                   updateProfileMutation({ clerkUserId, name: val.trim() });
                   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
               },
-              "plain-text",
-              displayName
+              displayName,
             );
           }}
         >
@@ -601,12 +734,11 @@ export default function ProfileScreen() {
             label="Truck Number"
             value={truckNumber ?? "—"}
             onPress={() => {
-              Alert.prompt(
+              textPrompt.prompt(
                 "Truck Number",
                 "Enter your truck number",
-                (val) => { if (val !== undefined) saveField({ truckNumber: val }); },
-                "plain-text",
-                truckNumber ?? ""
+                (val) => saveField({ truckNumber: val }),
+                truckNumber ?? "",
               );
             }}
           />
@@ -615,12 +747,11 @@ export default function ProfileScreen() {
             label="Trailer Number"
             value={trailerNumber ?? "—"}
             onPress={() => {
-              Alert.prompt(
+              textPrompt.prompt(
                 "Trailer Number",
                 "Enter your trailer number",
-                (val) => { if (val !== undefined) saveField({ trailerNumber: val }); },
-                "plain-text",
-                trailerNumber ?? ""
+                (val) => saveField({ trailerNumber: val }),
+                trailerNumber ?? "",
               );
             }}
           />
@@ -914,9 +1045,16 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* Sign Out */}
+        {/* Sign Out & Delete Account */}
         <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <SettingRow icon="arrow.right" label="Sign Out" onPress={handleLogout} danger />
+          <SettingRow
+            icon="trash.fill"
+            label="Delete Account"
+            onPress={handleDeleteAccount}
+            danger
+            loading={deletingAccount}
+          />
         </View>
 
         <Text style={[styles.version, { color: colors.muted }]}>Puls Driver v1.0.0</Text>
@@ -965,6 +1103,16 @@ export default function ProfileScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* ── TEXT PROMPT MODAL (Android) ── */}
+      <TextPromptModal
+        visible={textPrompt.state.visible}
+        title={textPrompt.state.title}
+        message={textPrompt.state.message}
+        defaultValue={textPrompt.state.defaultValue}
+        onSubmit={textPrompt.state.onSubmit}
+        onDismiss={textPrompt.dismiss}
+      />
 
       {/* ── SIGNATURE PAD MODAL ── */}
       <Modal

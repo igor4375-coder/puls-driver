@@ -11,6 +11,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { MOCK_LOADS, type Load, type LoadStatus, type VehicleInspection } from "./data";
+import { useSettings } from "./settings-context";
 
 // ─── Debounced AsyncStorage writes (reduces I/O pressure) ───────────────────────
 
@@ -33,10 +34,14 @@ const PLATFORM_LOADS_KEY = "autohaul_platform_loads_v7";
 // Atomic key for delivered data: stores both IDs and snapshots together
 // to prevent inconsistent state if the app is killed mid-write.
 const DRIVER_DELIVERED_ATOMIC_KEY = "@autohaul:driver_delivered_atomic_v2";
+const STATUS_OVERRIDES_KEY = "@autohaul:status_overrides_v1";
+const PLATFORM_SYNC_QUEUE_KEY = "@autohaul:platform_sync_queue_v1";
 
 // Legacy keys (read on startup for migration, then removed)
 const DRIVER_DELIVERED_KEY = "@autohaul:driver_delivered_loads_v1";
 const DRIVER_DELIVERED_SNAPSHOTS_KEY = "@autohaul:driver_delivered_snapshots_v1";
+
+const STATUS_RANK: Record<string, number> = { new: 0, assigned: 0, picked_up: 1, delivered: 2, archived: 3 };
 
 /** Immediately persist delivered data — no debounce for critical writes. */
 function persistDeliveredImmediate(ids: string[], snapshots: Load[]) {
@@ -276,6 +281,13 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
   } as Load & { platformTripId: number | string };
 }
 
+// ─── Platform sync queue types ────────────────────────────────────────────────
+
+export type PlatformSyncTask =
+  | { type: "markAsPickedUp"; args: Record<string, unknown>; id: string; attempts: number; createdAt: number }
+  | { type: "markAsDelivered"; args: Record<string, unknown>; id: string; attempts: number; createdAt: number }
+  | { type: "syncInspection"; args: Record<string, unknown>; id: string; attempts: number; createdAt: number };
+
 // ─── Context types ────────────────────────────────────────────────────────────
 
 interface LoadsContextType {
@@ -313,6 +325,8 @@ interface LoadsContextType {
   clearNonPlatformLoads: () => void;
   /** Merge partial fields onto a load (both local & platform arrays + delivered snapshot). */
   patchLoad: (loadId: string, patch: Partial<Load>) => void;
+  /** Queue a platform API call (markAsPickedUp/markAsDelivered/syncInspection) that survives navigation and app restarts. */
+  queuePlatformSync: (task: Omit<PlatformSyncTask, "id" | "attempts" | "createdAt">) => void;
 }
 
 const LoadsContext = createContext<LoadsContextType | null>(null);
@@ -415,10 +429,100 @@ export function LoadsProvider({
   const [platformLoadError, setPlatformLoadError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  // Recent local status overrides — maps loadId → timestamp.
-  // Used to give a 3-minute grace period so the platform sync can catch up
-  // before we let the platform status override the local one.
-  const localStatusOverridesRef = React.useRef<Map<string, number>>(new Map());
+  const { settings } = useSettings();
+
+  // Local status overrides — maps loadId → { status, timestamp }.
+  // Persisted to AsyncStorage so they survive app restarts.
+  // Platform sync will never downgrade a load to a lower-rank status.
+  const localStatusOverridesRef = React.useRef<Map<string, { status: LoadStatus; at: number }>>(new Map());
+
+  // VINs for field pickups already synced to the platform (prevents duplicate syncs)
+  const fieldPickupSyncedRef = React.useRef<Set<string>>(new Set());
+
+  // ── Platform sync queue ──────────────────────────────────────────────────
+  // Persistent queue of platform API calls that must survive screen navigation
+  // and app restarts. Processed here in the always-mounted LoadsProvider.
+  const [syncQueue, setSyncQueue] = useState<PlatformSyncTask[]>([]);
+  const syncProcessingRef = React.useRef(false);
+
+  // Load persisted sync queue on startup
+  useEffect(() => {
+    AsyncStorage.getItem(PLATFORM_SYNC_QUEUE_KEY).then((val) => {
+      if (val) {
+        try {
+          const tasks = JSON.parse(val) as PlatformSyncTask[];
+          if (tasks.length > 0) {
+            console.log(`[PlatformSync] Loaded ${tasks.length} pending task(s) from storage`);
+            setSyncQueue(tasks);
+          }
+        } catch { /* ignore corrupt data */ }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const persistSyncQueue = useCallback((tasks: PlatformSyncTask[]) => {
+    AsyncStorage.setItem(PLATFORM_SYNC_QUEUE_KEY, JSON.stringify(tasks)).catch(() => {});
+  }, []);
+
+  const queuePlatformSync = useCallback((task: Omit<PlatformSyncTask, "id" | "attempts" | "createdAt">) => {
+    const fullTask = {
+      ...task,
+      id: `${task.type}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      attempts: 0,
+      createdAt: Date.now(),
+    } as PlatformSyncTask;
+    console.log(`[PlatformSync] Queued ${task.type}`, JSON.stringify(task.args).slice(0, 200));
+    setSyncQueue((prev) => {
+      const updated = [...prev, fullTask];
+      persistSyncQueue(updated);
+      return updated;
+    });
+  }, [persistSyncQueue]);
+
+  // Process the sync queue
+  useEffect(() => {
+    if (syncQueue.length === 0 || syncProcessingRef.current) return;
+    syncProcessingRef.current = true;
+
+    (async () => {
+      const remaining: PlatformSyncTask[] = [];
+      for (const task of syncQueue) {
+        try {
+          console.log(`[PlatformSync] Processing ${task.type} (attempt ${task.attempts + 1})`);
+          if (task.type === "markAsPickedUp") {
+            await markAsPickedUpAction(task.args as any);
+          } else if (task.type === "markAsDelivered") {
+            await markAsDeliveredAction(task.args as any);
+          } else if (task.type === "syncInspection") {
+            await syncInspectionAction(task.args as any);
+          }
+          console.log(`[PlatformSync] ${task.type} succeeded`);
+        } catch (err) {
+          console.warn(`[PlatformSync] ${task.type} failed (attempt ${task.attempts + 1}):`, err);
+          const maxAttempts = 5;
+          if (task.attempts + 1 < maxAttempts) {
+            remaining.push({ ...task, attempts: task.attempts + 1 });
+          } else {
+            console.error(`[PlatformSync] ${task.type} permanently failed after ${maxAttempts} attempts`);
+          }
+        }
+      }
+      setSyncQueue(remaining);
+      persistSyncQueue(remaining);
+      syncProcessingRef.current = false;
+    })();
+  }, [syncQueue, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue]);
+
+  // Retry failed sync tasks when app comes to foreground
+  useEffect(() => {
+    const handleAppState = (state: AppStateStatus) => {
+      if (state === "active" && syncQueue.length > 0 && !syncProcessingRef.current) {
+        setSyncQueue((prev) => [...prev]); // trigger re-process
+      }
+    };
+    const sub = AppState.addEventListener("change", handleAppState);
+    return () => sub.remove();
+  }, [syncQueue.length]);
 
   // ── Driver-delivered tracking ─────────────────────────────────────────────
   // Set of load IDs that the driver explicitly marked as delivered.
@@ -454,6 +558,18 @@ export function LoadsProvider({
         }
       } catch { /* ignore */ }
     })();
+  }, []);
+
+  // Load persisted status overrides on startup
+  useEffect(() => {
+    AsyncStorage.getItem(STATUS_OVERRIDES_KEY).then((val) => {
+      if (val) {
+        try {
+          const entries = JSON.parse(val) as [string, { status: LoadStatus; at: number }][];
+          localStatusOverridesRef.current = new Map(entries);
+        } catch { /* ignore corrupt data */ }
+      }
+    }).catch(() => {});
   }, []);
 
   // Load persisted local (non-platform) loads on startup.
@@ -500,6 +616,9 @@ export function LoadsProvider({
 
   // Convex action to fetch loads from the company platform
   const fetchAssignedLoads = useAction(api.platform.getAssignedLoads);
+  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
+  const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
+  const syncInspectionAction = useAction(api.platform.syncInspection);
   const isFetchingRef = React.useRef(false);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -636,13 +755,22 @@ export function LoadsProvider({
             }
           }
         }
-        const GRACE_MS = 3 * 60 * 1000;
-        const now = Date.now();
-
         const resolveStatus = (loadId: string, freshStatus: LoadStatus, existingStatus?: LoadStatus) => {
           if (!existingStatus || existingStatus === freshStatus) return freshStatus;
-          const overrideAt = localStatusOverridesRef.current.get(loadId);
-          if (overrideAt && (now - overrideAt < GRACE_MS)) return existingStatus;
+
+          const override = localStatusOverridesRef.current.get(loadId);
+          if (override) {
+            const overrideRank = STATUS_RANK[override.status] ?? 0;
+            const freshRank = STATUS_RANK[freshStatus] ?? 0;
+            // Never let the platform downgrade below the driver's local override
+            if (freshRank < overrideRank) return override.status;
+          }
+
+          // Even without an explicit override, never downgrade an existing higher status
+          const existingRank = STATUS_RANK[existingStatus] ?? 0;
+          const freshRank = STATUS_RANK[freshStatus] ?? 0;
+          if (freshRank < existingRank) return existingStatus;
+
           return freshStatus;
         };
 
@@ -775,6 +903,158 @@ export function LoadsProvider({
   // geocacheReady is the trigger; geocodePlatformLoads is stable (useCallback)
   }, [geocacheReady, geocodePlatformLoads]);
 
+  // ── Field pickup → platform load VIN matching ─────────────────────────────
+  // When the company creates an order from a field pickup notification, a new
+  // platform load arrives with the same VIN. Detect this match, transfer the
+  // locally-stored inspection data, fire markAsPickedUp + syncInspection with
+  // the real platform identifiers, and retire the local field pickup load.
+  useEffect(() => {
+    if (platformLoads.length === 0 || localLoads.length === 0) return;
+
+    const pickedUpFPs = localLoads.filter(
+      (l) => l.isFieldPickup && l.status === "picked_up",
+    );
+    if (pickedUpFPs.length === 0) return;
+
+    const vinToFP = new Map<string, Load>();
+    for (const fp of pickedUpFPs) {
+      for (const v of fp.vehicles) {
+        const vin = v.vin?.trim().toUpperCase();
+        if (vin && !fieldPickupSyncedRef.current.has(vin)) {
+          vinToFP.set(vin, fp);
+        }
+      }
+    }
+    if (vinToFP.size === 0) return;
+
+    for (const pl of platformLoads) {
+      for (const pv of pl.vehicles) {
+        const vin = pv.vin?.trim().toUpperCase();
+        if (!vin) continue;
+        const fp = vinToFP.get(vin);
+        if (!fp) continue;
+
+        fieldPickupSyncedRef.current.add(vin);
+        vinToFP.delete(vin);
+
+        const fpVehicle = fp.vehicles.find(
+          (fv) => fv.vin?.trim().toUpperCase() === vin,
+        );
+        const inspection =
+          fpVehicle?.frozenPickupInspection ?? fpVehicle?.pickupInspection;
+        const legId = pl.platformTripId;
+        if (!legId || !driverCode) continue;
+
+        if (inspection) {
+          savePickupInspection(pl.id, pv.id, inspection);
+        }
+
+        updateLoadStatus(pl.id, "picked_up");
+        setLocalLoads((prev) => prev.filter((l) => l.id !== fp.id));
+
+        const damages = (inspection?.damages ?? []).map((d) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }));
+        const noDamage = inspection?.noDamage ?? damages.length === 0;
+        const photos = (inspection?.photos ?? []).filter((p) =>
+          p.startsWith("http"),
+        );
+        const gpsLat = inspection?.locationLat ?? 0;
+        const gpsLng = inspection?.locationLng ?? 0;
+        const completedAt =
+          inspection?.completedAt ?? new Date().toISOString();
+
+        const additionalData: Record<string, unknown> = {};
+        const ai = inspection?.additionalInspection;
+        if (ai) {
+          if (ai.odometer) additionalData.odometer = ai.odometer;
+          if (ai.drivable !== null && ai.drivable !== undefined) additionalData.drivable = ai.drivable;
+          if (ai.windscreen !== null && ai.windscreen !== undefined) additionalData.windscreen = ai.windscreen;
+          if (ai.glassesIntact !== null && ai.glassesIntact !== undefined) additionalData.glassesIntact = ai.glassesIntact;
+          if (ai.titlePresent !== null && ai.titlePresent !== undefined) additionalData.titlePresent = ai.titlePresent;
+          if (ai.billOfSale !== null && ai.billOfSale !== undefined) additionalData.billOfSale = ai.billOfSale;
+          if (ai.keys !== null && ai.keys !== undefined) additionalData.keys = ai.keys;
+          if (ai.remotes !== null && ai.remotes !== undefined) additionalData.remotes = ai.remotes;
+          if (ai.headrests !== null && ai.headrests !== undefined) additionalData.headrests = ai.headrests;
+          if (ai.cargoCover !== null && ai.cargoCover !== undefined) additionalData.cargoCover = ai.cargoCover;
+          if (ai.spareTire !== null && ai.spareTire !== undefined) additionalData.spareTire = ai.spareTire;
+          if (ai.radio !== null && ai.radio !== undefined) additionalData.radio = ai.radio;
+          if (ai.manuals !== null && ai.manuals !== undefined) additionalData.manuals = ai.manuals;
+          if (ai.navigationDisk !== null && ai.navigationDisk !== undefined) additionalData.navigationDisk = ai.navigationDisk;
+          if (ai.pluginChargerCable !== null && ai.pluginChargerCable !== undefined) additionalData.pluginChargerCable = ai.pluginChargerCable;
+          if (ai.headphones !== null && ai.headphones !== undefined) additionalData.headphones = ai.headphones;
+        }
+
+        const savedSigPaths = settings.driverSignaturePaths.filter(
+          (p) => !p.d.startsWith("__live__"),
+        );
+        const driverSigStr =
+          savedSigPaths.length > 0
+            ? savedSigPaths.map((p) => p.d).join(" ")
+            : undefined;
+
+        console.log(
+          `[FieldPickupSync] Matched VIN ${vin} → platform load ${pl.loadNumber} (legId=${legId}). Syncing...`,
+        );
+
+        markAsPickedUpAction({
+          loadNumber: pl.loadNumber,
+          legId: String(legId),
+          driverCode,
+          pickupTime: completedAt,
+          pickupGPS: { lat: gpsLat, lng: gpsLng },
+          pickupPhotos: photos,
+          customerNotAvailable: true,
+          ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+          damages,
+          noDamage,
+          vehicleVin: fpVehicle?.vin || "",
+          ...(Object.keys(additionalData).length > 0
+            ? { additionalInspection: additionalData }
+            : {}),
+        }).catch((err) =>
+          console.warn("[FieldPickupSync] markAsPickedUp failed:", err),
+        );
+
+        syncInspectionAction({
+          loadNumber: pl.loadNumber,
+          legId: String(legId),
+          driverCode,
+          inspectionType: "pickup",
+          vehicleVin: fpVehicle?.vin || "",
+          photos,
+          damages,
+          noDamage,
+          gps: { lat: gpsLat, lng: gpsLng },
+          timestamp: completedAt,
+          notes: inspection?.notes || undefined,
+          ...(Object.keys(additionalData).length > 0
+            ? { additionalInspection: additionalData }
+            : {}),
+        }).catch((err) =>
+          console.error("[FieldPickupSync] syncInspection failed:", err),
+        );
+      }
+    }
+  }, [
+    platformLoads,
+    localLoads,
+    driverCode,
+    settings.driverSignaturePaths,
+    savePickupInspection,
+    updateLoadStatus,
+    setLocalLoads,
+    markAsPickedUpAction,
+    syncInspectionAction,
+  ]);
+
   // Merge: platform loads first (they're "assigned"), then local loads,
   // then any delivered snapshots the platform may have dropped.
   // De-duplicate by load ID to avoid showing same load twice.
@@ -824,7 +1104,11 @@ export function LoadsProvider({
   );
 
   const updateLoadStatus = useCallback((loadId: string, status: LoadStatus) => {
-    localStatusOverridesRef.current.set(loadId, Date.now());
+    localStatusOverridesRef.current.set(loadId, { status, at: Date.now() });
+    AsyncStorage.setItem(
+      STATUS_OVERRIDES_KEY,
+      JSON.stringify([...localStatusOverridesRef.current.entries()]),
+    ).catch(() => {});
 
     // When the driver marks a load as delivered, persist that decision locally
     // so it survives platform sync (which may drop the load).
@@ -899,7 +1183,7 @@ export function LoadsProvider({
       const updateFn = (prev: Load[]) =>
         prev.map((l) => {
           if (l.id !== loadId) return l;
-          if (l.status !== "new") return l;
+          if (l.status === "delivered" || l.status === "archived") return l;
           return {
             ...l,
             vehicles: l.vehicles.map((v) =>
@@ -1119,6 +1403,7 @@ export function LoadsProvider({
         deleteLoad,
         clearNonPlatformLoads,
         patchLoad,
+        queuePlatformSync,
       }}
     >
       {children}

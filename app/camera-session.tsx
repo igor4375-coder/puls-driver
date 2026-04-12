@@ -66,7 +66,7 @@ export default function CameraSessionScreen() {
   const [queueEntries, setQueueEntries] = useState<PhotoQueueEntry[]>([]);
   const [mode, setMode] = useState<SessionMode>("photo");
   const [flash, setFlash] = useState<"off" | "on" | "auto">("off");
-  const [zoom, setZoom] = useState<number>(0);
+  const [wideAngle, setWideAngle] = useState(true);
   const [taking, setTaking] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -184,7 +184,7 @@ export default function CameraSessionScreen() {
         };
 
         // Enqueue immediately — stamp + upload happen in the queue's background pipeline
-        const entry = await photoQueue.enqueue(photo.uri, { ...meta, stampMeta });
+        const entry = await photoQueue.enqueue(photo.uri, { ...meta, loadNumber: sessionLoad?.loadNumber ?? undefined, stampMeta });
         setItems((prev) => [
           ...prev,
           { uri: entry.localUri, clientId: entry.clientId, type: "photo" },
@@ -211,7 +211,7 @@ export default function CameraSessionScreen() {
     try {
       const video = await cameraRef.current.recordAsync({ maxDuration: 30 });
       if (video?.uri) {
-        const entry = await photoQueue.enqueue(video.uri, meta);
+        const entry = await photoQueue.enqueue(video.uri, { ...meta, loadNumber: sessionLoad?.loadNumber ?? undefined });
         setItems((prev) => [
           ...prev,
           { uri: entry.localUri, clientId: entry.clientId, type: "video" },
@@ -260,7 +260,7 @@ export default function CameraSessionScreen() {
   const cycleFlash = () =>
     setFlash((f) => (f === "off" ? "on" : f === "on" ? "auto" : "off"));
 
-  const cycleZoom = () => setZoom((z) => (z === 0 ? 0.035 : 0));
+  const cycleZoom = () => setWideAngle((w) => !w);
 
   // ── Permission screen ─────────────────────────────────────────────────────
 
@@ -296,7 +296,7 @@ export default function CameraSessionScreen() {
   // ── Flash icon ────────────────────────────────────────────────────────────
 
   const flashLabel = flash === "off" ? "Off" : flash === "on" ? "On" : "Auto";
-  const zoomLabel = zoom === 0 ? "1x" : "2x";
+  const zoomLabel = wideAngle ? "0.5x" : "1x";
 
   // ── Main camera UI ────────────────────────────────────────────────────────
 
@@ -308,10 +308,13 @@ export default function CameraSessionScreen() {
         style={StyleSheet.absoluteFill}
         facing="back"
         flash={flash}
-        zoom={zoom}
+        zoom={0}
         mode={mode as any}
         videoQuality="720p"
         videoStabilizationMode="auto"
+        {...(Platform.OS === "ios" ? {
+          selectedLens: wideAngle ? "builtInUltraWideCamera" : "builtInWideAngleCamera",
+        } : {})}
       />
 
       {/* Shutter flash overlay */}

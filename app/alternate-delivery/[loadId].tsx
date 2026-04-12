@@ -118,7 +118,7 @@ export default function AlternateDeliveryScreen() {
       const toastMsg = isFinal
         ? "Vehicle delivered to final destination"
         : "Vehicle dropped at terminal — dispatch will assign the next leg";
-      pickupHighlightStore.signal("delivered", toastMsg);
+      pickupHighlightStore.signal("picked_up", toastMsg);
 
       router.dismissAll();
       router.replace("/(tabs)/" as any);
@@ -145,7 +145,9 @@ export default function AlternateDeliveryScreen() {
       try {
         const { status } = await Location.getForegroundPermissionsAsync();
         if (status === "granted") {
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const pos =
+            (await Location.getLastKnownPositionAsync()) ??
+            (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }));
           gpsLat = pos.coords.latitude;
           gpsLng = pos.coords.longitude;
         }

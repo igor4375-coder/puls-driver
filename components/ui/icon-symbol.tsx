@@ -101,6 +101,31 @@ const MAPPING = {
   // Security
   "lock.fill": "lock",
   "lock.open.fill": "lock-open",
+  // Dashboard
+  "chart.bar.fill": "bar-chart",
+  "dollarsign.circle.fill": "monetization-on",
+  "shippingbox.fill": "inventory-2",
+  "road.lanes": "timeline",
+  "gauge.with.needle.fill": "speed",
+  "trophy.fill": "emoji-events",
+  "target": "gps-fixed",
+  "tray": "inbox",
+  "chevron.up": "keyboard-arrow-up",
+  "arrow.up.right": "trending-up",
+  "arrow.down.right": "trending-down",
+  // Misc missing
+  "arrow.clockwise": "refresh",
+  "arrow.triangle.branch": "call-split",
+  "arrow.up.arrow.down": "swap-vert",
+  "info.circle.fill": "info",
+  "eraser.fill": "backspace",
+  "location.slash": "location-off",
+  "mappin.and.ellipse": "pin-drop",
+  "pencil.circle.fill": "edit",
+  "arrow.up.circle.fill": "arrow-upward",
+  "arrow.down.circle.fill": "arrow-downward",
+  "arrow.up": "arrow-upward",
+  "arrow.down": "arrow-downward",
 } as IconMapping;
 
 /**

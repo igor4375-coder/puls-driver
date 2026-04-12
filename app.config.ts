@@ -24,10 +24,31 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
-    "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["location", "fetch"]
-      }
+    usesAppleSignIn: true,
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+      UIBackgroundModes: ["location", "fetch"],
+    },
+    privacyManifests: {
+      NSPrivacyAccessedAPITypes: [
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults",
+          NSPrivacyAccessedAPITypeReasons: ["CA92.1"],
+        },
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp",
+          NSPrivacyAccessedAPITypeReasons: ["C617.1"],
+        },
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
+          NSPrivacyAccessedAPITypeReasons: ["35F9.1"],
+        },
+        {
+          NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryDiskSpace",
+          NSPrivacyAccessedAPITypeReasons: ["E174.1"],
+        },
+      ],
+    },
   },
   android: {
     adaptiveIcon: {
@@ -35,6 +56,11 @@ const config: ExpoConfig = {
       foregroundImage: "./assets/images/android-icon-foreground.png",
       backgroundImage: "./assets/images/android-icon-background.png",
       monochromeImage: "./assets/images/android-icon-monochrome.png",
+    },
+    config: {
+      googleMaps: {
+        apiKey: "AIzaSyCgblYlmV5bu6ZRlAmnAnA2miiMAsqz2Ic",
+      },
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
@@ -61,6 +87,9 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    "expo-asset",
+    "expo-font",
+    "@react-native-community/datetimepicker",
     [
       "expo-location",
       {
@@ -115,11 +144,23 @@ const config: ExpoConfig = {
           buildArchs: ["armeabi-v7a", "arm64-v8a"],
           minSdkVersion: 24,
         },
+        ios: {
+          deploymentTarget: "15.5",
+        },
+      },
+    ],
+    [
+      "rn-mlkit-ocr",
+      {
+        ocrModels: ["latin"],
+        ocrUseBundled: true,
       },
     ],
   ],
   updates: {
     url: "https://u.expo.dev/cc2a03cc-5910-464c-8b9a-7dc09c2eda48",
+    checkAutomatically: "ON_LOAD",
+    fallbackToCacheTimeout: 5000,
   },
   runtimeVersion: {
     policy: "appVersion",

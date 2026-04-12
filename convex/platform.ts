@@ -257,47 +257,35 @@ export const registerDriver = action({
   args: {
     name: v.string(),
     phone: v.string(),
+    email: v.optional(v.string()),
     driverCode: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
-    if (!BASE_URL) return null;
+    if (!BASE_URL) {
+      console.warn("[registerDriver] COMPANY_PLATFORM_URL not set — skipping");
+      return null;
+    }
     const normalizedPhone = args.phone?.trim() || "000-000-0000";
-    const url = `${BASE_URL}/driversApi.registerDriver?batch=1`;
-    const body = {
-      "0": {
-        json: {
+
+    try {
+      const result = await callTRPC<{ driverId?: string }>(
+        "driversApi.registerDriver",
+        {
           name: args.name,
-          email: "",
+          email: args.email?.trim() || "",
           phone: normalizedPhone,
           truckType: "",
           capacity: 1,
           mcNumber: "",
           ...(args.driverCode ? { driverCode: args.driverCode } : {}),
         },
-      },
-    };
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      const text = await response.text();
-      let parsed: Array<{ result?: { data?: { json?: { driverId?: string } } } }>;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        return null;
-      }
-
-      return parsed?.[0]?.result?.data?.json?.driverId ?? null;
-    } catch {
+        "mutation",
+      );
+      const driverId = result?.driverId ?? null;
+      console.log("[registerDriver] Success:", { driverId, name: args.name, phone: normalizedPhone });
+      return driverId;
+    } catch (err) {
+      console.error("[registerDriver] Failed:", err);
       return null;
     }
   },

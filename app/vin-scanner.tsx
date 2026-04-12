@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import MlkitOcr from "rn-mlkit-ocr";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -159,6 +160,12 @@ export default function VINScannerScreen() {
   const partialResultRef = useRef<string | null>(null);
   const [partialWaiting, setPartialWaiting] = useState(false);
 
+  // OCR scanning
+  const ocrCameraRef = useRef<CameraView>(null);
+  const ocrBusyRef = useRef(false);
+  const ocrTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [ocrActive, setOcrActive] = useState(true);
+
   const ALL_BARCODE_TYPES = ["code39", "code128", "pdf417", "qr", "datamatrix", "code93", "aztec"] as const;
   const LINEAR_ONLY_TYPES = ["code39", "code128", "pdf417", "code93"] as const;
   const [barcodeTypes, setBarcodeTypes] = useState<readonly string[]>(ALL_BARCODE_TYPES);
@@ -217,6 +224,50 @@ export default function VINScannerScreen() {
       if (partialFallbackTimer.current) clearTimeout(partialFallbackTimer.current);
     };
   }, []);
+
+  // ── OCR polling: capture frame every 600ms and look for VIN text ────────
+  useEffect(() => {
+    if (scanned || decoding || decodedResult || showManual || !ocrActive) return;
+    if (!permission?.granted) return;
+
+    ocrTimerRef.current = setInterval(async () => {
+      if (ocrBusyRef.current || !ocrCameraRef.current) return;
+      ocrBusyRef.current = true;
+      try {
+        const photo = await ocrCameraRef.current.takePictureAsync({
+          quality: 0.4,
+          skipProcessing: true,
+          shutterSound: false,
+        });
+        if (!photo?.uri) return;
+
+        const result = await MlkitOcr.recognizeText(photo.uri, "latin");
+        const allText = result.text.replace(/\s+/g, "").toUpperCase();
+        const vinMatch = allText.match(/[A-HJ-NPR-Z0-9]{17}/);
+        if (vinMatch && isFullVIN(vinMatch[0])) {
+          const vin = vinMatch[0];
+          if (vin !== lastScannedRef.current) {
+            lastScannedRef.current = vin;
+            Vibration.vibrate(80);
+            setScanned(true);
+            setOcrActive(false);
+            handleFullVINDecode(vin);
+          }
+        }
+      } catch {
+        // OCR frame failed — silently continue
+      } finally {
+        ocrBusyRef.current = false;
+      }
+    }, 600);
+
+    return () => {
+      if (ocrTimerRef.current) {
+        clearInterval(ocrTimerRef.current);
+        ocrTimerRef.current = null;
+      }
+    };
+  }, [scanned, decoding, decodedResult, showManual, ocrActive, permission?.granted, handleFullVINDecode]);
 
   // ── Deliver result — route based on launch context ───────────────────────
 
@@ -448,6 +499,7 @@ export default function VINScannerScreen() {
             onRetry={() => {
               setDecodedResult(null);
               setScanned(false);
+              setOcrActive(true);
               lastScannedRef.current = "";
             }}
           />
@@ -636,6 +688,7 @@ export default function VINScannerScreen() {
   return (
     <View style={styles.container}>
       <CameraView
+        ref={ocrCameraRef}
         style={StyleSheet.absoluteFill}
         facing="back"
         enableTorch={flashOn}
@@ -652,7 +705,7 @@ export default function VINScannerScreen() {
           <TouchableOpacity style={styles.topBarBtn} onPress={() => router.back()} activeOpacity={0.8}>
             <IconSymbol name="xmark" size={20} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.topBarTitle}>Scan VIN Barcode</Text>
+          <Text style={styles.topBarTitle}>Scan VIN</Text>
           <TouchableOpacity
             style={[styles.topBarBtn, flashOn && styles.topBarBtnActive]}
             onPress={() => setFlashOn((f) => !f)}
@@ -681,7 +734,7 @@ export default function VINScannerScreen() {
               ? "Couldn't read full VIN — aim at the long\nbarcode printed under the VIN number"
               : partialWaiting
               ? "Partial code detected — now scan the barcode\nunder the printed VIN number"
-              : "Align the VIN barcode within the frame\n(door jamb, dashboard, or windshield)"}
+              : "Point at the VIN barcode or printed VIN number\n(door jamb, dashboard, or windshield)"}
           </Text>
           {partialResetHint ? (
             <View style={[styles.tipBox, { backgroundColor: "rgba(220,38,38,0.7)" }]}>
@@ -693,7 +746,7 @@ export default function VINScannerScreen() {
             </View>
           ) : (
             <View style={[styles.tipBox, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
-              <Text style={styles.tipText}>💡 Tip: The barcode is usually on the driver-side door jamb</Text>
+              <Text style={styles.tipText}>💡 Barcode or printed VIN — both work automatically</Text>
             </View>
           )}
         </View>

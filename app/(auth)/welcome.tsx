@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from "react-native";
 import { Image } from "expo-image";
 import { router } from "expo-router";
@@ -8,6 +8,11 @@ import { useSSO, useAuth } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
+import { IconSymbol } from "@/components/ui/icon-symbol";
+
+// #region agent log
+const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => { const p = { sessionId: '887738', location: loc, message: msg, data, timestamp: Date.now() }; console.log(`[DBG-887738] ${loc} | ${msg}`, data ?? ''); fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '887738' }, body: JSON.stringify(p) }).catch(() => {}); };
+// #endregion
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -18,24 +23,34 @@ export default function WelcomeScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // #region agent log
+  const mountCount = useRef(0);
+  useEffect(() => { mountCount.current++; _dbg('welcome:mount', 'WelcomeScreen mounted', { isSignedIn, mountNum: mountCount.current }); }, []);
+  useEffect(() => { _dbg('welcome:isSignedIn', 'isSignedIn changed', { isSignedIn }); }, [isSignedIn]);
+  // #endregion
+
   if (isSignedIn) {
+    // #region agent log
+    _dbg('welcome:redirect', 'REDIRECT BACK to /(tabs) — isSignedIn=true during render', { isSignedIn });
+    // #endregion
     router.replace("/(tabs)");
     return null;
   }
 
-  const handleGoogleAuth = async () => {
+  const [loadingProvider, setLoadingProvider] = useState<"google" | "apple" | null>(null);
+
+  const handleSSOAuth = async (strategy: "oauth_google" | "oauth_apple") => {
     if (isLoading) return;
     setError("");
     setIsLoading(true);
+    setLoadingProvider(strategy === "oauth_apple" ? "apple" : "google");
 
     try {
       if (Platform.OS !== "web") {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
 
-      const { createdSessionId, setActive, signIn, signUp } = await startSSOFlow({
-        strategy: "oauth_google",
-      });
+      const { createdSessionId, setActive } = await startSSOFlow({ strategy });
 
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
@@ -46,10 +61,8 @@ export default function WelcomeScreen() {
         setTimeout(() => router.replace("/(tabs)"), 100);
       }
     } catch (err: any) {
-      console.log("[Welcome] Google auth error:", err?.message);
-      console.log("[Welcome] Google auth errors:", JSON.stringify(err?.errors, null, 2));
-      // If Clerk says a session already exists in the keychain, nuke the stale
-      // tokens so the next attempt starts fresh with a real OAuth flow.
+      console.log(`[Welcome] ${strategy} auth error:`, err?.message);
+      console.log(`[Welcome] ${strategy} auth errors:`, JSON.stringify(err?.errors, null, 2));
       const code = err?.errors?.[0]?.code ?? "";
       const msg0 = (err?.errors?.[0]?.longMessage ?? err?.errors?.[0]?.message ?? err?.message ?? "").toLowerCase();
       if (code === "session_exists" || msg0.includes("already signed in") || msg0.includes("session exists")) {
@@ -62,7 +75,7 @@ export default function WelcomeScreen() {
         clerkError?.longMessage ??
         clerkError?.message ??
         err?.message ??
-        "Google sign-in failed. Please try again.";
+        "Sign-in failed. Please try again.";
       if (!msg.includes("cancel")) {
         setError(msg);
       }
@@ -71,6 +84,7 @@ export default function WelcomeScreen() {
       }
     } finally {
       setIsLoading(false);
+      setLoadingProvider(null);
     }
   };
 
@@ -116,11 +130,11 @@ export default function WelcomeScreen() {
 
         <TouchableOpacity
           style={[styles.googleBtn]}
-          onPress={handleGoogleAuth}
+          onPress={() => handleSSOAuth("oauth_google")}
           activeOpacity={0.85}
           disabled={isLoading}
         >
-          {isLoading ? (
+          {loadingProvider === "google" ? (
             <ActivityIndicator color="#333" />
           ) : (
             <View style={styles.googleBtnInner}>
@@ -130,10 +144,29 @@ export default function WelcomeScreen() {
           )}
         </TouchableOpacity>
 
+        {Platform.OS === "ios" && (
+          <TouchableOpacity
+            style={styles.appleBtn}
+            onPress={() => handleSSOAuth("oauth_apple")}
+            activeOpacity={0.85}
+            disabled={isLoading}
+          >
+            {loadingProvider === "apple" ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <View style={styles.appleBtnInner}>
+                <IconSymbol name="applelogo" size={18} color="#FFFFFF" />
+                <Text style={styles.appleBtnText}>Continue with Apple</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={[styles.secondaryBtn, { borderColor: colors.border }]}
           onPress={handleEmailAuth}
           activeOpacity={0.85}
+          disabled={isLoading}
         >
           <Text style={[styles.secondaryBtnText, { color: colors.foreground }]}>
             Continue with Email
@@ -227,6 +260,23 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "600",
     color: "#333",
+  },
+  appleBtn: {
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: 12,
+    backgroundColor: "#000",
+  },
+  appleBtnInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  appleBtnText: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   secondaryBtn: {
     borderRadius: 14,

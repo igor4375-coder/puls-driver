@@ -287,7 +287,7 @@ export default function PickupSignatureScreen() {
 
     // Update local state immediately
     updateLoadStatus(load.id, "picked_up");
-    pickupHighlightStore.signal("picked_up", "Vehicle picked up — moved to Picked Up tab");
+    pickupHighlightStore.signal("new", "Vehicle picked up");
 
     // Navigate back to loads list
     router.back();

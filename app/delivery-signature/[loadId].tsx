@@ -278,7 +278,7 @@ export default function DeliverySignatureScreen() {
     const toastMsg = load.isFinalLeg === false
       ? "Vehicle dropped at terminal — dispatch will assign the next leg"
       : "Vehicle delivered to final destination";
-    pickupHighlightStore.signal("delivered", toastMsg);
+    pickupHighlightStore.signal("picked_up", toastMsg);
 
     // Navigate back to loads list
     router.back();

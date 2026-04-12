@@ -73,6 +73,28 @@ export const getByDriverCode = query({
   },
 });
 
+export const deleteProfile = mutation({
+  args: { clerkUserId: v.string() },
+  handler: async (ctx, args) => {
+    const profile = await ctx.db
+      .query("driverProfiles")
+      .withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", args.clerkUserId))
+      .unique();
+    if (!profile) return;
+
+    // Remove company links
+    const links = await ctx.db
+      .query("driverCompanyLinks")
+      .withIndex("by_driverProfileId", (q) => q.eq("driverProfileId", profile._id))
+      .collect();
+    for (const link of links) {
+      await ctx.db.delete(link._id);
+    }
+
+    await ctx.db.delete(profile._id);
+  },
+});
+
 export const updateProfile = mutation({
   args: {
     clerkUserId: v.string(),

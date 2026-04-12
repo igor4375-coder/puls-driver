@@ -36,18 +36,21 @@ export default function VerifyScreen() {
   const [resendCooldown, setResendCooldown] = useState(0);
   const inputRefs = useRef<(TextInput | null)[]>([]);
 
-  const { signUp, setActive: setSignUpActive } = useSignUp();
-  const { signIn, setActive: setSignInActive } = useSignIn();
+  const { signUp } = useSignUp();
+  const { signIn } = useSignIn();
   const clerk = useClerk();
 
   const isSignIn = params.flow === "signIn";
+  const isEmail = params.method === "email";
+
+  const si = signIn as any;
+  const su = signUp as any;
 
   const navigateToApp = () => {
     while (router.canGoBack()) router.back();
-    setTimeout(() => navigateToApp(), 100);
+    setTimeout(() => router.replace("/(tabs)"), 100);
   };
-  const isEmail = params.method === "email";
-  const strategy = isEmail ? "email_code" : "phone_code";
+
   const displayValue = params.displayIdentifier ?? params.displayPhone ?? "";
   const enteredCode = digits.join("");
   const isCodeComplete = enteredCode.length === CODE_LENGTH;
@@ -106,81 +109,102 @@ export default function VerifyScreen() {
       }
 
       if (isSignIn) {
-        const si = clerk.client.signIn;
-        const result = await si.attemptFirstFactor({
-          strategy: strategy as any,
-          code: enteredCode,
-        });
+        if (!si) {
+          throw new Error("Sign-in session expired. Please go back and try again.");
+        }
 
-        if (result.status === "complete") {
-          await setSignInActive!({ session: result.createdSessionId });
+        // Verify the code using the new API
+        const verifyFn = isEmail
+          ? si.emailCode?.verifyCode
+          : si.phoneCode?.verifyCode;
+
+        if (!verifyFn) {
+          throw new Error("Verification method unavailable. Please go back and try again.");
+        }
+
+        const { error: verifyErr } = await (isEmail
+          ? si.emailCode.verifyCode({ code: enteredCode })
+          : si.phoneCode.verifyCode({ code: enteredCode }));
+
+        if (verifyErr) {
+          const msg =
+            (verifyErr as any).errors?.[0]?.longMessage ??
+            (verifyErr as any).errors?.[0]?.message ??
+            verifyErr.longMessage ??
+            verifyErr.message ??
+            "Invalid code. Please try again.";
+          setError(msg);
+          setDigits(Array(CODE_LENGTH).fill(""));
+          setTimeout(() => inputRefs.current[0]?.focus(), 100);
+          return;
+        }
+
+        if (si.status === "complete") {
+          const { error: finalizeErr } = await si.finalize();
+          if (finalizeErr) {
+            console.log("[Verify] finalize error:", finalizeErr.message);
+          }
           if (Platform.OS !== "web") {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
           navigateToApp();
         } else {
-          console.log("[Verify] SignIn status:", result.status);
+          console.log("[Verify] SignIn status after verify:", si.status);
           setError("Verification incomplete. Please try again.");
         }
       } else {
-        const su = clerk.client.signUp;
-        let result: any;
-
-        if (typeof su.attemptVerification === "function") {
-          result = await su.attemptVerification({
-            strategy: strategy as any,
-            code: enteredCode,
-          });
-        } else if (isEmail && typeof su.attemptEmailAddressVerification === "function") {
-          result = await su.attemptEmailAddressVerification({ code: enteredCode });
-        } else if (!isEmail && typeof su.attemptPhoneNumberVerification === "function") {
-          result = await su.attemptPhoneNumberVerification({ code: enteredCode });
-        } else {
-          const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(su));
-          console.log("[Verify] SignUp methods:", proto);
-          throw new Error("No attempt verification method found. Available: " + proto.join(", "));
+        // Sign-Up verification
+        if (!su) {
+          throw new Error("Sign-up session expired. Please go back and try again.");
         }
 
-        console.log("[Verify] Result status:", result.status);
-        console.log("[Verify] Result missingFields:", result.missingFields);
-        console.log("[Verify] Result unverifiedFields:", result.unverifiedFields);
-        console.log("[Verify] Result createdSessionId:", result.createdSessionId);
-        console.log("[Verify] Result createdUserId:", result.createdUserId);
+        const { error: verifyErr } = await (isEmail
+          ? su.verifications.verifyEmailCode({ code: enteredCode })
+          : su.verifications.verifyPhoneCode({ code: enteredCode }));
 
-        if (result.status === "complete") {
-          await setSignUpActive!({ session: result.createdSessionId });
+        if (verifyErr) {
+          const msg =
+            (verifyErr as any).errors?.[0]?.longMessage ??
+            (verifyErr as any).errors?.[0]?.message ??
+            verifyErr.longMessage ??
+            verifyErr.message ??
+            "Invalid code. Please try again.";
+          setError(msg);
+          setDigits(Array(CODE_LENGTH).fill(""));
+          setTimeout(() => inputRefs.current[0]?.focus(), 100);
+          return;
+        }
+
+        console.log("[Verify] SignUp status after verify:", su.status);
+
+        if (su.status === "complete") {
+          const { error: finalizeErr } = await su.finalize();
+          if (finalizeErr) {
+            console.log("[Verify] finalize error:", finalizeErr.message);
+          }
           if (Platform.OS !== "web") {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
           navigateToApp();
-        } else if (result.status === "missing_requirements") {
-          // Email verified but Clerk wants more info — check if we can skip
-          const missing = result.missingFields || [];
-          const unverified = result.unverifiedFields || [];
+        } else if (su.status === "missing_requirements") {
+          const missing = su.missingFields || [];
+          const unverified = su.unverifiedFields || [];
           console.log("[Verify] missing_requirements — missing:", missing, "unverified:", unverified);
 
-          // If no truly required fields remain, try to complete anyway
-          if (missing.length === 0 && unverified.length === 0 && result.createdSessionId) {
-            await setSignUpActive!({ session: result.createdSessionId });
-            navigateToApp();
-          } else if (missing.length === 0 && unverified.length === 0) {
-            // No missing/unverified but no session yet — try setting active from clerk client
-            const su = clerk.client.signUp;
-            console.log("[Verify] Trying clerk.client.signUp.status:", su.status);
-            console.log("[Verify] Trying clerk.client.signUp.createdSessionId:", su.createdSessionId);
-            if (su.createdSessionId) {
-              await setSignUpActive!({ session: su.createdSessionId });
-              navigateToApp();
+          if (missing.length === 0 && unverified.length === 0) {
+            const { error: finalizeErr } = await su.finalize();
+            if (finalizeErr) {
+              setError(`Sign-up incomplete: ${finalizeErr.longMessage ?? finalizeErr.message}`);
             } else {
-              setError(`Sign-up incomplete. Status: ${result.status}. Please try again.`);
+              navigateToApp();
             }
           } else {
             setError(
-              `Additional info needed: ${missing.join(", ") || unverified.join(", ")}. Please try again.`
+              `Additional info needed: ${missing.join(", ") || unverified.join(", ")}. Please try again.`,
             );
           }
         } else {
-          setError(`Verification status: ${result.status}. Please try again.`);
+          setError(`Verification status: ${su.status}. Please try again.`);
         }
       }
     } catch (err: any) {
@@ -206,36 +230,22 @@ export default function VerifyScreen() {
     if (resendCooldown > 0) return;
     try {
       if (isSignIn) {
-        const si = clerk.client.signIn;
-        if (isEmail) {
-          const emailCodeFactor = si.supportedFirstFactors?.find(
-            (f: any) => f.strategy === "email_code",
-          ) as any;
-          if (emailCodeFactor) {
-            await si.prepareFirstFactor({
-              strategy: "email_code",
-              emailAddressId: emailCodeFactor.emailAddressId,
-            });
-          }
-        } else {
-          const phoneCodeFactor = si.supportedFirstFactors?.find(
-            (f: any) => f.strategy === "phone_code",
-          ) as any;
-          if (phoneCodeFactor) {
-            await si.prepareFirstFactor({
-              strategy: "phone_code",
-              phoneNumberId: phoneCodeFactor.phoneNumberId,
-            });
-          }
+        if (!si) throw new Error("Sign-in session expired. Please go back and try again.");
+        const { error: resendErr } = await (isEmail
+          ? si.emailCode.sendCode()
+          : si.phoneCode.sendCode());
+        if (resendErr) {
+          setError(resendErr.longMessage ?? resendErr.message ?? "Failed to resend code.");
+          return;
         }
       } else {
-        const su = clerk.client.signUp;
-        if (typeof su.prepareVerification === "function") {
-          await su.prepareVerification({ strategy: strategy as any });
-        } else if (isEmail && typeof su.prepareEmailAddressVerification === "function") {
-          await su.prepareEmailAddressVerification();
-        } else if (!isEmail && typeof su.preparePhoneNumberVerification === "function") {
-          await su.preparePhoneNumberVerification();
+        if (!su) throw new Error("Sign-up session expired. Please go back and try again.");
+        const { error: resendErr } = await (isEmail
+          ? su.verifications.sendEmailCode()
+          : su.verifications.sendPhoneCode());
+        if (resendErr) {
+          setError(resendErr.longMessage ?? resendErr.message ?? "Failed to resend code.");
+          return;
         }
       }
       setResendCooldown(30);
@@ -244,7 +254,7 @@ export default function VerifyScreen() {
       setTimeout(() => inputRefs.current[0]?.focus(), 100);
     } catch (err: any) {
       console.log("[Verify] Resend error:", JSON.stringify(err, null, 2));
-      setError(err?.errors?.[0]?.message ?? "Failed to resend code.");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Failed to resend code.");
     }
   };
 

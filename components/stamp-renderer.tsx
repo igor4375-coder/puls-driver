@@ -77,6 +77,11 @@ export const StampRenderer = forwardRef<StampRendererRef>((_, ref) => {
           resizeMode="cover"
         />
 
+        {/* Branding watermark — bottom-right, above stamp banner */}
+        <View style={styles.brandingWrap}>
+          <Text style={styles.brandingText}>PULS DISPATCH</Text>
+        </View>
+
         {/* Evidence stamp banner */}
         <View style={styles.stampBanner}>
           {/* Left accent bar */}
@@ -108,6 +113,21 @@ const styles = StyleSheet.create({
     opacity: 0,
     pointerEvents: "none",
   },
+  brandingWrap: {
+    position: "absolute",
+    bottom: 340,
+    right: 60,
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    paddingHorizontal: 48,
+    paddingVertical: 20,
+    borderRadius: 16,
+  },
+  brandingText: {
+    color: "rgba(255, 255, 255, 0.92)",
+    fontSize: 72,
+    fontWeight: "800",
+    letterSpacing: 6,
+  },
   stampBanner: {
     position: "absolute",
     bottom: 0,
@@ -116,7 +136,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.82)",
     flexDirection: "row",
     alignItems: "stretch",
-    // Scale padding proportionally: render is ~7.8x screen width (3024 / 390)
     paddingVertical: 80,
     paddingRight: 110,
   },

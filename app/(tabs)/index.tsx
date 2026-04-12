@@ -139,7 +139,9 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
       <View style={[styles.stripe, { backgroundColor: stripeColor }]} />
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
-          <Text style={[styles.loadNumber, { color: colors.muted }]}>#{load.loadNumber}</Text>
+          <Text style={[styles.loadNumber, { color: colors.muted }]} numberOfLines={1}>
+            {firstVehicle?.vin ? firstVehicle.vin.toUpperCase() : `#${load.loadNumber}`}
+          </Text>
           <StatusBadge status={load.status} />
         </View>
         {load.isFieldPickup ? (

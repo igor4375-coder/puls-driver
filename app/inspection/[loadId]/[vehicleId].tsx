@@ -28,8 +28,6 @@ import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
-import { useAction } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
@@ -499,10 +497,8 @@ export default function InspectionScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { loadId, vehicleId } = useLocalSearchParams<{ loadId: string; vehicleId: string }>();
-  const { getLoad, savePickupInspection, saveDeliveryInspection, updateVehicleInfo, updateLoadStatus } = useLoads();
+  const { getLoad, savePickupInspection, saveDeliveryInspection, updateVehicleInfo, updateLoadStatus, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
-  const syncInspectionAction = useAction(api.platform.syncInspection);
-  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
   const { settings } = useSettings();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
@@ -828,20 +824,23 @@ export default function InspectionScreen() {
           if (pluginChargerCable !== null) additionalData.pluginChargerCable = pluginChargerCable;
           if (headphones !== null) additionalData.headphones = headphones;
 
-          await syncInspectionAction({
-            loadNumber: load?.loadNumber || "",
-            legId: platformTripId,
-            driverCode,
-            inspectionType: isDelivery ? "delivery" : "pickup",
-            vehicleVin: vehicle.vin || "",
-            photos: allUploadedPhotos,
-            damages: syncDamages,
-            noDamage,
-            gps: { lat: locationLat ?? 0, lng: locationLng ?? 0 },
-            timestamp: new Date().toISOString(),
-            notes: notes || undefined,
-            ...(isDelivery && handoffNote.trim() ? { handoffNote: handoffNote.trim() } : {}),
-            ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
+          queuePlatformSync({
+            type: "syncInspection",
+            args: {
+              loadNumber: load?.loadNumber || "",
+              legId: platformTripId,
+              driverCode,
+              inspectionType: isDelivery ? "delivery" : "pickup",
+              vehicleVin: vehicle.vin || "",
+              photos: allUploadedPhotos,
+              damages: syncDamages,
+              noDamage,
+              gps: { lat: locationLat ?? 0, lng: locationLng ?? 0 },
+              timestamp: new Date().toISOString(),
+              notes: notes || undefined,
+              ...(isDelivery && handoffNote.trim() ? { handoffNote: handoffNote.trim() } : {}),
+              ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
+            },
           });
         } catch (err) {
           console.error("[Inspection] SYNC FAILED:", err);
@@ -921,7 +920,7 @@ export default function InspectionScreen() {
 
       // 4. Mark load status locally
       updateLoadStatus(loadId, "picked_up");
-      pickupHighlightStore.signal("new", "Vehicle picked up — returning to Pending");
+      pickupHighlightStore.signal("new", "Vehicle picked up");
 
       // 5. Call markAsPickedUp on the company platform (platform loads only)
       const isPlatformLoad = loadId.startsWith("platform-");
@@ -963,8 +962,9 @@ export default function InspectionScreen() {
         const savedSigPaths = settings.driverSignaturePaths.filter((p) => !p.d.startsWith("__live__"));
         const driverSigStr = savedSigPaths.length > 0 ? savedSigPaths.map((p) => p.d).join(" ") : undefined;
 
-        try {
-          await markAsPickedUpAction({
+        queuePlatformSync({
+          type: "markAsPickedUp",
+          args: {
             loadNumber: load.loadNumber,
             legId,
             driverCode,
@@ -977,13 +977,12 @@ export default function InspectionScreen() {
             noDamage,
             vehicleVin: vehicle?.vin || "",
             ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
-          });
-        } catch (platformErr) {
-          console.warn("[CompletePickup] Platform markAsPickedUp failed:", platformErr);
-        }
+          },
+        });
 
-        try {
-          await syncInspectionAction({
+        queuePlatformSync({
+          type: "syncInspection",
+          args: {
             loadNumber: load.loadNumber,
             legId,
             driverCode,
@@ -996,10 +995,8 @@ export default function InspectionScreen() {
             timestamp: new Date().toISOString(),
             notes: notes || undefined,
             ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
-          });
-        } catch (syncErr) {
-          console.error("[CompletePickup] syncInspection failed:", syncErr);
-        }
+          },
+        });
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
