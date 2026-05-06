@@ -11,3 +11,10 @@ When deploying an OTA update via `npx eas update`:
 3. Include the updated `components/update-version-banner.tsx` in the git commit.
 4. Use the BUILD_TAG as the `--message` parameter for the `eas update` command (e.g. `--message "v27-camera-zoom-fix"`).
 5. The current version is tracked by the `BUILD_TAG` constant on line 6 of `components/update-version-banner.tsx`. Always read this file first to determine the current version number before incrementing.
+6. **ALWAYS push to all three EAS Update branches** (`production`, `development`, `preview`) so every build channel — internal/dev clients, beta testers, and store builds — receives the update. Using `--auto` instead picks the current git branch (usually `main`), which goes nowhere on installed builds. Correct sequence:
+   ```bash
+   npx eas update --branch production  --message "v{N}-{desc}"
+   npx eas update --branch development --message "v{N}-{desc}"
+   npx eas update --branch preview     --message "v{N}-{desc}"
+   ```
+   Channel-to-branch mapping is defined in `eas.json` (each build profile sets `channel`, and EAS Update branches are named to match).
