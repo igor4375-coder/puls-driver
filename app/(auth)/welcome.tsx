@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSSO, useAuth, useClerk } from "@clerk/expo";
+import * as Clipboard from "expo-clipboard";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
@@ -62,11 +63,26 @@ export default function WelcomeScreen() {
       });
       if (wasAuth === '1') {
         AsyncStorage.getItem(DBG_LOG_KEY).then(logs => {
-          const last30 = (logs ?? '(no logs)').split('\n').slice(-30).join('\n');
+          const allLines = (logs ?? '(no logs)').split('\n');
+          const last30 = allLines.slice(-30).join('\n');
+          const fullDump = `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n${logs ?? '(no logs)'}`;
           Alert.alert(
             'Debug: Auth Log (6bcf75)',
-            `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n${last30}`,
-            [{ text: 'Copy + OK', onPress: () => {} }, { text: 'OK' }]
+            `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n--- LAST 30 OF ${allLines.length} LINES ---\n${last30}\n\nTap "Copy ALL" to copy the full ${allLines.length}-line log to clipboard, then paste in chat.`,
+            [
+              {
+                text: 'Copy ALL',
+                onPress: async () => {
+                  try {
+                    await Clipboard.setStringAsync(fullDump);
+                    Alert.alert('Copied', `${allLines.length} log lines copied to clipboard. Paste them in WhatsApp/chat now.`);
+                  } catch (e: any) {
+                    Alert.alert('Copy failed', String(e?.message ?? e));
+                  }
+                },
+              },
+              { text: 'OK' },
+            ]
           );
         }).catch(() => {});
       }
