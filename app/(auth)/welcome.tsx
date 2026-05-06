@@ -1,17 +1,34 @@
 import { useState, useEffect, useRef } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, Alert } from "react-native";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
-import { useSSO, useAuth } from "@clerk/expo";
+import { useSSO, useAuth, useClerk } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 
 // #region agent log
-const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => { const p = { sessionId: '887738', location: loc, message: msg, data, timestamp: Date.now() }; console.log(`[DBG-887738] ${loc} | ${msg}`, data ?? ''); fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '887738' }, body: JSON.stringify(p) }).catch(() => {}); };
+import AsyncStorage from "@react-native-async-storage/async-storage";
+const DBG_LOG_KEY = '@dbg6bcf75:log';
+const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
+  const ts = Date.now();
+  const entry = `${new Date(ts).toISOString().slice(11, 23)} [${loc}] ${msg} ${data ? JSON.stringify(data) : ''}`;
+  console.log(`[DBG-6bcf75] ${entry}`);
+  fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '6bcf75' },
+    body: JSON.stringify({ sessionId: '6bcf75', location: loc, message: msg, data, timestamp: ts }),
+  }).catch(() => {});
+  AsyncStorage.getItem(DBG_LOG_KEY).then(prev => {
+    const lines = prev ? prev.split('\n') : [];
+    lines.push(entry);
+    if (lines.length > 120) lines.splice(0, lines.length - 120);
+    AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n')).catch(() => {});
+  }).catch(() => {});
+};
 // #endregion
 
 WebBrowser.maybeCompleteAuthSession();
@@ -20,13 +37,48 @@ export default function WelcomeScreen() {
   const colors = useColors();
   const { startSSOFlow } = useSSO();
   const { isSignedIn } = useAuth();
+  const clerk = useClerk();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
   // #region agent log
   const mountCount = useRef(0);
-  useEffect(() => { mountCount.current++; _dbg('welcome:mount', 'WelcomeScreen mounted', { isSignedIn, mountNum: mountCount.current }); }, []);
-  useEffect(() => { _dbg('welcome:isSignedIn', 'isSignedIn changed', { isSignedIn }); }, [isSignedIn]);
+  useEffect(() => {
+    mountCount.current++;
+    _dbg('welcome:mount', 'WelcomeScreen mounted', {
+      isSignedIn,
+      mountNum: mountCount.current,
+      hasClerkSession: !!clerk?.session,
+      sessionId: clerk?.session?.id ?? null,
+      sessionStatus: clerk?.session?.status ?? null,
+      hasClerkUser: !!clerk?.user,
+    });
+    AsyncStorage.getItem('@autohaul:was_authenticated').then(wasAuth => {
+      _dbg('welcome:diagnostic', 'mount with WAS_AUTH check', {
+        wasAuthenticated: wasAuth,
+        isSignedIn,
+        hasClerkSession: !!clerk?.session,
+        hasClerkUser: !!clerk?.user,
+      });
+      if (wasAuth === '1') {
+        AsyncStorage.getItem(DBG_LOG_KEY).then(logs => {
+          const last30 = (logs ?? '(no logs)').split('\n').slice(-30).join('\n');
+          Alert.alert(
+            'Debug: Auth Log (6bcf75)',
+            `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n${last30}`,
+            [{ text: 'Copy + OK', onPress: () => {} }, { text: 'OK' }]
+          );
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    _dbg('welcome:isSignedIn', 'isSignedIn changed', {
+      isSignedIn,
+      hasClerkSession: !!clerk?.session,
+      hasClerkUser: !!clerk?.user,
+    });
+  }, [isSignedIn, clerk?.session?.id, clerk?.user?.id]);
   // #endregion
 
   if (isSignedIn) {
@@ -44,6 +96,19 @@ export default function WelcomeScreen() {
     setError("");
     setIsLoading(true);
     setLoadingProvider(strategy === "oauth_apple" ? "apple" : "google");
+
+    // #region agent log
+    _dbg('welcome:signInTap', 'Sign-In button tapped', {
+      strategy,
+      isSignedIn,
+      hasClerkSession: !!clerk?.session,
+      sessionId: clerk?.session?.id ?? null,
+      sessionStatus: clerk?.session?.status ?? null,
+      hasClerkUser: !!clerk?.user,
+      userId: clerk?.user?.id ?? null,
+      hasClerkObj: !!clerk,
+    });
+    // #endregion
 
     try {
       if (Platform.OS !== "web") {
@@ -65,7 +130,31 @@ export default function WelcomeScreen() {
       console.log(`[Welcome] ${strategy} auth errors:`, JSON.stringify(err?.errors, null, 2));
       const code = err?.errors?.[0]?.code ?? "";
       const msg0 = (err?.errors?.[0]?.longMessage ?? err?.errors?.[0]?.message ?? err?.message ?? "").toLowerCase();
+      // #region agent log
+      _dbg('welcome:signInError', 'sign-in attempt errored', {
+        strategy,
+        code,
+        msg: msg0,
+        rawMessage: err?.message,
+        errorCount: err?.errors?.length ?? 0,
+        firstErrorCode: err?.errors?.[0]?.code,
+        firstErrorMsg: err?.errors?.[0]?.message,
+        isSignedInNow: isSignedIn,
+        hasClerkSessionNow: !!clerk?.session,
+        sessionIdNow: clerk?.session?.id ?? null,
+      });
+      // #endregion
       if (code === "session_exists" || msg0.includes("already signed in") || msg0.includes("session exists")) {
+        // #region agent log
+        _dbg('welcome:sessionExistsHit', 'SMOKING GUN: session_exists during sign-in', {
+          isSignedInClient: isSignedIn,
+          hasClerkSession: !!clerk?.session,
+          clerkSessionId: clerk?.session?.id ?? null,
+          clerkSessionStatus: clerk?.session?.status ?? null,
+          hasClerkUser: !!clerk?.user,
+          clerkUserId: clerk?.user?.id ?? null,
+        });
+        // #endregion
         await nukeAllClerkTokens().catch(() => {});
         setError("Session was stale. Please tap Sign In again.");
         return;

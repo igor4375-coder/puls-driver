@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useMemo, useRef } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useUser, useAuth as useClerkAuth } from "@clerk/expo";
+import { useUser, useAuth as useClerkAuth, useClerk } from "@clerk/expo";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
@@ -9,7 +9,24 @@ import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import type { Driver } from "./data";
 
 // #region agent log
-const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => { const p = { sessionId: '887738', location: loc, message: msg, data, timestamp: Date.now() }; console.log(`[DBG-887738] ${loc} | ${msg}`, data ?? ''); fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '887738' }, body: JSON.stringify(p) }).catch(() => {}); };
+const DBG_LOG_KEY = '@dbg6bcf75:log';
+const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
+  const ts = Date.now();
+  const entry = `${new Date(ts).toISOString().slice(11, 23)} [${loc}] ${msg} ${data ? JSON.stringify(data) : ''}`;
+  console.log(`[DBG-6bcf75] ${entry}`);
+  fetch('http://127.0.0.1:7527/ingest/340f175d-2206-41c1-9235-1bc70ac26ba5', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '6bcf75' },
+    body: JSON.stringify({ sessionId: '6bcf75', location: loc, message: msg, data, timestamp: ts }),
+  }).catch(() => {});
+  AsyncStorage.getItem(DBG_LOG_KEY).then(prev => {
+    const lines = prev ? prev.split('\n') : [];
+    lines.push(entry);
+    if (lines.length > 120) lines.splice(0, lines.length - 120);
+    AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n')).catch(() => {});
+  }).catch(() => {});
+};
+export { DBG_LOG_KEY };
 // #endregion
 
 interface AuthContextType {
@@ -28,6 +45,7 @@ const CACHED_PROFILE_KEY = "@autohaul:cached_profile";
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded, signOut } = useClerkAuth();
   const { user: clerkUser } = useUser();
+  const clerk = useClerk();
 
   // Persisted flag: true once the user has ever authenticated on this device.
   // Prevents transient isSignedIn=false (token refresh) from triggering redirects.
@@ -77,8 +95,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     AsyncStorage.getItem(WAS_AUTHENTICATED_KEY).then((v) => {
+      // #region agent log
+      _dbg('auth-context:hadSessionRead', 'WAS_AUTHENTICATED_KEY read from AsyncStorage', { rawValue: v, willSet: v === "1" });
+      // #endregion
       setHadSession(v === "1");
-    }).catch(() => setHadSession(false));
+    }).catch((err) => {
+      // #region agent log
+      _dbg('auth-context:hadSessionRead', 'AsyncStorage read FAILED', { err: String(err) });
+      // #endregion
+      setHadSession(false);
+    });
     // Load cached profile for offline use
     AsyncStorage.getItem(CACHED_PROFILE_KEY).then((v) => {
       if (v) setCachedProfile(JSON.parse(v));
@@ -226,6 +252,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [driver?.driverCode, clerkUser?.id, pushSyncOpts]);
 
   const logout = async () => {
+    // #region agent log
+    _dbg('auth-context:logout', 'logout() called', { isSignedIn, hadSession, hasClerkSession: !!clerk?.session, stack: new Error().stack?.split('\n').slice(1, 6).join(' | ') });
+    // #endregion
     setHadSession(false);
     setCachedProfile(null);
     setCachedClerkId(null);
@@ -258,12 +287,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     _dbg('auth-context:state', 'auth state changed', { isLoading, isAuthenticated: computedIsAuthenticated, sessionExpired, isSignedIn, hadSession, clerkLoaded, effectiveSignedIn, hasDriver: !!driver, hasActiveProfile: !!activeProfile, hasCachedClerkId: !!cachedClerkId });
   }, [isLoading, computedIsAuthenticated, sessionExpired, isSignedIn, hadSession, clerkLoaded]);
 
+  // H2/H5: Monitor raw clerk.session/clerk.user (not the derived isSignedIn)
+  // to detect Clerk SDK getting into a "session-null but tokens-valid" stuck state.
+  const rawClerkSig = `${clerk?.session?.id ?? 'null'}|${clerk?.session?.status ?? 'null'}|${clerk?.user?.id ?? 'null'}|${isSignedIn}`;
+  const lastRawSig = useRef<string>('');
+  useEffect(() => {
+    if (lastRawSig.current === rawClerkSig) return;
+    lastRawSig.current = rawClerkSig;
+    _dbg('auth-context:clerkRaw', 'raw clerk state changed', {
+      hasClerkObj: !!clerk,
+      hasSession: !!clerk?.session,
+      sessionId: clerk?.session?.id ?? null,
+      sessionStatus: clerk?.session?.status ?? null,
+      sessionLastActiveAt: clerk?.session?.lastActiveAt ? new Date(clerk.session.lastActiveAt).toISOString() : null,
+      hasUser: !!clerk?.user,
+      userId: clerk?.user?.id ?? null,
+      isSignedIn,
+      clerkLoaded,
+      hadSession,
+    });
+  }, [rawClerkSig, clerk, isSignedIn, clerkLoaded, hadSession]);
+
+  // H1: Track AppState transitions and measure time from "active" -> isSignedIn flips to true
+  // Also captures the EXACT raw Clerk state at every AppState change.
+  const appStateRef = useRef<AppStateStatus | null>(null);
+  const appStateActiveAtRef = useRef<number | null>(null);
+  const isSignedInAtActiveRef = useRef<boolean | null>(null);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      _dbg('auth-context:appState', 'AppState changed', { newState: state, isSignedIn, clerkLoaded, hadSession, sessionExpired, isLoading, isAuthenticated: computedIsAuthenticated });
+      const now = Date.now();
+      const prev = appStateRef.current;
+      const dt = appStateActiveAtRef.current ? now - appStateActiveAtRef.current : null;
+      _dbg('auth-context:appState', 'AppState changed', {
+        from: prev,
+        to: state,
+        msSinceActive: dt,
+        isSignedIn,
+        clerkLoaded,
+        hadSession,
+        sessionExpired,
+        isLoading,
+        isAuthenticated: computedIsAuthenticated,
+        hasClerkSession: !!clerk?.session,
+        clerkSessionStatus: clerk?.session?.status ?? null,
+        hasClerkUser: !!clerk?.user,
+      });
+      if (state === 'active') {
+        appStateActiveAtRef.current = now;
+        isSignedInAtActiveRef.current = isSignedIn;
+      }
+      appStateRef.current = state;
     });
     return () => sub.remove();
-  }, [isSignedIn, clerkLoaded, hadSession, sessionExpired, isLoading, computedIsAuthenticated]);
+  }, [isSignedIn, clerkLoaded, hadSession, sessionExpired, isLoading, computedIsAuthenticated, clerk?.session?.id, clerk?.user?.id]);
+
+  // Detect the moment isSignedIn flips after coming back to foreground.
+  useEffect(() => {
+    if (!appStateActiveAtRef.current) return;
+    const wasFalseAtActive = isSignedInAtActiveRef.current === false;
+    if (wasFalseAtActive && isSignedIn === true) {
+      const dt = Date.now() - appStateActiveAtRef.current;
+      _dbg('auth-context:rehydrate', 'isSignedIn flipped TRUE after foreground', {
+        msAfterActive: dt,
+        beatCircuitBreaker: dt < 5000,
+        sessionExpired,
+        hasClerkSession: !!clerk?.session,
+      });
+      isSignedInAtActiveRef.current = true;
+    }
+  }, [isSignedIn, sessionExpired, clerk?.session?.id]);
   // #endregion
 
   return (
