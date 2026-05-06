@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v46-auth-resume-debug";
+const BUILD_TAG = "v47-show-version-banner";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
@@ -32,8 +32,15 @@ export function UpdateVersionBanner() {
     })();
   }, []);
 
-  // Banner hidden for App Store screenshots
-  return null;
+  if (Platform.OS === "web") return null;
+
+  return (
+    <View style={[styles.banner, { top: insets.top + 2 }]} pointerEvents="none">
+      <Text style={styles.text}>
+        {BUILD_TAG}{checking ? " · checking…" : ""}
+      </Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
