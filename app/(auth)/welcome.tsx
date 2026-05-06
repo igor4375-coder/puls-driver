@@ -14,6 +14,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 // #region agent log
 import AsyncStorage from "@react-native-async-storage/async-storage";
 const DBG_LOG_KEY = '@dbg6bcf75:log';
+let _dbgQueue: Promise<void> = Promise.resolve();
 const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
   const ts = Date.now();
   const entry = `${new Date(ts).toISOString().slice(11, 23)} [${loc}] ${msg} ${data ? JSON.stringify(data) : ''}`;
@@ -23,12 +24,15 @@ const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
     headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '6bcf75' },
     body: JSON.stringify({ sessionId: '6bcf75', location: loc, message: msg, data, timestamp: ts }),
   }).catch(() => {});
-  AsyncStorage.getItem(DBG_LOG_KEY).then(prev => {
-    const lines = prev ? prev.split('\n') : [];
-    lines.push(entry);
-    if (lines.length > 120) lines.splice(0, lines.length - 120);
-    AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n')).catch(() => {});
-  }).catch(() => {});
+  _dbgQueue = _dbgQueue.then(async () => {
+    try {
+      const prev = await AsyncStorage.getItem(DBG_LOG_KEY);
+      const lines = prev ? prev.split('\n') : [];
+      lines.push(entry);
+      if (lines.length > 200) lines.splice(0, lines.length - 200);
+      await AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n'));
+    } catch {}
+  });
 };
 // #endregion
 
@@ -61,31 +65,31 @@ export default function WelcomeScreen() {
         hasClerkSession: !!clerk?.session,
         hasClerkUser: !!clerk?.user,
       });
-      if (wasAuth === '1') {
-        AsyncStorage.getItem(DBG_LOG_KEY).then(logs => {
-          const allLines = (logs ?? '(no logs)').split('\n');
-          const last30 = allLines.slice(-30).join('\n');
-          const fullDump = `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n${logs ?? '(no logs)'}`;
-          Alert.alert(
-            'Debug: Auth Log (6bcf75)',
-            `clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n--- LAST 30 OF ${allLines.length} LINES ---\n${last30}\n\nTap "Copy ALL" to copy the full ${allLines.length}-line log to clipboard, then paste in chat.`,
-            [
-              {
-                text: 'Copy ALL',
-                onPress: async () => {
-                  try {
-                    await Clipboard.setStringAsync(fullDump);
-                    Alert.alert('Copied', `${allLines.length} log lines copied to clipboard. Paste them in WhatsApp/chat now.`);
-                  } catch (e: any) {
-                    Alert.alert('Copy failed', String(e?.message ?? e));
-                  }
-                },
+      // Always pop on welcome mount during debug — bug-detection is "wasAuth=1".
+      AsyncStorage.getItem(DBG_LOG_KEY).then(logs => {
+        const allLines = (logs ?? '(no logs)').split('\n');
+        const last30 = allLines.slice(-30).join('\n');
+        const fullDump = `wasAuth=${wasAuth} clerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n${logs ?? '(no logs)'}`;
+        const titleSuffix = wasAuth === '1' ? '🚨 BUG' : 'fresh';
+        Alert.alert(
+          `Debug: Auth Log [${titleSuffix}]`,
+          `wasAuth=${wasAuth}\nclerk.session=${!!clerk?.session} clerk.user=${!!clerk?.user} isSignedIn=${isSignedIn}\n\n--- LAST 30 OF ${allLines.length} LINES ---\n${last30}\n\nTap "Copy ALL" to copy the full ${allLines.length}-line log to clipboard, then paste in chat.`,
+          [
+            {
+              text: 'Copy ALL',
+              onPress: async () => {
+                try {
+                  await Clipboard.setStringAsync(fullDump);
+                  Alert.alert('Copied', `${allLines.length} log lines copied to clipboard. Paste them in WhatsApp/chat now.`);
+                } catch (e: any) {
+                  Alert.alert('Copy failed', String(e?.message ?? e));
+                }
               },
-              { text: 'OK' },
-            ]
-          );
-        }).catch(() => {});
-      }
+            },
+            { text: 'OK' },
+          ]
+        );
+      }).catch(() => {});
     }).catch(() => {});
   }, []);
   useEffect(() => {

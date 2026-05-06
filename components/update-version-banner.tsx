@@ -5,7 +5,7 @@ import * as Updates from "expo-updates";
 import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BUILD_TAG = "v49-tappable-debug-banner";
+const BUILD_TAG = "v50-keychain-bg-fix";
 const DBG_LOG_KEY = '@dbg6bcf75:log';
 
 export function UpdateVersionBanner() {

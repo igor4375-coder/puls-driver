@@ -10,6 +10,9 @@ import type { Driver } from "./data";
 
 // #region agent log
 const DBG_LOG_KEY = '@dbg6bcf75:log';
+// Serialize AsyncStorage writes through a single promise queue so concurrent
+// _dbg() calls don't race each other (which would lose entries).
+let _dbgQueue: Promise<void> = Promise.resolve();
 const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
   const ts = Date.now();
   const entry = `${new Date(ts).toISOString().slice(11, 23)} [${loc}] ${msg} ${data ? JSON.stringify(data) : ''}`;
@@ -19,12 +22,15 @@ const _dbg = (loc: string, msg: string, data?: Record<string, unknown>) => {
     headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '6bcf75' },
     body: JSON.stringify({ sessionId: '6bcf75', location: loc, message: msg, data, timestamp: ts }),
   }).catch(() => {});
-  AsyncStorage.getItem(DBG_LOG_KEY).then(prev => {
-    const lines = prev ? prev.split('\n') : [];
-    lines.push(entry);
-    if (lines.length > 120) lines.splice(0, lines.length - 120);
-    AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n')).catch(() => {});
-  }).catch(() => {});
+  _dbgQueue = _dbgQueue.then(async () => {
+    try {
+      const prev = await AsyncStorage.getItem(DBG_LOG_KEY);
+      const lines = prev ? prev.split('\n') : [];
+      lines.push(entry);
+      if (lines.length > 200) lines.splice(0, lines.length - 200);
+      await AsyncStorage.setItem(DBG_LOG_KEY, lines.join('\n'));
+    } catch {}
+  });
 };
 export { DBG_LOG_KEY };
 // #endregion
