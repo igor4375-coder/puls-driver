@@ -108,6 +108,16 @@ export interface PlatformLoad {
     city: string;
     province: string;
   };
+  /** Per-leg dispatch notes (from "Dispatch Notes" field on the platform) */
+  notes?: string | null;
+  /** Load-level driver notes that apply to the whole order */
+  driverNotes?: string | null;
+  /** Pickup-specific instructions for this leg */
+  pickupInstructions?: string | null;
+  /** Dropoff-specific instructions for this leg */
+  dropoffInstructions?: string | null;
+  /** Note from the previous leg's delivery driver */
+  previousLegNotes?: string | null;
 }
 
 /**
@@ -266,7 +276,11 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
     },
     driverPay: parseFloat(pl.rate) || 0,
     paymentType: "cod",
-    notes: "",
+    notes: [pl.notes, pl.driverNotes].filter(Boolean).join("\n\n") || "",
+    dispatchNotes: pl.notes || null,
+    driverNotes: pl.driverNotes || null,
+    pickupInstructions: pl.pickupInstructions || null,
+    dropoffInstructions: pl.dropoffInstructions || null,
     assignedAt: parsePlatformDate(pl.pickupDate),
     // Mark as platform-sourced for UI differentiation
     platformTripId: pl.legId ?? pl.tripId ?? 0,
@@ -424,7 +438,25 @@ export function LoadsProvider({
   }, []);
 
   // Platform loads fetched from company platform
-  const [platformLoads, setPlatformLoads] = useState<Load[]>([]);
+  const [platformLoads, setPlatformLoadsRaw] = useState<Load[]>([]);
+  const platformLoadsHydratedRef = React.useRef(false);
+
+  // Wrap setPlatformLoads to auto-persist on every change.
+  // Previously only a handful of call sites persisted, which meant saving a
+  // delivery/pickup inspection updated memory only — if the OS killed the app
+  // before the next doFetchLoads() ran, those photos + damages were lost.
+  const setPlatformLoads = React.useCallback(
+    (updater: Load[] | ((prev: Load[]) => Load[])) => {
+      setPlatformLoadsRaw((prev) => {
+        const next = typeof updater === "function" ? (updater as (p: Load[]) => Load[])(prev) : updater;
+        if (platformLoadsHydratedRef.current) {
+          debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    []
+  );
   const [isLoadingPlatformLoads, setIsLoadingPlatformLoads] = useState(false);
   const [platformLoadError, setPlatformLoadError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -493,6 +525,49 @@ export function LoadsProvider({
             await markAsPickedUpAction(task.args as any);
           } else if (task.type === "markAsDelivered") {
             await markAsDeliveredAction(task.args as any);
+            // Platform has confirmed delivery — force the local state to
+            // "delivered" too. This closes the loop so a successful platform
+            // delivery deterministically pulls the driver's screen out of
+            // "Picked Up" even if the original local stamp was lost
+            // (e.g. due to a remount or kill before AsyncStorage settled).
+            const legId = (task.args as { legId?: number | string }).legId;
+            if (legId !== undefined && legId !== null) {
+              const loadId = `platform-${legId}`;
+              const deliveredAt = new Date().toISOString();
+              driverDeliveredRef.current.add(loadId);
+              localStatusOverridesRef.current.set(loadId, { status: "delivered", at: Date.now() });
+              AsyncStorage.setItem(
+                STATUS_OVERRIDES_KEY,
+                JSON.stringify([...localStatusOverridesRef.current.entries()]),
+              ).catch(() => {});
+              const stampFn = (prev: Load[]) =>
+                prev.map((l) =>
+                  l.id === loadId
+                    ? {
+                        ...l,
+                        status: "delivered" as LoadStatus,
+                        deliveredAt: l.deliveredAt ?? deliveredAt,
+                        delivery: { ...l.delivery, date: l.delivery.date || deliveredAt },
+                      }
+                    : l,
+                );
+              setLocalLoads(stampFn);
+              setPlatformLoads(stampFn);
+              setDeliveredSnapshots((prev) => {
+                const stamped = prev.map((s) =>
+                  s.id === loadId
+                    ? {
+                        ...s,
+                        status: "delivered" as LoadStatus,
+                        deliveredAt: s.deliveredAt ?? deliveredAt,
+                        delivery: { ...s.delivery, date: s.delivery.date || deliveredAt },
+                      }
+                    : s,
+                );
+                persistDeliveredImmediate([...driverDeliveredRef.current], stamped);
+                return stamped;
+              });
+            }
           } else if (task.type === "syncInspection") {
             await syncInspectionAction(task.args as any);
           }
@@ -511,7 +586,7 @@ export function LoadsProvider({
       persistSyncQueue(remaining);
       syncProcessingRef.current = false;
     })();
-  }, [syncQueue, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue]);
+  }, [syncQueue, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
 
   // Retry failed sync tasks when app comes to foreground
   useEffect(() => {
@@ -532,6 +607,35 @@ export function LoadsProvider({
   // removed from the driver's assignment list (e.g. reassigned to next leg).
   const [deliveredSnapshots, setDeliveredSnapshots] = useState<Load[]>([]);
 
+  // One-shot migration: rewrite any v51-and-earlier "stuck picked_up" snapshot
+  // back to "delivered". The pre-v52 dropped-pickup snapshotting code stored
+  // every dropped load with hardcoded status="picked_up" and added it to
+  // driverDeliveredRef. So a snapshot that is BOTH in driverDeliveredRef AND
+  // has status="picked_up" is unambiguously the bug we just fixed — every
+  // legitimate write into driverDeliveredRef from markDriverDelivered stores
+  // status="delivered".
+  const migrateStuckSnapshots = React.useCallback(
+    (ids: string[], snapshots: Load[]): { snapshots: Load[]; changed: boolean } => {
+      const idSet = new Set(ids);
+      let changed = false;
+      const fixed = snapshots.map((s) => {
+        if (s.status === "picked_up" && idSet.has(s.id)) {
+          changed = true;
+          const deliveredAt = s.deliveredAt ?? new Date().toISOString();
+          return {
+            ...s,
+            status: "delivered" as LoadStatus,
+            deliveredAt,
+            delivery: { ...s.delivery, date: s.delivery.date || deliveredAt },
+          };
+        }
+        return s;
+      });
+      return { snapshots: fixed, changed };
+    },
+    [],
+  );
+
   // Load persisted driver-delivered data on startup (atomic key, with legacy migration)
   useEffect(() => {
     (async () => {
@@ -540,7 +644,12 @@ export function LoadsProvider({
         if (atomicVal) {
           const { ids, snapshots } = JSON.parse(atomicVal) as { ids: string[]; snapshots: Load[] };
           driverDeliveredRef.current = new Set(ids);
-          setDeliveredSnapshots(snapshots);
+          const migrated = migrateStuckSnapshots(ids, snapshots);
+          setDeliveredSnapshots(migrated.snapshots);
+          if (migrated.changed) {
+            console.log(`[Loads] Migrated ${snapshots.length - migrated.snapshots.filter((s) => s.status === "picked_up").length} stuck snapshot(s) → delivered`);
+            persistDeliveredImmediate(ids, migrated.snapshots);
+          }
           return;
         }
         // Migrate from legacy separate keys
@@ -552,13 +661,14 @@ export function LoadsProvider({
         const snapshots: Load[] = legacySnaps ? JSON.parse(legacySnaps) : [];
         if (ids.length > 0 || snapshots.length > 0) {
           driverDeliveredRef.current = new Set(ids);
-          setDeliveredSnapshots(snapshots);
-          persistDeliveredImmediate(ids, snapshots);
+          const migrated = migrateStuckSnapshots(ids, snapshots);
+          setDeliveredSnapshots(migrated.snapshots);
+          persistDeliveredImmediate(ids, migrated.snapshots);
           AsyncStorage.multiRemove([DRIVER_DELIVERED_KEY, DRIVER_DELIVERED_SNAPSHOTS_KEY]).catch(() => {});
         }
       } catch { /* ignore */ }
     })();
-  }, []);
+  }, [migrateStuckSnapshots]);
 
   // Load persisted status overrides on startup
   useEffect(() => {
@@ -828,14 +938,32 @@ export function LoadsProvider({
       // Snapshot any picked-up loads that were dropped from the platform response.
       // This preserves them so the driver can still complete the delivery flow
       // even if dispatch dismisses or unassigns the load.
+      //
+      // We preserve `l.status` instead of forcing "picked_up" — the previous
+      // hard-coded value would corrupt loads the driver had already stamped
+      // "delivered" but whose AsyncStorage write hadn't yet committed (e.g.
+      // when the LoadsProvider remounted due to the v49-and-earlier auth bug
+      // before the persist landed). If a local status override exists, prefer
+      // it as the source of truth — that way a markDelivered tap that didn't
+      // make it into driverDeliveredRef in time still wins.
       if (droppedPickedUp.length > 0) {
         setDeliveredSnapshots((prev) => {
           let updated = [...prev];
           for (const l of droppedPickedUp) {
             driverDeliveredRef.current.add(l.id);
-            const exists = updated.some((s) => s.id === l.id);
-            const snapshot = { ...l, status: "picked_up" as LoadStatus };
-            if (exists) {
+            const override = localStatusOverridesRef.current.get(l.id);
+            const existingSnap = updated.find((s) => s.id === l.id);
+            const candidateRank = STATUS_RANK[l.status] ?? 0;
+            const existingRank = existingSnap ? (STATUS_RANK[existingSnap.status] ?? 0) : -1;
+            const overrideRank = override ? (STATUS_RANK[override.status] ?? 0) : -1;
+            // Pick the highest-ranking known status so we never demote a
+            // previously delivered load back to picked_up.
+            let bestStatus: LoadStatus = l.status;
+            let bestRank = candidateRank;
+            if (overrideRank > bestRank) { bestStatus = override!.status; bestRank = overrideRank; }
+            if (existingRank > bestRank) { bestStatus = existingSnap!.status; bestRank = existingRank; }
+            const snapshot = { ...l, status: bestStatus };
+            if (existingSnap) {
               updated = updated.map((s) => (s.id === l.id ? snapshot : s));
             } else {
               updated = [...updated, snapshot];
@@ -890,15 +1018,20 @@ export function LoadsProvider({
           );
           if (needsGeo) {
             const geocoded = await geocodePlatformLoads(cached);
-            setPlatformLoads(geocoded);
+            setPlatformLoadsRaw(geocoded);
             debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(geocoded));
           } else {
-            setPlatformLoads(cached);
+            setPlatformLoadsRaw(cached);
           }
         } catch {
           // ignore
         }
       }
+      // Flip the flag AFTER the initial restore so the first hydration write
+      // doesn't overwrite good data with an empty array mid-restore.
+      platformLoadsHydratedRef.current = true;
+    }).catch(() => {
+      platformLoadsHydratedRef.current = true;
     });
   // geocacheReady is the trigger; geocodePlatformLoads is stable (useCallback)
   }, [geocacheReady, geocodePlatformLoads]);
@@ -1086,12 +1219,23 @@ export function LoadsProvider({
     }
 
     // 3. Delivered snapshots — loads the platform removed from the driver's
-    //    assignment list after they were delivered OR picked up. Preserve
-    //    their stored status so picked_up loads stay in Picked Up tab.
+    //    assignment list after they were delivered OR picked up.
+    //
+    // We honor any local status override here too — without this, a stale
+    // snapshot saved with status="picked_up" before the v52 fix would keep
+    // the load stuck in "Picked Up" forever, even after a successful
+    // platform delivery had locally re-stamped it.
     for (const l of deliveredSnapshots) {
       if (!seen.has(l.id)) {
         seen.add(l.id);
-        result.push(l);
+        const override = localStatusOverridesRef.current.get(l.id);
+        const overrideRank = override ? (STATUS_RANK[override.status] ?? 0) : -1;
+        const snapRank = STATUS_RANK[l.status] ?? 0;
+        if (overrideRank > snapRank) {
+          result.push({ ...l, status: override!.status });
+        } else {
+          result.push(l);
+        }
       }
     }
 
@@ -1119,23 +1263,29 @@ export function LoadsProvider({
       if (currentLoad) {
         markDriverDelivered(loadId, {
           ...currentLoad,
+          status: "delivered" as LoadStatus,
           deliveredAt,
           delivery: { ...currentLoad.delivery, date: deliveredAt },
         });
       }
-      // Stamp deliveredAt and actual delivery date on the load in both arrays
+      // Stamp status, deliveredAt, and actual delivery date on the load in
+      // both arrays. Previously this only stamped deliveredAt and relied on a
+      // memo override to "show" the status — which meant the persisted load
+      // still carried status: "picked_up" and could flip back after a restart
+      // if the ref/override got lost.
       const stampFn = (prev: Load[]) =>
         prev.map((l) =>
           l.id === loadId
-            ? { ...l, deliveredAt, delivery: { ...l.delivery, date: deliveredAt } }
+            ? {
+                ...l,
+                status: "delivered" as LoadStatus,
+                deliveredAt,
+                delivery: { ...l.delivery, date: deliveredAt },
+              }
             : l
         );
       setLocalLoads(stampFn);
-      setPlatformLoads((prev) => {
-        const updated = stampFn(prev);
-        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
-        return updated;
-      });
+      setPlatformLoads(stampFn);
     }
 
     // When marking as picked_up, freeze the pickup inspection and stamp actual pickup date
@@ -1157,11 +1307,7 @@ export function LoadsProvider({
           };
         });
       setLocalLoads(freezeFn);
-      setPlatformLoads((prev) => {
-        const updated = freezeFn(prev);
-        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
-        return updated;
-      });
+      setPlatformLoads(freezeFn);
       return;
     }
 
@@ -1170,11 +1316,7 @@ export function LoadsProvider({
       setLocalLoads((prev) =>
         prev.map((l) => (l.id === loadId ? { ...l, status } : l))
       );
-      setPlatformLoads((prev) => {
-        const updated = prev.map((l) => (l.id === loadId ? { ...l, status } : l));
-        debouncedAsyncWrite(PLATFORM_LOADS_KEY, JSON.stringify(updated));
-        return updated;
-      });
+      setPlatformLoads((prev) => prev.map((l) => (l.id === loadId ? { ...l, status } : l)));
     }
   }, [platformLoads, localLoads, markDriverDelivered]);
 

@@ -76,8 +76,8 @@ function StatusBadge({ status }: { status: LoadStatus }) {
 
 // ─── Load Card ────────────────────────────────────────────────────────────────
 
-const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchive, pendingCount = 0, failedCount = 0 }: {
-  load: Load; onPress: () => void; onDelete?: () => void; onArchive?: () => void; pendingCount?: number; failedCount?: number;
+const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchive, onForceMarkDelivered, pendingCount = 0, failedCount = 0 }: {
+  load: Load; onPress: () => void; onDelete?: () => void; onArchive?: () => void; onForceMarkDelivered?: () => void; pendingCount?: number; failedCount?: number;
 }) {
   const colors = useColors();
   const { canViewRates } = usePermissions();
@@ -134,6 +134,8 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
     <TouchableOpacity
       style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
       onPress={onPress}
+      onLongPress={onForceMarkDelivered}
+      delayLongPress={600}
       activeOpacity={0.75}
     >
       <View style={[styles.stripe, { backgroundColor: stripeColor }]} />
@@ -469,7 +471,7 @@ function FAB({ onAddLoad, onScanVIN }: { onAddLoad: () => void; onScanVIN: () =>
 export default function LoadsScreen() {
   const colors = useColors();
   const { canViewRates } = usePermissions();
-  const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived } = useLoads();
+  const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived, updateLoadStatus } = useLoads();
 
   const handleDeleteLoad = useCallback((load: Load) => {
     if (load.id.startsWith("platform-")) return; // safety guard
@@ -494,6 +496,35 @@ export default function LoadsScreen() {
       ]
     );
   }, [deleteLoad]);
+
+  // Long-press on a Picked Up card → confirm and force-move locally to
+  // Delivered. Lets the driver self-rescue any load that the platform
+  // already shows as delivered but the app left stuck in Picked Up.
+  const handleForceMarkDelivered = useCallback((load: Load) => {
+    if (load.status !== "picked_up") return;
+    const vehicleLabel = load.vehicles[0]
+      ? [load.vehicles[0].year, load.vehicles[0].make, load.vehicles[0].model].filter(Boolean).join(" ")
+      : `Load #${load.loadNumber}`;
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    Alert.alert(
+      "Mark as Delivered?",
+      `Move "${vehicleLabel}" to the Delivered tab. Use this only if the company platform already shows the load as delivered but the app left it here.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark Delivered",
+          onPress: () => {
+            if (Platform.OS !== "web") {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+            updateLoadStatus(load.id, "delivered");
+          },
+        },
+      ],
+    );
+  }, [updateLoadStatus]);
   const { driver } = useAuth();
   const { entries: queueEntries } = usePhotoQueue();
   const queueCountsByLoad = useMemo(() => {
@@ -1280,6 +1311,7 @@ export default function LoadsScreen() {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       archiveSingleLoad(item.id);
                     } : undefined}
+                    onForceMarkDelivered={item.status === "picked_up" ? () => handleForceMarkDelivered(item) : undefined}
                     pendingCount={counts?.pending ?? 0}
                     failedCount={counts?.failed ?? 0}
                   />
