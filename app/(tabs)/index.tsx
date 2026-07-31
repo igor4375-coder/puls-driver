@@ -85,20 +85,21 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
   const vehicleCount = load.vehicles.length;
   const isPlatformLoad = load.id.startsWith("platform-");
 
-  // Build vehicle label: show year/make/model for single vehicle, or first + count for multiple
+  // Build vehicle label: year/make/model only — last-6 VIN lives in the header
   const firstVehicle = load.vehicles[0];
+  const vinLast6 = firstVehicle?.vin && firstVehicle.vin.length >= 6
+    ? firstVehicle.vin.slice(-6).toUpperCase()
+    : null;
   const vehicleLabel = (() => {
     if (vehicleCount === 0) return "No Vehicles";
     const v = firstVehicle;
     const parts = [v?.year, v?.make, v?.model].filter(Boolean);
     const vehicleInfo = parts.length > 0 ? parts.join(" ") : null;
-    // Append last-6 of VIN if available
-    const vin6 = v?.vin && v.vin.length >= 6 ? v.vin.slice(-6) : null;
-    const baseLabel = vehicleInfo ?? (vin6 ? vin6 : `${vehicleCount} ${vehicleCount === 1 ? "Vehicle" : "Vehicles"}`);
-    const labelWithVin = vehicleInfo && vin6 ? `${vehicleInfo}  ·  ${vin6}` : baseLabel;
-    if (vehicleCount === 1) return labelWithVin;
-    return `${labelWithVin} & ${vehicleCount - 1} more`;
+    const baseLabel = vehicleInfo ?? `${vehicleCount} ${vehicleCount === 1 ? "Vehicle" : "Vehicles"}`;
+    if (vehicleCount === 1) return baseLabel;
+    return `${baseLabel} & ${vehicleCount - 1} more`;
   })();
+  const showDates = load.status === "delivered" || load.status === "archived";
   const stripeColor =
     load.status === "new" ? colors.warning :
     load.status === "picked_up" ? colors.primary :
@@ -141,8 +142,14 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
       <View style={[styles.stripe, { backgroundColor: stripeColor }]} />
       <View style={styles.cardContent}>
         <View style={styles.cardHeader}>
-          <Text style={[styles.loadNumber, { color: colors.muted }]} numberOfLines={1}>
-            {firstVehicle?.vin ? firstVehicle.vin.toUpperCase() : `#${load.loadNumber}`}
+          <Text
+            style={[
+              vinLast6 ? styles.vinLast6 : styles.loadNumber,
+              { color: colors.foreground, flexShrink: 1 },
+            ]}
+            numberOfLines={1}
+          >
+            {vinLast6 ?? `#${load.loadNumber}`}
           </Text>
           <StatusBadge status={load.status} />
         </View>
@@ -197,14 +204,16 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
             </View>
           </View>
         )}
-        <View style={styles.datesRow}>
-          <Text style={[styles.dateText, { color: colors.muted }]}>
-            Pickup: {formatDate(load.pickup.date)}
-          </Text>
-          <Text style={[styles.dateText, { color: colors.muted }]}>
-            Delivery: {formatDate(load.delivery.date)}
-          </Text>
-        </View>
+        {showDates && (
+          <View style={styles.datesRow}>
+            <Text style={[styles.dateText, { color: colors.muted }]}>
+              Pickup: {formatDate(load.pickup.date)}
+            </Text>
+            <Text style={[styles.dateText, { color: colors.muted }]}>
+              Delivery: {formatDate(load.delivery.date)}
+            </Text>
+          </View>
+        )}
         {/* Pending upload indicator — visible even after picked up */}
         {(pendingCount > 0 || failedCount > 0) && (
           <View style={[styles.uploadBanner, {
@@ -1501,7 +1510,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 6,
   },
-  loadNumber: { fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
+  loadNumber: { fontSize: 15, fontWeight: "700", letterSpacing: 0.4 },
+  vinLast6: { fontSize: 24, fontWeight: "800", letterSpacing: 1.5 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 11, fontWeight: "700" },
   orgBadge: {
@@ -1526,7 +1536,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   altDropBadgeText: { fontSize: 12, fontWeight: "600" },
-  vehicleCount: { fontSize: 17, fontWeight: "700", marginBottom: 10 },
+  vehicleCount: { fontSize: 15, fontWeight: "600", marginBottom: 10 },
   routeRow: {
     flexDirection: "row",
     alignItems: "center",

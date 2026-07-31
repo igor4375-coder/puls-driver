@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v72-remove-test-loads";
+const BUILD_TAG = "v73-vin-last6-card";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
