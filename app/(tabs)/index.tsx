@@ -1536,7 +1536,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   altDropBadgeText: { fontSize: 12, fontWeight: "600" },
-  vehicleCount: { fontSize: 15, fontWeight: "600", marginBottom: 10 },
+  vehicleCount: { fontSize: 18, fontWeight: "700", marginBottom: 10 },
   routeRow: {
     flexDirection: "row",
     alignItems: "center",
