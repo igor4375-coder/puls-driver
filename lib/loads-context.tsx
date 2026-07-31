@@ -294,7 +294,7 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
                 damages: [],
                 photos: pickupPhotos,
                 notes: "",
-              } satisfies VehicleInspection,
+              } as VehicleInspection,
             }
           : {}),
         ...(deliveryPhotos.length > 0
@@ -304,7 +304,7 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
                 damages: [],
                 photos: deliveryPhotos,
                 notes: "",
-              } satisfies VehicleInspection,
+              } as VehicleInspection,
             }
           : {}),
       } as any,
@@ -430,20 +430,25 @@ function mergeInspection(
   if (!local) return server;
   if (!server) return local;
 
+  const serverPhotos = Array.isArray(server.photos) ? server.photos : [];
+  const localPhotos = Array.isArray(local.photos) ? local.photos : [];
   const seen = new Set<string>();
   const merged: string[] = [];
   // HTTPS first (from either side), then leftover local file:// that
   // may still be readable on this device.
-  for (const p of [...server.photos, ...local.photos]) {
+  for (const p of [...serverPhotos, ...localPhotos]) {
     if (!p || seen.has(p)) continue;
     seen.add(p);
     merged.push(p);
   }
-  const httpsOnly = merged.filter((p) => p.startsWith("http"));
+  const httpsOnly = merged.filter((p) => typeof p === "string" && p.startsWith("http"));
   return {
     ...local,
+    vehicleId: local.vehicleId || server.vehicleId,
     photos: httpsOnly.length > 0 ? httpsOnly : merged,
-    damages: local.damages?.length ? local.damages : (server.damages ?? []),
+    damages: Array.isArray(local.damages) && local.damages.length
+      ? local.damages
+      : (Array.isArray(server.damages) ? server.damages : []),
     noDamage: local.noDamage ?? server.noDamage,
     notes: local.notes || server.notes || "",
     additionalInspection: local.additionalInspection ?? server.additionalInspection,
@@ -1168,7 +1173,7 @@ export function LoadsProvider({
         const queueIsFullyUploaded =
           queueEntries.length > 0 && !queueHasAnyPending;
 
-        if (!insp || insp.photos.length === 0) {
+        if (!insp || !Array.isArray(insp.photos) || insp.photos.length === 0) {
           // No local photos to swap. If the queue says we have uploaded
           // photos for this bucket and nothing pending, queue a
           // syncInspection from the queue's URL list. We don't write a
@@ -1201,8 +1206,8 @@ export function LoadsProvider({
 
         let changed = false;
         const newPhotos = insp.photos.map((p) => {
-          if (p.startsWith("http")) return p;
-          const r = swapMap.get(p);
+          if (typeof p === "string" && p.startsWith("http")) return p;
+          const r = typeof p === "string" ? swapMap.get(p) : undefined;
           if (r) {
             changed = true;
             return r;
@@ -1216,7 +1221,7 @@ export function LoadsProvider({
         // merges additively so a redundant call across sessions
         // is a cheap no-op on the server.
         const effective = changed ? newPhotos : insp.photos;
-        const allHttps = effective.every((p) => p.startsWith("http"));
+        const allHttps = effective.every((p) => typeof p === "string" && p.startsWith("http"));
         if (allHttps) {
           const key = `${l.id}:${v.id}:${type}`;
           if (!fullySyncedRef.current.has(key)) {
