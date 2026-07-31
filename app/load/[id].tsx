@@ -394,7 +394,7 @@ function VehicleCard({
           </Text>
         </TouchableOpacity>
       )}
-      {hasDeliveryInspection && loadStatus === "delivered" && (
+      {hasDeliveryInspection && (loadStatus === "delivered" || loadStatus === "archived") && (
         <TouchableOpacity
           style={[styles.inspectBtn, { borderColor: colors.warning, marginTop: 8 }]}
           onPress={() => {

@@ -189,6 +189,10 @@ export interface PlatformLoad {
   dropoffInstructions?: string | null;
   /** Note from the previous leg's delivery driver */
   previousLegNotes?: string | null;
+  /** HTTPS inspection photo URLs from the platform (pickup phase) */
+  pickupPhotos?: string[];
+  /** HTTPS inspection photo URLs from the platform (delivery phase) */
+  deliveryPhotos?: string[];
 }
 
 /**
@@ -253,6 +257,12 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
       ? vehicleParts.join(" ")
       : vehicleDesc || "Unknown Vehicle";
 
+  const vehicleId = `platform-${pl.tripId}-v1`;
+  const pickupPhotos = (Array.isArray(pl.pickupPhotos) ? pl.pickupPhotos : [])
+    .filter((u): u is string => typeof u === "string" && u.startsWith("http"));
+  const deliveryPhotos = (Array.isArray(pl.deliveryPhotos) ? pl.deliveryPhotos : [])
+    .filter((u): u is string => typeof u === "string" && u.startsWith("http"));
+
   return {
     // Use "platform-{legId}" as the local ID so we can distinguish platform loads
     // legId is the per-leg unique identifier from the company platform
@@ -261,7 +271,7 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
     status: statusMap[pl.status] ?? "new",
     vehicles: [
       {
-        id: `platform-${pl.tripId}-v1`,
+        id: vehicleId,
         year: vehicleYear,
         make: vehicleMake,
         model: vehicleModel,
@@ -275,6 +285,28 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
         starts: v?.starts ?? null,
         drives: v?.drives ?? null,
         previousLegNotes: (pl as any).previousLegNotes ?? null,
+        // v75+: hydrate inspections from platform HTTPS URLs so Delivered
+        // history (and reinstalls) can still open pickup/delivery galleries.
+        ...(pickupPhotos.length > 0
+          ? {
+              pickupInspection: {
+                vehicleId,
+                damages: [],
+                photos: pickupPhotos,
+                notes: "",
+              } satisfies VehicleInspection,
+            }
+          : {}),
+        ...(deliveryPhotos.length > 0
+          ? {
+              deliveryInspection: {
+                vehicleId,
+                damages: [],
+                photos: deliveryPhotos,
+                notes: "",
+              } satisfies VehicleInspection,
+            }
+          : {}),
       } as any,
     ],
     pickup: {
@@ -384,7 +416,41 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
  * empty inspection block — but the local snapshot still carries the
  * full set. Prefer local inspection data so the driver doesn't see
  * "their photos vanished."
+ *
+ * v75+: platform getDeliveredLoads now returns pickupPhotos /
+ * deliveryPhotos as HTTPS URLs. Prefer those over dead local file://
+ * paths so Delivered history stays viewable after the photo-queue
+ * prune deletes on-device files.
  */
+function mergeInspection(
+  local: VehicleInspection | undefined,
+  server: VehicleInspection | undefined,
+): VehicleInspection | undefined {
+  if (!local && !server) return undefined;
+  if (!local) return server;
+  if (!server) return local;
+
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  // HTTPS first (from either side), then leftover local file:// that
+  // may still be readable on this device.
+  for (const p of [...server.photos, ...local.photos]) {
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    merged.push(p);
+  }
+  const httpsOnly = merged.filter((p) => p.startsWith("http"));
+  return {
+    ...local,
+    photos: httpsOnly.length > 0 ? httpsOnly : merged,
+    damages: local.damages?.length ? local.damages : (server.damages ?? []),
+    noDamage: local.noDamage ?? server.noDamage,
+    notes: local.notes || server.notes || "",
+    additionalInspection: local.additionalInspection ?? server.additionalInspection,
+    handoffNote: local.handoffNote ?? server.handoffNote,
+  };
+}
+
 function mergeServerDeliveredWithLocal(server: Load, local: Load): Load {
   return {
     ...server,
@@ -399,13 +465,8 @@ function mergeServerDeliveredWithLocal(server: Load, local: Load): Load {
       if (!lv) return sv;
       return {
         ...sv,
-        // Local inspection data wins. The driver captured these photos
-        // on this device — uploads may still be queued, so the server's
-        // copy can legitimately be empty even after the leg flips
-        // delivered. We prefer local so the driver doesn't see a
-        // half-empty inspection card.
-        pickupInspection: lv.pickupInspection ?? sv.pickupInspection,
-        deliveryInspection: lv.deliveryInspection ?? sv.deliveryInspection,
+        pickupInspection: mergeInspection(lv.pickupInspection, sv.pickupInspection),
+        deliveryInspection: mergeInspection(lv.deliveryInspection, sv.deliveryInspection),
         frozenPickupInspection: lv.frozenPickupInspection ?? sv.frozenPickupInspection,
       };
     }),
@@ -1200,6 +1261,17 @@ export function LoadsProvider({
         const next = prev.map(swapLoad);
         return next.every((l, i) => l === prev[i]) ? prev : next;
       });
+      // v75+: also swap HTTPS URLs into delivered snapshots / server
+      // delivered history so post-delivery uploads don't leave the
+      // Delivered tab stuck on dead file:// paths after prune.
+      setDeliveredSnapshots((prev) => {
+        const next = prev.map(swapLoad);
+        return next.every((l, i) => l === prev[i]) ? prev : next;
+      });
+      setServerDeliveredLoads((prev) => {
+        const next = prev.map(swapLoad);
+        return next.every((l, i) => l === prev[i]) ? prev : next;
+      });
 
       if (completed.length === 0) return;
       if (!driverCode) {
@@ -1839,10 +1911,16 @@ export function LoadsProvider({
             vehicles: l.vehicles.map((v) => {
               const saved = loadInsps?.get(v.id);
               if (!saved) return v;
+              const pickupMerged = restorePickup
+                ? mergeInspection(saved.pickup, v.pickupInspection)
+                : v.pickupInspection;
+              const deliveryMerged = restoreDelivery
+                ? mergeInspection(saved.delivery, v.deliveryInspection)
+                : v.deliveryInspection;
               return {
                 ...v,
-                ...(saved.pickup && restorePickup ? { pickupInspection: saved.pickup } : {}),
-                ...(saved.delivery && restoreDelivery ? { deliveryInspection: saved.delivery } : {}),
+                ...(pickupMerged ? { pickupInspection: pickupMerged } : {}),
+                ...(deliveryMerged ? { deliveryInspection: deliveryMerged } : {}),
                 ...(saved.frozen && restorePickup ? { frozenPickupInspection: saved.frozen } : {}),
               };
             }),

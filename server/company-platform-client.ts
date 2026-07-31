@@ -56,6 +56,10 @@ export interface CompanyPlatformLoad {
   storageExpiryDate?: string | null;
   /** Note from the previous leg's delivery driver for this leg's pickup driver */
   previousLegNotes?: string | null;
+  /** HTTPS inspection photo URLs from the platform (pickup phase) */
+  pickupPhotos?: string[];
+  /** HTTPS inspection photo URLs from the platform (delivery phase) */
+  deliveryPhotos?: string[];
 }
 
 export interface SyncInspectionDamage {
