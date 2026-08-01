@@ -23,10 +23,11 @@ import {
   FlatList,
   SafeAreaView,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/use-colors";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import type { PhotoQueueEntry } from "@/lib/photo-queue";
+import { photoQueue, type PhotoQueueEntry } from "@/lib/photo-queue";
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
@@ -52,7 +53,11 @@ function statusIcon(status: string): { name: string; color: string } {
 
 function EntryRow({ entry, now }: { entry: PhotoQueueEntry; now: number }) {
   const elapsed = now - entry.createdAt;
-  const icon = statusIcon(entry.status);
+  // v65+: stuck-pending entries (real error, age > 5 min) display as
+  // failed so they match the corrected top-of-modal Failed counter.
+  const isStuck = photoQueue.isStuckPending(entry, now);
+  const effectiveStatus = isStuck ? "failed" : entry.status;
+  const icon = statusIcon(effectiveStatus);
   const vin = entry.stampMeta?.vin;
   const label = vin ? `VIN …${vin.slice(-6)}` : entry.clientId.slice(0, 8);
 
@@ -62,7 +67,15 @@ function EntryRow({ entry, now }: { entry: PhotoQueueEntry; now: number }) {
       <View style={d.rowInfo}>
         <Text style={d.rowLabel} numberOfLines={1}>{label}</Text>
         <Text style={d.rowMeta}>
-          {entry.status === "uploading" ? "Uploading" : entry.status === "pending" ? "Queued" : entry.status === "done" ? "Done" : "Failed"}
+          {effectiveStatus === "uploading"
+            ? "Uploading"
+            : effectiveStatus === "pending"
+              ? "Queued"
+              : effectiveStatus === "done"
+                ? "Done"
+                : isStuck
+                  ? "Stuck"
+                  : "Failed"}
           {" · "}{formatElapsed(elapsed)}
           {entry.attempts > 0 ? ` · Attempt ${entry.attempts}` : ""}
         </Text>
@@ -76,6 +89,7 @@ function EntryRow({ entry, now }: { entry: PhotoQueueEntry; now: number }) {
 
 export function SyncStatusBanner() {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const { entries, stats, hasPending, hasFailed, retryFailed, sync } = usePhotoQueue();
   const opacity = useRef(new Animated.Value(0)).current;
   const [detailVisible, setDetailVisible] = useState(false);
@@ -116,17 +130,26 @@ export function SyncStatusBanner() {
 
   const isUploading = stats.uploading > 0;
   const pendingCount = stats.pending + stats.uploading;
+  // v66+: a "wedged" queue (>5 pending and nothing uploading) almost
+  // always means the device is offline or on extremely weak cellular.
+  // We drop the "connect to Wi-Fi" hint that v65 used — this fleet is
+  // cellular-only and the upload loop now retries forever in the
+  // background. Just reassure the driver that uploads will resume the
+  // moment signal returns.
+  const wedged = stats.pending > 5 && stats.uploading === 0;
 
-  const bgColor = hasFailed && !hasPending ? "#DC2626" : "#2563EB";
+  const bgColor = hasFailed && !hasPending ? "#DC2626" : wedged ? "#D97706" : "#2563EB";
   const message = hasFailed && !hasPending
-    ? `${stats.failed} photo${stats.failed !== 1 ? "s" : ""} failed to upload`
+    ? `${stats.failed} photo${stats.failed !== 1 ? "s" : ""} stuck — tap Retry to push again`
     : isUploading
     ? `Uploading ${stats.uploading} photo${stats.uploading !== 1 ? "s" : ""}…`
+    : wedged
+    ? `${pendingCount} photos waiting — will resume when signal returns`
     : `${pendingCount} photo${pendingCount !== 1 ? "s" : ""} queued for upload`;
 
   return (
     <>
-      <Animated.View style={[s.banner, { backgroundColor: bgColor, opacity }]}>
+      <Animated.View style={[s.banner, { backgroundColor: bgColor, opacity, paddingBottom: Math.max(insets.bottom, 10) }]}>
         <TouchableOpacity
           style={s.left}
           onPress={() => { setNow(Date.now()); setDetailVisible(true); }}
@@ -136,17 +159,17 @@ export function SyncStatusBanner() {
             <ActivityIndicator size="small" color="#fff" style={s.icon} />
           ) : (
             <IconSymbol
-              name={hasFailed && !hasPending ? "exclamationmark.triangle.fill" : "arrow.right.circle.fill"}
-              size={14}
+              name={hasFailed && !hasPending ? "exclamationmark.triangle.fill" : "arrow.up.circle.fill"}
+              size={16}
               color="#fff"
             />
           )}
           <Text style={s.text}>{message}</Text>
-          <IconSymbol name="chevron.right" size={12} color="rgba(255,255,255,0.6)" />
         </TouchableOpacity>
 
         {hasFailed && (
           <TouchableOpacity onPress={retryFailed} style={s.retryBtn} activeOpacity={0.8}>
+            <IconSymbol name="arrow.clockwise" size={13} color="#fff" />
             <Text style={s.retryText}>Retry</Text>
           </TouchableOpacity>
         )}
@@ -231,14 +254,19 @@ const s = StyleSheet.create({
   },
   retryBtn: {
     backgroundColor: "rgba(255,255,255,0.25)",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginLeft: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 14,
+    marginLeft: 10,
+    minWidth: 80,
+    justifyContent: "center",
   },
   retryText: {
     color: "#fff",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "700",
   },
 });

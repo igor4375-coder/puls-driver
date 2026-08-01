@@ -28,6 +28,8 @@ export default function VerifyScreen() {
     isExistingUser: string;
     flow: string;
     method?: string;
+    /** "add" → user is linking an additional account from the Linked Accounts UI */
+    mode?: string;
   }>();
 
   const [digits, setDigits] = useState<string[]>(Array(CODE_LENGTH).fill(""));
@@ -42,13 +44,20 @@ export default function VerifyScreen() {
 
   const isSignIn = params.flow === "signIn";
   const isEmail = params.method === "email";
+  const isAddMode = params.mode === "add";
 
   const si = signIn as any;
   const su = signUp as any;
 
   const navigateToApp = () => {
     while (router.canGoBack()) router.back();
-    setTimeout(() => router.replace("/(tabs)"), 100);
+    if (isAddMode) {
+      // Linked-accounts flow — drop the user back on the profile screen so they
+      // see the freshly-added account in the list.
+      setTimeout(() => router.replace("/(tabs)/profile" as any), 100);
+    } else {
+      setTimeout(() => router.replace("/(tabs)"), 100);
+    }
   };
 
   const displayValue = params.displayIdentifier ?? params.displayPhone ?? "";

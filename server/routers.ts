@@ -510,6 +510,11 @@ export const appRouter = router({
             // Gate pass fields — must be explicitly passed through or they are silently dropped
             gatePassUrl: pl.gatePassUrl ?? null,
             storageExpiryDate: pl.storageExpiryDate ?? null,
+            notes: (pl as any).notes ?? null,
+            driverNotes: (pl as any).driverNotes ?? null,
+            pickupInstructions: (pl as any).pickupInstructions ?? null,
+            dropoffInstructions: (pl as any).dropoffInstructions ?? null,
+            previousLegNotes: pl.previousLegNotes ?? null,
           }));
         } catch (err) {
           console.error("[loads.getAssigned] Company platform error:", err);

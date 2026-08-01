@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalQuery } from "./_generated/server";
 
 function generateDriverCode(): string {
   const num = Math.floor(10000 + Math.random() * 90000);
@@ -136,5 +136,68 @@ export const updateProfile = mutation({
     }
 
     return await ctx.db.get(profile._id);
+  },
+});
+
+/**
+ * Admin-only — toggle the multi-account ("Linked Accounts") feature for a
+ * specific driver by their D-XXXXX code. Run from Convex dashboard or CLI.
+ *
+ * Example:
+ *   npx convex run driverProfiles:setMultiAccountEnabled '{"driverCode":"D-XXXXX","enabled":true}'
+ */
+export const setMultiAccountEnabled = mutation({
+  args: {
+    driverCode: v.string(),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const profile = await ctx.db
+      .query("driverProfiles")
+      .withIndex("by_driverCode", (q) => q.eq("driverCode", args.driverCode))
+      .unique();
+    if (!profile) {
+      throw new Error(`Driver profile not found for code ${args.driverCode}`);
+    }
+    await ctx.db.patch(profile._id, { multiAccountEnabled: args.enabled });
+    return await ctx.db.get(profile._id);
+  },
+});
+
+/**
+ * Admin-only — find a driver profile by email or partial-name match. Useful for
+ * looking up a driver code to feed into setMultiAccountEnabled.
+ *
+ * Example:
+ *   npx convex run driverProfiles:adminFindByEmail '{"email":"someone@example.com"}'
+ */
+export const adminFindByEmail = internalQuery({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const lower = args.email.trim().toLowerCase();
+    const all = await ctx.db.query("driverProfiles").collect();
+    return all.filter((p) => (p.email ?? "").toLowerCase() === lower);
+  },
+});
+
+/**
+ * Admin-only — list every driver profile (id, code, name, email, phone) for
+ * lookup. Run from the CLI; never called by the app.
+ *
+ * Example:
+ *   npx convex run driverProfiles:adminListAll
+ */
+export const adminListAll = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("driverProfiles").collect();
+    return all.map((p) => ({
+      driverCode: p.driverCode,
+      platformDriverCode: p.platformDriverCode ?? null,
+      name: p.name,
+      email: p.email ?? null,
+      phone: p.phone ?? null,
+      multiAccountEnabled: p.multiAccountEnabled === true,
+    }));
   },
 });

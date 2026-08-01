@@ -141,6 +141,14 @@ export interface Load {
   driverPay: number;
   paymentType: "cod" | "ach" | "check" | "factoring";
   notes: string;
+  /** Per-leg dispatch notes (highlighted, most important) */
+  dispatchNotes?: string | null;
+  /** Load-level driver notes that apply to the whole order */
+  driverNotes?: string | null;
+  /** Pickup-specific instructions for this leg */
+  pickupInstructions?: string | null;
+  /** Dropoff-specific instructions for this leg */
+  dropoffInstructions?: string | null;
   assignedAt: string;
   /**
    * The legId from the company platform, set fresh on every platform fetch.

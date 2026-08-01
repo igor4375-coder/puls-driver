@@ -85,6 +85,16 @@ function LocationTrackingManager() {
 function LoadsProviderWithAuth({ children }: { children: React.ReactNode }) {
   const { driver } = useAuth();
   const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? null;
+
+  // v60+ multi-account isolation: re-key the photoQueue's persistent storage
+  // whenever the active driver changes so account A's pending uploads aren't
+  // attributed to (or lost when re-keying for) account B.
+  useEffect(() => {
+    photoQueue.setActiveDriver(driverCode).catch((err) =>
+      console.warn("[PhotoQueue] setActiveDriver failed:", err),
+    );
+  }, [driverCode]);
+
   return (
     <PermissionsProvider driverCode={driverCode}>
       <LoadsProvider driverCode={driverCode}>

@@ -33,7 +33,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
-import { useAction, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useSettings } from "@/lib/settings-context";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
@@ -241,9 +241,8 @@ const optStyles = StyleSheet.create({
 export default function DeliverySignatureScreen() {
   const colors = useColors();
   const { loadId } = useLocalSearchParams<{ loadId: string }>();
-  const { loads, updateLoadStatus } = useLoads();
+  const { loads, updateLoadStatus, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
-  const markAsDeliveredAction = useAction(api.platform.markAsDelivered);
   const saveSignatureMutation = useMutation(api.signatures.save);
   const { settings, setDriverSignaturePaths } = useSettings();
 
@@ -310,58 +309,117 @@ export default function DeliverySignatureScreen() {
       : null;
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      (async () => {
-        try {
-          const urls: string[] = [];
-          for (const v of load.vehicles) {
-            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
-            urls.push(...vUrls);
-          }
-          const existingHttp = load.vehicles.flatMap(
-            (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
-          );
-          const deliveryPhotos = [...new Set([...existingHttp, ...urls])];
-          const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+      // Fire IMMEDIATELY via the persistent sync queue with already-uploaded
+      // photo URLs. The queue retries on failure and survives app restarts.
+      // A follow-up syncInspection ships any late-arriving photos.
+      const deliveryTime = new Date().toISOString();
+      const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+      const allDamages = load.vehicles.flatMap(
+        (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }))
+      );
+      const firstVehicle = load.vehicles[0];
+      const deliveryInsp = (firstVehicle as any)?.deliveryInspection;
+      const existingHttp = load.vehicles.flatMap(
+        (v) => ((v as any).deliveryInspection?.photos ?? []).filter((p: string) => p.startsWith("http"))
+      );
+      const immediateUrls = [
+        ...new Set([...existingHttp, ...photoQueue.getUploadedUrls(load.id)]),
+      ];
+      // v69+: see lib/photo-progress.ts. The platform uses these to
+      // render "X / Y uploaded" while the background queue is still
+      // draining late photos.
+      const deliveryPhotoExpectedCount = load.vehicles.reduce(
+        (sum, v) => sum + ((v as any).deliveryInspection?.photos?.length ?? 0),
+        0,
+      );
 
-          const allDamages = load.vehicles.flatMap(
-            (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
-              id: d.id,
-              zone: d.zone,
-              type: d.type,
-              severity: d.severity,
-              x: d.xPct != null ? d.xPct / 100 : 0.5,
-              y: d.yPct != null ? d.yPct / 100 : 0.5,
-              diagramView: d.diagramView,
-              note: d.description || undefined,
-            }))
-          );
-          const firstVehicle = load.vehicles[0];
-          const deliveryInsp = (firstVehicle as any)?.deliveryInspection;
+      queuePlatformSync({
+        type: "markAsDelivered",
+        args: {
+          loadNumber: load.loadNumber,
+          legId: platformTripId,
+          driverCode,
+          deliveryTime,
+          deliveryGPS: {
+            lat: deliveryInsp?.locationLat ?? 0,
+            lng: deliveryInsp?.locationLng ?? 0,
+          },
+          deliveryPhotos: immediateUrls,
+          ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+          ...(customerSigStr ? { customerSig: customerSigStr } : {}),
+          ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+          customerNotAvailable: isNotAvailable,
+          damages: allDamages,
+          noDamage: allDamages.length === 0,
+          vehicleVin: firstVehicle?.vin || "",
+          deliveryPhotoUploadedCount: immediateUrls.length,
+          deliveryPhotoExpectedCount,
+        },
+      });
 
-          await markAsDeliveredAction({
+      // v71+: queue ONE photo-deferred syncInspection per vehicle. The
+      // sync processor holds each task until every photo for that
+      // vehicle has reached HTTPS — guaranteeing that the dispatcher's
+      // Inspection Media panel never receives a partial/empty array
+      // that locks in zero photos for the leg. Replaces the previous
+      // "fire-now-with-immediateUrls + fire-again-from-IIFE" double
+      // call.
+      for (const v of load.vehicles) {
+        const insp = (v as any).deliveryInspection;
+        if (!insp) continue;
+        const allPhotoUris: string[] = insp.photos ?? [];
+        const photoClientIds = allPhotoUris
+          .map((uri: string) => photoQueue.getClientIdForUri(uri))
+          .filter((id): id is string => !!id);
+        const httpsAlready = allPhotoUris.filter((p) => p.startsWith("http"));
+        const vehicleDamages = (insp.damages ?? []).map((d: any) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }));
+        queuePlatformSync({
+          type: "syncInspection",
+          args: {
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
-            deliveryTime: new Date().toISOString(),
-            deliveryGPS: {
-              lat: deliveryInsp?.locationLat ?? 0,
-              lng: deliveryInsp?.locationLng ?? 0,
+            inspectionType: "delivery",
+            vehicleVin: v.vin || "",
+            photos: httpsAlready,
+            photoClientIds,
+            damages: vehicleDamages,
+            noDamage: insp.noDamage ?? (vehicleDamages.length === 0),
+            gps: {
+              lat: insp.locationLat ?? 0,
+              lng: insp.locationLng ?? 0,
             },
-            deliveryPhotos,
-            ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
-            ...(customerSigStr ? { customerSig: customerSigStr } : {}),
-            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-            customerNotAvailable: isNotAvailable,
-            damages: allDamages,
-            noDamage: allDamages.length === 0,
-            vehicleVin: firstVehicle?.vin || "",
-          });
-        } catch (err) {
-          console.warn("[DeliverySignature] Platform sync failed:", err);
-        }
-      })();
+            timestamp: insp.completedAt ?? deliveryTime,
+            notes: insp.notes || undefined,
+            photoUploadedCount: httpsAlready.length,
+            photoExpectedCount: allPhotoUris.length,
+            ...(insp.handoffNote ? { handoffNote: insp.handoffNote } : {}),
+            ...(insp.additionalInspection
+              ? { additionalInspection: insp.additionalInspection }
+              : {}),
+          },
+        });
+      }
     }
-  }, [load, driverCode, updateLoadStatus, markAsDeliveredAction, saveSignatureMutation, isConfirming, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, customerNotAvailable]);
+  }, [load, driverCode, updateLoadStatus, queuePlatformSync, saveSignatureMutation, isConfirming, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, customerNotAvailable, customerName]);
 
   /**
    * Called when driver confirms their signature on the driver_sig step.

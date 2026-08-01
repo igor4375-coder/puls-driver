@@ -118,11 +118,23 @@ export default function CameraSessionScreen() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
-  const handleDone = useCallback(() => {
+  const handleDone = useCallback(async () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Wait until every captured photo has been copied from the camera's
+    // (volatile) temp directory into PHOTOS_DIR. Without this await, fast
+    // taps on Done can hand the inspection screen temp URIs that the OS
+    // may reclaim — leading to "photos disappeared" reports.
+    const clientIds = items
+      .map(({ clientId }) => clientId)
+      .filter((id): id is string => !!id);
+    if (clientIds.length > 0) {
+      await photoQueue.awaitCopies(clientIds, 5_000);
+    }
+
     const resolvedUris = items.map(({ uri, clientId }) => {
       if (clientId) {
-        return photoQueue.resolvedUri(clientId) ?? uri;
+        return photoQueue.bestUriFor(clientId) ?? uri;
       }
       return uri;
     });
@@ -169,13 +181,18 @@ export default function CameraSessionScreen() {
     setTimeout(() => setShutterFlash(false), 80);
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 1,
+        quality: 0.8,
+        // Skip in-camera post-processing (rotation, JPEG re-encode) on both
+        // platforms — saves ~200–400 ms per shot on Android. The downstream
+        // compressImage() step (manipulateAsync) handles orientation via the
+        // EXIF tag we now preserve below.
         skipProcessing: true,
+        // Keep EXIF so manipulateAsync can read the orientation tag. Without
+        // this, `skipProcessing: true` on Android would return sideways photos.
         exif: true,
         base64: false,
         shutterSound: false,
       });
-      setTaking(false);
       if (photo?.uri) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -191,14 +208,26 @@ export default function CameraSessionScreen() {
           capturedAt: new Date().toISOString(),
         };
 
-        // Enqueue immediately — stamp + upload happen in the queue's background pipeline
-        const entry = await photoQueue.enqueue(photo.uri, { ...meta, loadNumber: sessionLoad?.loadNumber ?? undefined, stampMeta });
+        const entry = await photoQueue.enqueue(photo.uri, {
+          loadId: meta?.loadId,
+          vehicleId: meta?.vehicleId,
+          loadNumber: sessionLoad?.loadNumber ?? undefined,
+          inspectionType:
+            meta?.inspectionType === "delivery"
+              ? "delivery"
+              : meta?.inspectionType === "pickup"
+                ? "pickup"
+                : undefined,
+          stampMeta,
+        });
         setItems((prev) => [
           ...prev,
           { uri: entry.localUri, clientId: entry.clientId, type: "photo" },
         ]);
       }
     } catch {
+      // Capture failed — silently allow next shot
+    } finally {
       setTaking(false);
     }
   }, [taking, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle]);
@@ -219,7 +248,17 @@ export default function CameraSessionScreen() {
     try {
       const video = await cameraRef.current.recordAsync({ maxDuration: 30 });
       if (video?.uri) {
-        const entry = await photoQueue.enqueue(video.uri, { ...meta, loadNumber: sessionLoad?.loadNumber ?? undefined });
+        const entry = await photoQueue.enqueue(video.uri, {
+          loadId: meta?.loadId,
+          vehicleId: meta?.vehicleId,
+          loadNumber: sessionLoad?.loadNumber ?? undefined,
+          inspectionType:
+            meta?.inspectionType === "delivery"
+              ? "delivery"
+              : meta?.inspectionType === "pickup"
+                ? "pickup"
+                : undefined,
+        });
         setItems((prev) => [
           ...prev,
           { uri: entry.localUri, clientId: entry.clientId, type: "video" },

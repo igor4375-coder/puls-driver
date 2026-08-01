@@ -13,6 +13,7 @@ import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSettings } from "@/lib/settings-context";
 import { useLoads } from "@/lib/loads-context";
+import { LinkedAccountsSection } from "@/components/linked-accounts-section";
 
 // ─── Equipment type helpers ────────────────────────────────────────────────────
 const EQUIPMENT_TYPES = [
@@ -200,7 +201,13 @@ export default function ProfileScreen() {
   const [respondingId, setRespondingId] = useState<number | string | null>(null);
   const [showEquipmentPicker, setShowEquipmentPicker] = useState(false);
   const { settings, setRouteDisplayMode, setMapsApp, setDriverSignaturePaths, setLocationTrackingEnabled } = useSettings();
-  const { loads, archiveAllDelivered, clearNonPlatformLoads } = useLoads();
+  const {
+    loads,
+    archiveAllDelivered,
+    clearNonPlatformLoads,
+    syncQueue,
+    retryFailedSyncTasks,
+  } = useLoads();
   const textPrompt = useTextPrompt();
 
   // Count non-platform loads (test/manual/demo loads that can be cleared)
@@ -1042,6 +1049,86 @@ export default function ProfileScreen() {
               onPress={handleClearTestData}
               danger
             />
+          </View>
+        )}
+
+        {/* Linked Accounts (multi-session switcher) — gated per-driver */}
+        <LinkedAccountsSection enabled={convexProfile?.multiAccountEnabled === true} />
+
+        {/* Platform Sync diagnostics — shows pending and failed sync tasks */}
+        {syncQueue.length > 0 && (
+          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: "700", color: colors.muted, letterSpacing: 0.5 }}>
+                PLATFORM SYNC
+              </Text>
+            </View>
+            {(() => {
+              const pendingCount = syncQueue.filter((t) => t.status !== "failed_permanent").length;
+              const failedCount = syncQueue.filter((t) => t.status === "failed_permanent").length;
+              return (
+                <>
+                  {pendingCount > 0 && (
+                    <View style={{ paddingHorizontal: 16, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10 }}>
+                      <Text style={{ fontSize: 14, color: colors.foreground, flex: 1 }}>
+                        {pendingCount} sync{pendingCount === 1 ? "" : "s"} in progress
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.warning, fontWeight: "600" }}>
+                        Working…
+                      </Text>
+                    </View>
+                  )}
+                  {failedCount > 0 && (
+                    <>
+                      <SettingRow
+                        icon="exclamationmark.triangle.fill"
+                        label={`${failedCount} platform sync${failedCount === 1 ? "" : "s"} failed — tap to retry`}
+                        onPress={() => {
+                          Alert.alert(
+                            "Retry Failed Syncs?",
+                            `This will retry ${failedCount} platform update${failedCount === 1 ? "" : "s"} that failed earlier (e.g. mark-as-picked-up calls). Make sure you have a stable internet connection.`,
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              {
+                                text: "Retry All",
+                                onPress: () => retryFailedSyncTasks(),
+                              },
+                            ]
+                          );
+                        }}
+                        danger
+                      />
+                      {syncQueue
+                        .filter((t) => t.status === "failed_permanent")
+                        .slice(0, 5)
+                        .map((t) => {
+                          const args = t.args as { loadNumber?: string; legId?: number | string };
+                          return (
+                            <View
+                              key={t.id}
+                              style={{
+                                paddingHorizontal: 16,
+                                paddingVertical: 8,
+                                borderTopWidth: 1,
+                                borderTopColor: colors.border,
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, color: colors.foreground, fontWeight: "600" }}>
+                                {t.type} · {args.loadNumber ?? `leg ${args.legId}`}
+                              </Text>
+                              {t.lastError && (
+                                <Text style={{ fontSize: 11, color: colors.error, marginTop: 2 }}>
+                                  {t.lastError}
+                                </Text>
+                              )}
+                            </View>
+                          );
+                        })}
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </View>
         )}
 

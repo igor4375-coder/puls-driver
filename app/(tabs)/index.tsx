@@ -42,6 +42,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { trpc } from "@/lib/trpc";
 import { useSettings } from "@/lib/settings-context";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
+import { photoQueue } from "@/lib/photo-queue";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 
 type TabFilter = LoadStatus | "all";
@@ -153,17 +154,12 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
           </Text>
           <StatusBadge status={load.status} />
         </View>
-        {load.isFieldPickup ? (
+        {load.isFieldPickup && (
           <View style={[styles.orgBadge, { backgroundColor: colors.warning + "14" }]}>
             <IconSymbol name="exclamationmark.triangle.fill" size={11} color={colors.warning} />
             <Text style={[styles.orgBadgeText, { color: colors.warning }]} numberOfLines={1}>Field Pickup</Text>
           </View>
-        ) : load.orgName ? (
-          <View style={[styles.orgBadge, { backgroundColor: colors.primary + "14" }]}>
-            <IconSymbol name="building.2.fill" size={11} color={colors.primary} />
-            <Text style={[styles.orgBadgeText, { color: colors.primary }]} numberOfLines={1}>{load.orgName}</Text>
-          </View>
-        ) : null}
+        )}
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>
@@ -480,7 +476,7 @@ function FAB({ onAddLoad, onScanVIN }: { onAddLoad: () => void; onScanVIN: () =>
 export default function LoadsScreen() {
   const colors = useColors();
   const { canViewRates } = usePermissions();
-  const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived, updateLoadStatus } = useLoads();
+  const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, refreshDeliveredLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived, updateLoadStatus } = useLoads();
 
   const handleDeleteLoad = useCallback((load: Load) => {
     if (load.id.startsWith("platform-")) return; // safety guard
@@ -537,12 +533,19 @@ export default function LoadsScreen() {
   const { driver } = useAuth();
   const { entries: queueEntries } = usePhotoQueue();
   const queueCountsByLoad = useMemo(() => {
+    // v65+: stuck-pending entries (pending with a real error for >5 min)
+    // surface as failed so the per-card badge matches what the driver
+    // sees in the Upload Queue modal.
+    const now = Date.now();
     const map: Record<string, { pending: number; failed: number }> = {};
     for (const e of queueEntries) {
       if (!e.loadId) continue;
       if (!map[e.loadId]) map[e.loadId] = { pending: 0, failed: 0 };
-      if (e.status === "pending" || e.status === "uploading") map[e.loadId].pending++;
-      else if (e.status === "failed") map[e.loadId].failed++;
+      if (e.status === "failed" || photoQueue.isStuckPending(e, now)) {
+        map[e.loadId].failed++;
+      } else if (e.status === "pending" || e.status === "uploading") {
+        map[e.loadId].pending++;
+      }
     }
     return map;
   }, [queueEntries]);
@@ -553,10 +556,21 @@ export default function LoadsScreen() {
   const [activeTab, setActiveTab] = useState<TabFilter>("new");
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [groupMode, setGroupMode] = useState<"default" | "pickup" | "dropoff" | "shipper">("default");
+  const [groupMode, setGroupMode] = useState<"default" | "pickup" | "dropoff" | "shipper" | "pickupState" | "dropoffState">("default");
   const [showSortSheet, setShowSortSheet] = useState(false);
 
   // Clear search when switching tabs
+  // When the driver switches to the Delivered tab, pull the latest
+  // delivered-loads history from the platform. Passing `false` respects
+  // the provider's 60s throttle so rapid tab-flipping won't spam the
+  // server. This guarantees a freshly-completed dispatcher-side delivery
+  // becomes visible within seconds of opening the tab.
+  useEffect(() => {
+    if (activeTab === "delivered") {
+      refreshDeliveredLoads(false);
+    }
+  }, [activeTab, refreshDeliveredLoads]);
+
   const prevTabRef = useRef(activeTab);
   useEffect(() => {
     if (prevTabRef.current !== activeTab) {
@@ -579,6 +593,8 @@ export default function LoadsScreen() {
   const groupKeyFn = useCallback((load: Load): string => {
     if (groupMode === "pickup") return load.pickup.contact.company || load.pickup.contact.city || "Unknown";
     if (groupMode === "dropoff") return load.delivery.contact.company || load.delivery.contact.city || "Unknown";
+    if (groupMode === "pickupState") return load.pickup.contact.state || "Unknown";
+    if (groupMode === "dropoffState") return load.delivery.contact.state || "Unknown";
     if (groupMode === "shipper") return load.orgName || "Unknown";
     return "";
   }, [groupMode]);
@@ -1147,7 +1163,13 @@ export default function LoadsScreen() {
           <View style={[styles.groupActiveBar, { backgroundColor: colors.primary + "10", borderBottomColor: colors.border }]}>
             <IconSymbol name="arrow.up.arrow.down" size={12} color={colors.primary} />
             <Text style={[styles.groupActiveLabel, { color: colors.primary }]}>
-              Grouped by {groupMode === "pickup" ? "Pickup" : groupMode === "dropoff" ? "Drop-off" : "Company"}
+              Grouped by {
+                groupMode === "pickup" ? "Pickup" :
+                groupMode === "dropoff" ? "Drop-off" :
+                groupMode === "pickupState" ? "Pickup Province" :
+                groupMode === "dropoffState" ? "Drop-off Province" :
+                "Company"
+              }
             </Text>
             <TouchableOpacity
               onPress={() => { setGroupMode("default"); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
@@ -1243,6 +1265,8 @@ export default function LoadsScreen() {
                 { key: "default" as const, label: "Newest First", icon: "clock.fill" as const, desc: "Default sort" },
                 { key: "pickup" as const, label: "Pickup Location", icon: "arrow.up.circle.fill" as const, desc: "Group by pickup facility or city" },
                 { key: "dropoff" as const, label: "Drop-off Location", icon: "arrow.down.circle.fill" as const, desc: "Group by delivery facility or city" },
+                { key: "pickupState" as const, label: "Pickup Province", icon: "map.fill" as const, desc: "Group by pickup province / state" },
+                { key: "dropoffState" as const, label: "Drop-off Province", icon: "map.fill" as const, desc: "Group by delivery province / state" },
                 { key: "shipper" as const, label: "Company / Shipper", icon: "building.2.fill" as const, desc: "Group by dispatching company" },
               ]).map((opt) => {
                 const active = groupMode === opt.key;

@@ -78,11 +78,79 @@ export const getAssignedLoads = action({
   handler: async (_ctx, args) => {
     if (!BASE_URL) return [];
     try {
-      return await callTRPC<unknown[]>(
+      const loads = await callTRPC<any[]>(
         "driversApi.getAssignedLoads",
         { driverCode: args.driverCode },
         "query",
       );
+      // Diagnostic: log every leg's status so we can confirm whether the company
+      // platform returns the correct status after mark-as-delivered calls.
+      try {
+        const summary = (loads ?? []).map((l) => ({
+          legId: l?.legId ?? l?.tripId,
+          loadNumber: l?.loadNumber,
+          status: l?.status,
+        }));
+        console.log(`[getAssignedLoads] driver=${args.driverCode} count=${summary.length}`, JSON.stringify(summary));
+      } catch {
+        // ignore logging failures
+      }
+      return loads;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("NOT_FOUND") || msg.includes("not found") || msg.includes("404")) {
+        return [];
+      }
+      throw err;
+    }
+  },
+});
+
+/**
+ * Fetch DELIVERED legs for a driver.
+ *
+ * Shipped in platform v3.5.0 — solves the long-standing "delivered loads
+ * disappear from the Delivered tab" issue. `getAssignedLoads` only returns
+ * active legs (assigned/picked_up); this sibling endpoint returns the
+ * delivery history within a window so the driver app no longer has to
+ * rely solely on local AsyncStorage snapshots for delivered records.
+ *
+ * Default window: 60 days. Default limit: 200, capped at 500 server-side.
+ * Server returns the same `PlatformLoad` shape with `status: "delivered"`
+ * and `completedAt` populated.
+ */
+export const getDeliveredLoads = action({
+  args: {
+    driverCode: v.string(),
+    sinceISO: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (_ctx, args) => {
+    if (!BASE_URL) return [];
+    try {
+      const input: Record<string, unknown> = { driverCode: args.driverCode };
+      if (args.sinceISO !== undefined) input.sinceISO = args.sinceISO;
+      if (args.limit !== undefined) input.limit = args.limit;
+      const loads = await callTRPC<any[]>(
+        "driversApi.getDeliveredLoads",
+        input,
+        "query",
+      );
+      try {
+        const summary = (loads ?? []).map((l) => ({
+          legId: l?.legId ?? l?.tripId,
+          loadNumber: l?.loadNumber,
+          status: l?.status,
+          completedAt: l?.completedAt,
+        }));
+        console.log(
+          `[getDeliveredLoads] driver=${args.driverCode} count=${summary.length} since=${args.sinceISO ?? "default-60d"}`,
+          JSON.stringify(summary),
+        );
+      } catch {
+        // ignore logging failures
+      }
+      return loads;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("NOT_FOUND") || msg.includes("not found") || msg.includes("404")) {
@@ -108,6 +176,14 @@ export const syncInspection = action({
     notes: v.optional(v.string()),
     handoffNote: v.optional(v.string()),
     additionalInspection: v.optional(v.any()),
+    // v69+: upload-progress counters. `photoExpectedCount` is total
+    // photos the driver took; `photoUploadedCount` is how many are
+    // already on R2 (== `photos.length` when this call carries the
+    // full set). When uploaded < expected, dispatch can render
+    // "12 / 30 uploaded — still in progress" instead of mistakenly
+    // assuming the driver only took 12 photos.
+    photoUploadedCount: v.optional(v.number()),
+    photoExpectedCount: v.optional(v.number()),
   },
   handler: async (_ctx, args) => {
     return await callTRPC("driversApi.syncInspection", args, "mutation");
@@ -130,6 +206,10 @@ export const markAsPickedUp = action({
     noDamage: v.optional(v.boolean()),
     additionalInspection: v.optional(v.any()),
     vehicleVin: v.optional(v.string()),
+    // v69+: see syncInspection for the contract. Optional so older
+    // driver-app builds keep working unchanged.
+    pickupPhotoUploadedCount: v.optional(v.number()),
+    pickupPhotoExpectedCount: v.optional(v.number()),
   },
   handler: async (_ctx, args) => {
     const payload: Record<string, unknown> = {
@@ -149,6 +229,8 @@ export const markAsPickedUp = action({
     if (args.noDamage !== undefined) payload.noDamage = args.noDamage;
     if (args.additionalInspection) payload.additionalInspection = args.additionalInspection;
     if (args.vehicleVin) payload.vehicleVin = args.vehicleVin;
+    if (args.pickupPhotoUploadedCount !== undefined) payload.pickupPhotoUploadedCount = args.pickupPhotoUploadedCount;
+    if (args.pickupPhotoExpectedCount !== undefined) payload.pickupPhotoExpectedCount = args.pickupPhotoExpectedCount;
     return await callTRPC("driversApi.markAsPickedUp", payload, "mutation");
   },
 });
@@ -180,6 +262,9 @@ export const markAsDelivered = action({
     noDamage: v.optional(v.boolean()),
     additionalInspection: v.optional(v.any()),
     vehicleVin: v.optional(v.string()),
+    // v69+: see syncInspection / markAsPickedUp for the contract.
+    deliveryPhotoUploadedCount: v.optional(v.number()),
+    deliveryPhotoExpectedCount: v.optional(v.number()),
   },
   handler: async (_ctx, args) => {
     const payload: Record<string, unknown> = {
@@ -205,6 +290,8 @@ export const markAsDelivered = action({
     if (args.noDamage !== undefined) payload.noDamage = args.noDamage;
     if (args.additionalInspection) payload.additionalInspection = args.additionalInspection;
     if (args.vehicleVin) payload.vehicleVin = args.vehicleVin;
+    if (args.deliveryPhotoUploadedCount !== undefined) payload.deliveryPhotoUploadedCount = args.deliveryPhotoUploadedCount;
+    if (args.deliveryPhotoExpectedCount !== undefined) payload.deliveryPhotoExpectedCount = args.deliveryPhotoExpectedCount;
     return await callTRPC("driversApi.markAsDelivered", payload, "mutation");
   },
 });

@@ -209,12 +209,22 @@ function VehicleCard({
   const colors = useColors();
   const { entries: queueEntries } = usePhotoQueue();
 
-  // Count pending/uploading/failed photos for this specific vehicle
+  // Count pending/uploading/failed photos for this specific vehicle.
+  // v65+: stuck-pending entries count toward "failed" so the driver
+  // gets a real signal that something isn't moving.
+  const now = Date.now();
   const vehiclePendingCount = queueEntries.filter(
-    (e) => e.loadId === loadId && e.vehicleId === vehicle.id && (e.status === "pending" || e.status === "uploading")
+    (e) =>
+      e.loadId === loadId &&
+      e.vehicleId === vehicle.id &&
+      (e.status === "pending" || e.status === "uploading") &&
+      !photoQueue.isStuckPending(e, now),
   ).length;
   const vehicleFailedCount = queueEntries.filter(
-    (e) => e.loadId === loadId && e.vehicleId === vehicle.id && e.status === "failed"
+    (e) =>
+      e.loadId === loadId &&
+      e.vehicleId === vehicle.id &&
+      (e.status === "failed" || photoQueue.isStuckPending(e, now)),
   ).length;
 
   // hasPickupInspection: true when inspection data exists AND not explicitly reverted to pending
@@ -265,7 +275,7 @@ function VehicleCard({
           <Text style={[styles.vehicleName, { color: colors.foreground }]}>
             {[(vehicle as any).displayName ?? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")].filter(Boolean).join("") || "Unknown Vehicle"}
           </Text>
-          <Text style={[styles.vehicleVin, { color: colors.muted }]}>VIN: {vehicle.vin || "—"}</Text>
+          <Text style={[styles.vehicleVin, { color: colors.foreground }]}>VIN: {vehicle.vin || "—"}</Text>
           {/* Condition chips — shown inline when platform provides these values */}
           {((vehicle.hasKeys !== null && vehicle.hasKeys !== undefined) ||
             (vehicle.starts !== null && vehicle.starts !== undefined) ||
@@ -495,8 +505,10 @@ export default function LoadDetailScreen() {
   // Field pickup resend state
   const [resending, setResending] = useState(false);
 
-  // Inline handoff note for delivery (visible above "Mark Delivered" when no inspection photos)
+  // Inline handoff note for delivery — always visible above "Mark Delivered"
+  // (except on final-customer drops where there is no next driver).
   const [pendingHandoffNote, setPendingHandoffNote] = useState("");
+  const handoffNotePrefilledRef = useRef(false);
 
   // ─── Require customer signature toggle (per session, resets after pickup/delivery) ─────
   const [requireCustomerSignature, setRequireCustomerSignature] = useState(false);
@@ -553,6 +565,20 @@ export default function LoadDetailScreen() {
       ? { id: load.fieldPickupId as any }
       : "skip",
   );
+
+  // Pre-fill the handoff note from any inspection-screen note already typed
+  // for this load. Only prefills once per load (so it doesn't clobber the
+  // driver's edits if the inspection note changes mid-session).
+  useEffect(() => {
+    if (handoffNotePrefilledRef.current) return;
+    const savedNote = load?.vehicles[0]?.deliveryInspection?.handoffNote;
+    if (savedNote && pendingHandoffNote === "") {
+      setPendingHandoffNote(savedNote);
+      handoffNotePrefilledRef.current = true;
+    } else if (load) {
+      handoffNotePrefilledRef.current = true;
+    }
+  }, [load, pendingHandoffNote]);
 
   const launchReceiptCamera = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -830,54 +856,117 @@ export default function LoadDetailScreen() {
       }).catch((err) => console.warn("[LoadDetail] Signature save failed:", err));
     }
 
-    // Fire-and-forget: resolve uploaded URLs from photo queue before syncing
+    // Fire markAsPickedUp IMMEDIATELY with already-uploaded URLs. Schedule a
+    // follow-up syncInspection when any still-pending photos finish uploading.
     if (isPlatformLoad && platformTripId && driverCode) {
-      (async () => {
-        try {
-          const urls: string[] = [];
-          for (const v of load.vehicles) {
-            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
-            urls.push(...vUrls);
-          }
-          const existingHttp = load.vehicles.flatMap(
-            (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
-          );
-          const pickupPhotos = [...new Set([...existingHttp, ...urls])];
+      const pickupTime = new Date().toISOString();
+      const allDamages = load.vehicles.flatMap(
+        (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
+          id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView, note: d.description || undefined,
+        }))
+      );
+      const firstVehicle = load.vehicles[0];
+      const firstInspection = firstVehicle?.pickupInspection;
 
-          const allDamages = load.vehicles.flatMap(
-            (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
-              id: d.id, zone: d.zone, type: d.type, severity: d.severity,
-              x: d.xPct != null ? d.xPct / 100 : 0.5,
-              y: d.yPct != null ? d.yPct / 100 : 0.5,
-              diagramView: d.diagramView, note: d.description || undefined,
-            }))
-          );
-          const firstVehicle = load.vehicles[0];
-          const firstInspection = firstVehicle?.pickupInspection;
+      const existingHttp = load.vehicles.flatMap(
+        (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+      );
+      const immediateUrls = [
+        ...new Set([...existingHttp, ...photoQueue.getUploadedUrls(load.id)]),
+      ];
+      // v69+: total photos the driver actually captured for this pickup
+      // (across all vehicles on the leg). Used by the platform to render
+      // "X / Y uploaded" so dispatch knows whether more photos are still
+      // arriving in the background.
+      const pickupPhotoExpectedCount = load.vehicles.reduce(
+        (sum, v) => sum + (v.pickupInspection?.photos?.length ?? 0),
+        0,
+      );
 
-          queuePlatformSync({
-            type: "markAsPickedUp",
-            args: {
-              loadNumber: load.loadNumber,
-              legId: platformTripId,
-              driverCode,
-              pickupTime: new Date().toISOString(),
-              pickupGPS: {
-                lat: firstInspection?.locationLat ?? 0,
-                lng: firstInspection?.locationLng ?? 0,
-              },
-              pickupPhotos,
-              customerNotAvailable: true,
-              ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-              damages: allDamages,
-              noDamage: allDamages.length === 0,
-              vehicleVin: firstVehicle?.vin || "",
+      queuePlatformSync({
+        type: "markAsPickedUp",
+        args: {
+          loadNumber: load.loadNumber,
+          legId: platformTripId,
+          driverCode,
+          pickupTime,
+          pickupGPS: {
+            lat: firstInspection?.locationLat ?? 0,
+            lng: firstInspection?.locationLng ?? 0,
+          },
+          pickupPhotos: immediateUrls,
+          customerNotAvailable: true,
+          ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+          damages: allDamages,
+          noDamage: allDamages.length === 0,
+          vehicleVin: firstVehicle?.vin || "",
+          pickupPhotoUploadedCount: immediateUrls.length,
+          pickupPhotoExpectedCount,
+        },
+      });
+
+      // v70+: ALWAYS queue a syncInspection right after markAsPickedUp,
+      // even when every photo is already uploaded. The previous build
+      // only fired syncInspection inside the late-flush IIFE below, and
+      // gated the whole thing on `pendingCountForLoad > 0`. Drivers who
+      // uploaded every photo before tapping "Mark as Picked Up" (which
+      // is the common Wi-Fi case) hit that gate at 0 → no syncInspection
+      // ever shipped → the company-platform Trip Details "Inspection
+      // Media" panel stayed empty forever. The platform now merges
+      // additively by URL (v3.7.16+), so multiple calls converge on the
+      // union — re-firing is cheap and safe.
+      //
+      // v71+: queue ONE syncInspection per vehicle with the full set of
+      // photoClientIds for that vehicle's pickup inspection. The sync
+      // processor will DEFER each task until every photo for that
+      // vehicle has reached HTTPS — no more partial/empty inspection
+      // records landing on the platform. The previous "fire-now-with-
+      // immediateUrls + fire-again-from-IIFE" double-call pattern is
+      // gone; one deferred task per vehicle does the same job
+      // deterministically and survives app suspension.
+      for (const v of load.vehicles) {
+        const insp = v.pickupInspection;
+        if (!insp) continue;
+        const allPhotoUris = insp.photos ?? [];
+        const photoClientIds = allPhotoUris
+          .map((uri) => photoQueue.getClientIdForUri(uri))
+          .filter((id): id is string => !!id);
+        const httpsAlready = allPhotoUris.filter((p) => p.startsWith("http"));
+        const vehicleDamages = (insp.damages ?? []).map((d) => ({
+          id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView, note: d.description || undefined,
+        }));
+        queuePlatformSync({
+          type: "syncInspection",
+          args: {
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            inspectionType: "pickup",
+            vehicleVin: v.vin || "",
+            photos: httpsAlready,
+            photoClientIds,
+            damages: vehicleDamages,
+            noDamage: insp.noDamage ?? (vehicleDamages.length === 0),
+            gps: {
+              lat: insp.locationLat ?? 0,
+              lng: insp.locationLng ?? 0,
             },
-          });
-        } catch (err) {
-          console.warn("[LoadDetail] Platform sync failed:", err);
-        }
-      })();
+            timestamp: insp.completedAt ?? pickupTime,
+            notes: insp.notes || undefined,
+            photoUploadedCount: httpsAlready.length,
+            photoExpectedCount: allPhotoUris.length,
+            ...(insp.additionalInspection
+              ? { additionalInspection: insp.additionalInspection }
+              : {}),
+          },
+        });
+      }
     }
   };
 
@@ -923,71 +1012,104 @@ export default function LoadDetailScreen() {
     }
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      (async () => {
-        try {
-          const urls: string[] = [];
-          for (const v of load.vehicles) {
-            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
-            urls.push(...vUrls);
-          }
-          const existingHttp = load.vehicles.flatMap(
-            (v) => (v.deliveryInspection?.photos ?? []).filter((p) => p.startsWith("http"))
-          );
-          const dlvPhotos = [...new Set([...existingHttp, ...urls])];
+      // Capture inputs that don't depend on photo uploads so we can fire
+      // markAsDelivered immediately. Previously we awaited flushAndGetUrls
+      // which could block indefinitely if photos were stuck uploading —
+      // meaning the company platform never got the delivery and the load
+      // stayed stuck in "picked up" on the driver's screen forever.
+      const deliveryTime = new Date().toISOString();
+      const allDeliveryDamages = load.vehicles.flatMap(
+        (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
+          id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView, note: d.description || undefined,
+        }))
+      );
+      const dlvFirstVehicle = load.vehicles[0];
+      const dlvInspection = (dlvFirstVehicle as any)?.deliveryInspection;
 
-          const allDeliveryDamages = load.vehicles.flatMap(
-            (v) => ((v as any).deliveryInspection?.damages ?? []).map((d: any) => ({
-              id: d.id, zone: d.zone, type: d.type, severity: d.severity,
-              x: d.xPct != null ? d.xPct / 100 : 0.5,
-              y: d.yPct != null ? d.yPct / 100 : 0.5,
-              diagramView: d.diagramView, note: d.description || undefined,
-            }))
-          );
-          const dlvFirstVehicle = load.vehicles[0];
-          const dlvInspection = (dlvFirstVehicle as any)?.deliveryInspection;
+      // URLs that are already uploaded right now (non-blocking).
+      const existingHttp = load.vehicles.flatMap(
+        (v) => (v.deliveryInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+      );
+      const immediateUrls = [
+        ...new Set([...existingHttp, ...photoQueue.getUploadedUrls(load.id)]),
+      ];
+      const deliveryPhotoExpectedCount = load.vehicles.reduce(
+        (sum, v) => sum + (v.deliveryInspection?.photos?.length ?? 0),
+        0,
+      );
 
-          queuePlatformSync({
-            type: "markAsDelivered",
-            args: {
-              loadNumber: load.loadNumber,
-              legId: platformTripId,
-              driverCode,
-              deliveryTime: new Date().toISOString(),
-              deliveryGPS: {
-                lat: dlvInspection?.locationLat ?? 0,
-                lng: dlvInspection?.locationLng ?? 0,
-              },
-              deliveryPhotos: dlvPhotos,
-              customerNotAvailable: true,
-              ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-              damages: allDeliveryDamages,
-              noDamage: allDeliveryDamages.length === 0,
-              vehicleVin: dlvFirstVehicle?.vin || "",
+      queuePlatformSync({
+        type: "markAsDelivered",
+        args: {
+          loadNumber: load.loadNumber,
+          legId: platformTripId,
+          driverCode,
+          deliveryTime,
+          deliveryGPS: {
+            lat: dlvInspection?.locationLat ?? 0,
+            lng: dlvInspection?.locationLng ?? 0,
+          },
+          deliveryPhotos: immediateUrls,
+          customerNotAvailable: true,
+          ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+          damages: allDeliveryDamages,
+          noDamage: allDeliveryDamages.length === 0,
+          vehicleVin: dlvFirstVehicle?.vin || "",
+          deliveryPhotoUploadedCount: immediateUrls.length,
+          deliveryPhotoExpectedCount,
+        },
+      });
+
+      // v71+: queue ONE photo-deferred syncInspection per vehicle. Each
+      // task waits for every photo for that vehicle to reach HTTPS before
+      // firing, so the platform never receives a partial/empty array
+      // (which under last-write-wins semantics would lock in zero photos
+      // for the leg). Replaces the previous "fire-now-with-immediateUrls
+      // + fire-again-from-IIFE" pattern.
+      for (const v of load.vehicles) {
+        const insp = v.deliveryInspection;
+        if (!insp) continue;
+        const allPhotoUris = insp.photos ?? [];
+        const photoClientIds = allPhotoUris
+          .map((uri) => photoQueue.getClientIdForUri(uri))
+          .filter((id): id is string => !!id);
+        const httpsAlready = allPhotoUris.filter((p) => p.startsWith("http"));
+        const vehicleDamages = (insp.damages ?? []).map((d) => ({
+          id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView, note: d.description || undefined,
+        }));
+        queuePlatformSync({
+          type: "syncInspection",
+          args: {
+            loadNumber: load.loadNumber,
+            legId: platformTripId,
+            driverCode,
+            inspectionType: "delivery",
+            vehicleVin: v.vin || "",
+            photos: httpsAlready,
+            photoClientIds,
+            damages: vehicleDamages,
+            noDamage: insp.noDamage ?? (vehicleDamages.length === 0),
+            gps: {
+              lat: insp.locationLat ?? 0,
+              lng: insp.locationLng ?? 0,
             },
-          });
-
-          if (handoffNote && load.vehicles[0]) {
-            queuePlatformSync({
-              type: "syncInspection",
-              args: {
-                loadNumber: load.loadNumber,
-                legId: platformTripId,
-                driverCode,
-                inspectionType: "delivery",
-                vehicleVin: load.vehicles[0].vin || "",
-                photos: dlvPhotos,
-                damages: [],
-                noDamage: true,
-                gps: { lat: 0, lng: 0 },
-                timestamp: new Date().toISOString(),
-                handoffNote,
-              },
-            });
-          }
-        } catch (err) {
-          console.warn("[LoadDetail] Platform delivery sync failed:", err);
-        }
-      })();
+            timestamp: insp.completedAt ?? deliveryTime,
+            notes: insp.notes || undefined,
+            ...(handoffNote ? { handoffNote } : insp.handoffNote ? { handoffNote: insp.handoffNote } : {}),
+            ...(insp.additionalInspection
+              ? { additionalInspection: insp.additionalInspection }
+              : {}),
+            photoUploadedCount: httpsAlready.length,
+            photoExpectedCount: allPhotoUris.length,
+          },
+        });
+      }
     }
   };
 
@@ -1265,6 +1387,15 @@ export default function LoadDetailScreen() {
                 />
                 <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
               </View>
+              {load.pickupInstructions ? (
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4, backgroundColor: "#E8F5E9", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#A5D6A7" }}>
+                  <IconSymbol name="info.circle.fill" size={14} color="#2E7D32" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: "#1B5E20", marginBottom: 2 }}>Pickup Instructions</Text>
+                    <Text style={{ fontSize: 12, color: "#33691E", lineHeight: 17 }}>{load.pickupInstructions}</Text>
+                  </View>
+                </View>
+              ) : null}
 
               {/* Delivery Info */}
               <SectionHeader title="DELIVERY INFORMATION" />
@@ -1292,6 +1423,15 @@ export default function LoadDetailScreen() {
                 />
                 <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
               </View>
+              {load.dropoffInstructions ? (
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4, backgroundColor: "#FBE9E7", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#FFAB91" }}>
+                  <IconSymbol name="info.circle.fill" size={14} color="#D84315" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: "#BF360C", marginBottom: 2 }}>Dropoff Instructions</Text>
+                    <Text style={{ fontSize: 12, color: "#4E342E", lineHeight: 17 }}>{load.dropoffInstructions}</Text>
+                  </View>
+                </View>
+              ) : null}
             </>
           )}
 
@@ -1330,12 +1470,31 @@ export default function LoadDetailScreen() {
             </>
           )}
 
-           {/* Notes */}
-          {load.notes ? (
+           {/* Dispatch Notes (high priority — red) */}
+          {load.dispatchNotes ? (
             <>
-              <SectionHeader title="NOTES" />
-              <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.notesText, { color: colors.foreground }]}>{load.notes}</Text>
+              <SectionHeader title="DISPATCH NOTES" />
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#FFEBEE", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "#EF9A9A" }}>
+                <IconSymbol name="exclamationmark.triangle.fill" size={16} color="#C62828" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "800", color: "#B71C1C", marginBottom: 3, letterSpacing: 0.3 }}>Important</Text>
+                  <Text style={{ fontSize: 14, color: "#3E2723", lineHeight: 20 }}>{load.dispatchNotes}</Text>
+                </View>
+              </View>
+            </>
+          ) : null}
+
+          {/* Driver Notes (load-level — amber) */}
+          {load.driverNotes ? (
+            <>
+              {!load.dispatchNotes && <SectionHeader title="NOTES" />}
+              {load.dispatchNotes && <View style={{ height: 6 }} />}
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#FFF8E1", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "#FFD54F" }}>
+                <IconSymbol name="note.text" size={15} color="#F9A825" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#E65100", marginBottom: 3 }}>Driver Notes</Text>
+                  <Text style={{ fontSize: 14, color: "#5D4037", lineHeight: 20 }}>{load.driverNotes}</Text>
+                </View>
               </View>
             </>
           ) : null}
@@ -1546,8 +1705,9 @@ export default function LoadDetailScreen() {
                 />
               </TouchableOpacity>
 
-              {/* Inline handoff note — visible when no delivery inspection photos */}
-              {!hasDeliveryPhotos && (
+              {/* Inline handoff note — always visible on relay/multi-leg drops.
+                  Hidden only on final-customer deliveries where there's no next driver. */}
+              {load.isFinalLeg !== true && (
                 <>
                   <SectionHeader title="NOTE FOR NEXT DRIVER" />
                   <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
@@ -1941,9 +2101,10 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   vehicleVin: {
-    fontSize: 11,
-    marginTop: 2,
-    letterSpacing: 0.3,
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 3,
+    letterSpacing: 0.4,
   },
   vehicleColorDot: {
     width: 16,

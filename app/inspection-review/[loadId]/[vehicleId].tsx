@@ -475,7 +475,7 @@ const ms = StyleSheet.create({
 export default function InspectionReviewScreen() {
   const colors = useColors();
   const { loadId, vehicleId } = useLocalSearchParams<{ loadId: string; vehicleId: string }>();
-  const { getLoad, savePickupInspection, saveDeliveryInspection } = useLoads();
+  const { getLoad, savePickupInspection, saveDeliveryInspection, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
   const load = getLoad(loadId);
   const vehicle = load?.vehicles.find((v) => v.id === vehicleId);
@@ -498,6 +498,38 @@ export default function InspectionReviewScreen() {
       : vehicle?.pickupInspection;
 
   const [photos, setPhotos] = useState<string[]>(inspection?.photos ?? []);
+
+  // Stay in sync with the underlying inspection record. The background
+  // photo-queue follow-up swaps local file paths for HTTPS URLs as
+  // stragglers finish uploading, and we want this read screen to reflect
+  // those swaps without a manual reload. Skip if the user has just
+  // started taking new photos (we'll merge those via the consume effect).
+  const inspectionPhotosKey = (inspection?.photos ?? []).join("|");
+  useEffect(() => {
+    const next = inspection?.photos ?? [];
+    setPhotos((prev) => {
+      // Only adopt the inspection record's list if we don't have local
+      // additions the record doesn't yet know about (still being saved).
+      const prevSet = new Set(prev);
+      const allPrevInNext = prev.every((u) => next.includes(u));
+      if (allPrevInNext && next.length >= prev.length) return next;
+      // Otherwise swap any local URIs in our list for HTTPS counterparts
+      // from the inspection record (same-position match).
+      const merged = prev.map((u) => {
+        if (u.startsWith("http")) return u;
+        // Any next URI that's HTTPS and not already in prev — adopt it
+        // by index alignment if length matches.
+        if (next.length === prev.length) {
+          const idx = prev.indexOf(u);
+          if (idx >= 0 && next[idx]?.startsWith("http")) return next[idx];
+        }
+        return u;
+      });
+      return merged.some((u, i) => u !== prev[i]) ? merged : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inspectionPhotosKey]);
+
   const savedDamages = inspection?.damages ?? [];
   const savedNoDamage = inspection?.noDamage ?? false;
   const existingAdditional = inspection?.additionalInspection;
@@ -612,6 +644,83 @@ export default function InspectionReviewScreen() {
     if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     persistAll();
     router.back();
+
+    // v70+: Always queue a syncInspection for platform loads when the
+    // driver saves an inspection from this screen. Previously this path
+    // (the one drivers actually use after tapping "Inspect Vehicle" on
+    // the load-detail screen) persisted locally and navigated back
+    // without telling the platform anything about the inspection —
+    // photos uploaded fine to R2 but the platform's Trip Details
+    // "Inspection Media" panel stayed empty because no inspection
+    // submission record was ever created. We now ship one syncInspection
+    // immediately with whatever URLs are HTTPS right now; any stragglers
+    // ride the backfill once they finish uploading.
+    if (!vehicle || !load) return;
+    const isPlatformLoad = loadId.startsWith("platform-");
+    if (!isPlatformLoad) return;
+    const legId = load.platformTripId ?? loadId.replace("platform-", "");
+    if (legId === undefined || legId === null || legId === "") return;
+    const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
+    if (!driverCode) return;
+
+    const uploadedPhotos = photos.filter((p) => p.startsWith("http"));
+    // v71+: tag each photo with its photoQueue clientId so the sync queue
+    // can DEFER firing this syncInspection until every photo has finished
+    // uploading. Photos that have no matching clientId (HTTPS URLs that
+    // didn't pass through the queue, or pre-v71 file paths) fall back to
+    // the static `photos` array — they're still included if they're HTTPS.
+    const photoClientIds = photos
+      .map((uri) => photoQueue.getClientIdForUri(uri))
+      .filter((id): id is string => !!id);
+    const syncDamages = damages.map((d) => ({
+      id: d.id,
+      zone: d.zone,
+      type: d.type,
+      severity: d.severity,
+      x: d.xPct != null ? d.xPct / 100 : 0.5,
+      y: d.yPct != null ? d.yPct / 100 : 0.5,
+      diagramView: d.diagramView,
+      note: d.description || undefined,
+    }));
+    const additional = buildAdditional();
+    const additionalData: Record<string, unknown> = {};
+    if (additional.odometer) additionalData.odometer = additional.odometer;
+    if (additional.drivable !== null) additionalData.drivable = additional.drivable;
+    if (additional.windscreen !== null) additionalData.windscreen = additional.windscreen;
+    if (additional.glassesIntact !== null) additionalData.glassesIntact = additional.glassesIntact;
+    if (additional.titlePresent !== null) additionalData.titlePresent = additional.titlePresent;
+    if (additional.billOfSale !== null) additionalData.billOfSale = additional.billOfSale;
+    if (additional.keys !== null) additionalData.keys = additional.keys;
+    if (additional.remotes !== null) additionalData.remotes = additional.remotes;
+    if (additional.headrests !== null) additionalData.headrests = additional.headrests;
+    if (additional.cargoCover !== null) additionalData.cargoCover = additional.cargoCover;
+    if (additional.spareTire !== null) additionalData.spareTire = additional.spareTire;
+    if (additional.radio !== null) additionalData.radio = additional.radio;
+    if (additional.manuals !== null) additionalData.manuals = additional.manuals;
+    if (additional.navigationDisk !== null) additionalData.navigationDisk = additional.navigationDisk;
+    if (additional.pluginChargerCable !== null) additionalData.pluginChargerCable = additional.pluginChargerCable;
+    if (additional.headphones !== null) additionalData.headphones = additional.headphones;
+
+    queuePlatformSync({
+      type: "syncInspection",
+      args: {
+        loadNumber: load.loadNumber,
+        legId,
+        driverCode,
+        inspectionType,
+        vehicleVin: vehicle.vin || "",
+        photos: uploadedPhotos,
+        photoClientIds,
+        damages: syncDamages,
+        noDamage,
+        gps: { lat: inspection?.locationLat ?? 0, lng: inspection?.locationLng ?? 0 },
+        timestamp: new Date().toISOString(),
+        notes: notes || undefined,
+        photoUploadedCount: uploadedPhotos.length,
+        photoExpectedCount: photos.length,
+        ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
+      },
+    });
   };
 
   // ── Photo navigation ────────────────────────────────────────────────────────
@@ -687,13 +796,11 @@ export default function InspectionReviewScreen() {
               : undefined,
             vin: vehicle?.vin ?? undefined,
           });
-          photoQueue.enqueue({
-            localUri: stamped,
+          await photoQueue.enqueue(stamped, {
             loadId,
             vehicleId,
-            inspectionType,
-            zone: damage.zone,
-            damageId: damage.id,
+            loadNumber: load?.loadNumber,
+            inspectionType: inspectionType === "delivery" ? "delivery" : "pickup",
           });
           stampedUris.push(stamped);
         }

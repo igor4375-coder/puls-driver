@@ -25,12 +25,32 @@ import {
   matchPendingLoadByLast6,
   type VINDecodeResult,
 } from "@/lib/vin-store";
+import {
+  isStructurallyValidVIN,
+  isAcceptableVIN,
+  isValidVINCheckDigit,
+  isNorthAmericanVIN,
+  pickBestVINCandidate,
+  pickBestVINFromOcrResult,
+} from "@/lib/vin-validator";
 
 // ─── VIN Helpers ──────────────────────────────────────────────────────────────
 
-/** Full 17-char VIN: no I, O, Q */
+/**
+ * Full 17-char VIN.
+ *
+ * v67+: now delegates to the shared validator. A string is "full" only
+ * if it's structurally a VIN AND — for North American VINs — passes the
+ * ISO 3779 / SAE J853 check digit. The check digit is what kills the
+ * single-character-OCR-misread bug class (B↔8, S↔5, etc.) that was
+ * producing wrong-vehicle decodes from NHTSA.
+ *
+ * For manual entry of non-NA VINs (rare in our fleet) we fall back to
+ * structural validity so drivers can still enter unusual European /
+ * Asian VINs that happen to lack a check digit.
+ */
 function isFullVIN(vin: string): boolean {
-  return /^[A-HJ-NPR-Z0-9]{17}$/i.test(vin.trim());
+  return isAcceptableVIN(vin);
 }
 
 /** Last-6 serial digits — always numeric or alphanumeric */
@@ -166,6 +186,17 @@ export default function VINScannerScreen() {
   const ocrTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [ocrActive, setOcrActive] = useState(true);
 
+  // v67+: a candidate is accepted only when EITHER the VIN check digit
+  // passes OR we've seen the same string on two consecutive OCR reads.
+  // Cuts single-frame OCR misreads (single-character substitutions) that
+  // would otherwise pass the length+alphabet check and get decoded by
+  // NHTSA as the wrong vehicle.
+  const pendingOcrVinRef = useRef<string | null>(null);
+  const pendingOcrCountRef = useRef(0);
+  // Drives the on-screen "Reading…" / "Confirming…" hint while scanning
+  // so drivers know the camera sees something and to hold steady.
+  const [ocrReadingHint, setOcrReadingHint] = useState<"idle" | "confirming" | "validated">("idle");
+
   const ALL_BARCODE_TYPES = ["code39", "code128", "pdf417", "qr", "datamatrix", "code93", "aztec"] as const;
   const LINEAR_ONLY_TYPES = ["code39", "code128", "pdf417", "code93"] as const;
   const [barcodeTypes, setBarcodeTypes] = useState<readonly string[]>(ALL_BARCODE_TYPES);
@@ -225,7 +256,20 @@ export default function VINScannerScreen() {
     };
   }, []);
 
-  // ── OCR polling: capture frame every 600ms and look for VIN text ────────
+  // ── OCR polling: capture frame every 400ms and look for VIN text ────────
+  //
+  // v68+ changes:
+  //   - Uses pickBestVINFromOcrResult which prefers VINs anchored to
+  //     a "VIN:" label on the sticker before sliding any window blindly
+  //     across the whole OCR text. Kills the cross-field-concatenation
+  //     false positives on detailed labels (sticker bug from v67).
+  //   - WMI 1-5 hard-required by default (PullsDispatch fleet is all NA).
+  //   - Acceptance rule:
+  //       * Label-anchored + check-digit valid → accept on single frame
+  //       * Unanchored + check-digit valid     → accept on single frame
+  //       * Label-anchored + check-digit fail  → require 2 reads (weak
+  //         OCR on the digits but we know it's at the right spot)
+  //       * Unanchored + check-digit fail      → never accept
   useEffect(() => {
     if (scanned || decoding || decodedResult || showManual || !ocrActive) return;
     if (!permission?.granted) return;
@@ -235,31 +279,74 @@ export default function VINScannerScreen() {
       ocrBusyRef.current = true;
       try {
         const photo = await ocrCameraRef.current.takePictureAsync({
-          quality: 0.4,
+          quality: 0.7,
           skipProcessing: true,
           shutterSound: false,
         });
         if (!photo?.uri) return;
 
         const result = await MlkitOcr.recognizeText(photo.uri, "latin");
-        const allText = result.text.replace(/\s+/g, "").toUpperCase();
-        const vinMatch = allText.match(/[A-HJ-NPR-Z0-9]{17}/);
-        if (vinMatch && isFullVIN(vinMatch[0])) {
-          const vin = vinMatch[0];
-          if (vin !== lastScannedRef.current) {
-            lastScannedRef.current = vin;
-            Vibration.vibrate(80);
-            setScanned(true);
-            setOcrActive(false);
-            handleFullVINDecode(vin);
+        const candidate = pickBestVINFromOcrResult(result);
+        if (!candidate) {
+          if (pendingOcrVinRef.current) {
+            pendingOcrVinRef.current = null;
+            pendingOcrCountRef.current = 0;
+            setOcrReadingHint("idle");
           }
+          return;
         }
+
+        const accept = (vin: string) => {
+          if (vin === lastScannedRef.current) return;
+          lastScannedRef.current = vin;
+          pendingOcrVinRef.current = null;
+          pendingOcrCountRef.current = 0;
+          setOcrReadingHint("validated");
+          Vibration.vibrate(80);
+          setScanned(true);
+          setOcrActive(false);
+          handleFullVINDecode(vin);
+        };
+
+        // Strongest path: check digit validates. Whether label-anchored
+        // or not, this is a high-confidence read — trust it.
+        if (candidate.checkDigitValid) {
+          accept(candidate.vin);
+          return;
+        }
+
+        // Medium path: label-anchored but check digit fails. The label
+        // tells us the camera is looking at the right spot; the digits
+        // themselves are just noisy. Require 2 consecutive identical
+        // reads to ride out the OCR jitter.
+        if (candidate.labelAnchored) {
+          setOcrReadingHint("confirming");
+          if (pendingOcrVinRef.current === candidate.vin) {
+            pendingOcrCountRef.current++;
+            if (pendingOcrCountRef.current >= 2) {
+              accept(candidate.vin);
+              return;
+            }
+          } else {
+            pendingOcrVinRef.current = candidate.vin;
+            pendingOcrCountRef.current = 1;
+          }
+          return;
+        }
+
+        // Weakest path: blind window match with no label nearby and no
+        // valid check digit. v68+ NEVER accepts these — the v67 sticker
+        // bug ("ANRANA0971SP0RNBE") was exactly this case slipping
+        // through. We surface the "confirming" hint so the driver knows
+        // we see something, but we never act on it without check-digit
+        // validation.
+        setOcrReadingHint("confirming");
       } catch {
         // OCR frame failed — silently continue
       } finally {
         ocrBusyRef.current = false;
       }
-    }, 600);
+    }, 400);
 
     return () => {
       if (ocrTimerRef.current) {
@@ -361,9 +448,14 @@ export default function VINScannerScreen() {
       if (data === lastScannedRef.current) return;
       lastScannedRef.current = data;
 
+      // v67+: route barcode payload through the SAME candidate picker
+      // we use for OCR. PDF417 / Code 39 readers occasionally drop or
+      // flip a byte on faded door-jamb labels, and the check-digit
+      // gate inside isFullVIN catches those bad decodes before they
+      // ever reach NHTSA — preventing wrong-vehicle dispatches.
+      const candidate = pickBestVINCandidate(data);
       const cleaned = data.replace(/[^A-HJ-NPR-Z0-9]/gi, "").toUpperCase();
-      const vinMatch = cleaned.match(/[A-HJ-NPR-Z0-9]{17}/i);
-      const vin = vinMatch ? vinMatch[0] : cleaned;
+      const vin = candidate?.vin ?? (cleaned.match(/[A-HJ-NPR-Z0-9]{17}/i)?.[0] ?? cleaned);
 
       if (isFullVIN(vin)) {
         if (partialFallbackTimer.current) {
@@ -413,8 +505,45 @@ export default function VINScannerScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (manualMode === "full") {
-      if (!isFullVIN(input)) {
-        Alert.alert("Invalid VIN", "Please enter a valid 17-character VIN. VINs cannot contain I, O, or Q.");
+      // v67+: distinguish the two failure modes so the driver knows what
+      // to fix. Structurally-invalid → "you have I/O/Q or wrong length";
+      // structurally-OK but bad check digit → "double-check your VIN".
+      if (!isStructurallyValidVIN(input)) {
+        Alert.alert(
+          "Invalid VIN",
+          "Please enter a valid 17-character VIN. VINs cannot contain I, O, or Q.",
+        );
+        return;
+      }
+      if (isNorthAmericanVIN(input) && !isValidVINCheckDigit(input)) {
+        Alert.alert(
+          "VIN Check Digit Failed",
+          "This VIN's check digit (position 9) doesn't match the rest of the number. Please double-check each character — a single typo will cause this.",
+          [
+            { text: "Edit", style: "cancel" },
+            {
+              text: "Use Anyway",
+              style: "destructive",
+              onPress: async () => {
+                setManualDecoding(true);
+                try {
+                  const result = await decodeFullVIN(input);
+                  setDecodedResult(result);
+                  setShowManual(false);
+                } catch {
+                  setDecodedResult({
+                    vin: input,
+                    year: "", make: "", model: "", bodyType: "", engineSize: "", trim: "",
+                    isPartial: false,
+                  });
+                  setShowManual(false);
+                } finally {
+                  setManualDecoding(false);
+                }
+              },
+            },
+          ],
+        );
         return;
       }
       setManualDecoding(true);
@@ -501,6 +630,9 @@ export default function VINScannerScreen() {
               setScanned(false);
               setOcrActive(true);
               lastScannedRef.current = "";
+              pendingOcrVinRef.current = null;
+              pendingOcrCountRef.current = 0;
+              setOcrReadingHint("idle");
             }}
           />
           {decodedResult.isPartial && (
@@ -734,6 +866,8 @@ export default function VINScannerScreen() {
               ? "Couldn't read full VIN — aim at the long\nbarcode printed under the VIN number"
               : partialWaiting
               ? "Partial code detected — now scan the barcode\nunder the printed VIN number"
+              : ocrReadingHint === "confirming"
+              ? "Reading VIN — hold steady to confirm…"
               : "Point at the VIN barcode or printed VIN number\n(door jamb, dashboard, or windshield)"}
           </Text>
           {partialResetHint ? (
@@ -743,6 +877,10 @@ export default function VINScannerScreen() {
           ) : partialWaiting ? (
             <View style={[styles.tipBox, { backgroundColor: "rgba(249,115,22,0.7)" }]}>
               <Text style={styles.tipText}>Point at the long barcode under the VIN text</Text>
+            </View>
+          ) : ocrReadingHint === "confirming" ? (
+            <View style={[styles.tipBox, { backgroundColor: "rgba(37,99,235,0.7)" }]}>
+              <Text style={styles.tipText}>Hold steady — verifying VIN check digit</Text>
             </View>
           ) : (
             <View style={[styles.tipBox, { backgroundColor: "rgba(0,0,0,0.5)" }]}>
@@ -756,7 +894,13 @@ export default function VINScannerScreen() {
           {scanned && !decoding ? (
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: "rgba(255,255,255,0.2)" }]}
-              onPress={() => { setScanned(false); lastScannedRef.current = ""; }}
+              onPress={() => {
+                setScanned(false);
+                lastScannedRef.current = "";
+                pendingOcrVinRef.current = null;
+                pendingOcrCountRef.current = 0;
+                setOcrReadingHint("idle");
+              }}
               activeOpacity={0.8}
             >
               <Text style={styles.actionBtnText}>Scan Again</Text>

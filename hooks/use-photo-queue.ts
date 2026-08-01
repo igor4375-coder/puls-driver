@@ -43,7 +43,11 @@ export function usePhotoQueue() {
     });
   }, []);
 
-  const stats = photoQueue.stats;
+  // v65+: use `visibleStats` so entries that have been stuck pending
+  // with a real upload error for >5 min surface to the driver as
+  // "Failed" (with the Retry button) instead of hiding behind a "0
+  // Failed" counter while the queue silently piles up.
+  const stats = photoQueue.visibleStats;
   const hasPending = stats.pending > 0 || stats.uploading > 0;
   const hasFailed = stats.failed > 0;
 

@@ -56,6 +56,14 @@ export interface CompanyPlatformLoad {
   storageExpiryDate?: string | null;
   /** Note from the previous leg's delivery driver for this leg's pickup driver */
   previousLegNotes?: string | null;
+  /** Per-leg dispatch notes (from "Dispatch Notes" field on the platform) */
+  notes?: string | null;
+  /** Load-level driver notes that apply to the whole order */
+  driverNotes?: string | null;
+  /** Pickup-specific instructions for this leg */
+  pickupInstructions?: string | null;
+  /** Dropoff-specific instructions for this leg */
+  dropoffInstructions?: string | null;
   /** HTTPS inspection photo URLs from the platform (pickup phase) */
   pickupPhotos?: string[];
   /** HTTPS inspection photo URLs from the platform (delivery phase) */

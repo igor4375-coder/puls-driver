@@ -29,6 +29,10 @@ export default defineSchema({
     status: v.union(v.literal("active"), v.literal("inactive"), v.literal("suspended")),
     pushToken: v.optional(v.string()),
     monthlyRevenueGoal: v.optional(v.number()),
+    /** When true, surfaces the "Linked Accounts" UI in profile/settings so this
+     *  driver can sign in to a second Clerk account and swap between them with
+     *  one tap. Off by default; flip to true per-driver as needed. */
+    multiAccountEnabled: v.optional(v.boolean()),
   })
     .index("by_clerkUserId", ["clerkUserId"])
     .index("by_driverCode", ["driverCode"])

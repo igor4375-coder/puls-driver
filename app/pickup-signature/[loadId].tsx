@@ -34,7 +34,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useColors } from "@/hooks/use-colors";
 import { useLoads } from "@/lib/loads-context";
 import { useAuth } from "@/lib/auth-context";
-import { useAction, useMutation } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useSettings } from "@/lib/settings-context";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
@@ -252,9 +252,8 @@ const optStyles = StyleSheet.create({
 export default function PickupSignatureScreen() {
   const colors = useColors();
   const { loadId } = useLocalSearchParams<{ loadId: string }>();
-  const { loads, updateLoadStatus } = useLoads();
+  const { loads, updateLoadStatus, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
-  const markAsPickedUpAction = useAction(api.platform.markAsPickedUp);
   const saveSignatureMutation = useMutation(api.signatures.save);
   const { settings, setDriverSignaturePaths } = useSettings();
 
@@ -319,58 +318,105 @@ export default function PickupSignatureScreen() {
       : null;
 
     if (isPlatformLoad && platformTripId && driverCode) {
-      (async () => {
-        try {
-          const urls: string[] = [];
-          for (const v of load.vehicles) {
-            const vUrls = await photoQueue.flushAndGetUrls(load.id, v.id);
-            urls.push(...vUrls);
-          }
-          const existingHttp = load.vehicles.flatMap(
-            (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
-          );
-          const pickupPhotos = [...new Set([...existingHttp, ...urls])];
-          const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+      // v71+: switched from a fire-and-forget IIFE that awaited
+      // `flushAndGetUrls` (could block forever on stuck uploads, and
+      // any network failure was lost) to the persistent platform-sync
+      // queue. markAsPickedUp goes out immediately with whatever URLs
+      // are HTTPS now, then ONE photo-deferred syncInspection per
+      // vehicle waits for every photo to reach HTTPS before firing.
+      const pickupTime = new Date().toISOString();
+      const customerSigStr = hasCustomerSig ? serializePaths(customerPaths) : undefined;
+      const firstVehicle = load.vehicles[0];
+      const firstInspection = firstVehicle?.pickupInspection;
+      const allDamages = load.vehicles.flatMap(
+        (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
+          id: d.id,
+          zone: d.zone,
+          type: d.type,
+          severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView,
+          note: d.description || undefined,
+        }))
+      );
+      const existingHttp = load.vehicles.flatMap(
+        (v) => (v.pickupInspection?.photos ?? []).filter((p) => p.startsWith("http"))
+      );
+      const immediateUrls = [
+        ...new Set([...existingHttp, ...photoQueue.getUploadedUrls(load.id)]),
+      ];
+      const pickupPhotoExpectedCount = load.vehicles.reduce(
+        (sum, v) => sum + (v.pickupInspection?.photos?.length ?? 0),
+        0,
+      );
 
-          const allDamages = load.vehicles.flatMap(
-            (v) => (v.pickupInspection?.damages ?? []).map((d) => ({
-              id: d.id,
-              zone: d.zone,
-              type: d.type,
-              severity: d.severity,
-              x: d.xPct != null ? d.xPct / 100 : 0.5,
-              y: d.yPct != null ? d.yPct / 100 : 0.5,
-              diagramView: d.diagramView,
-              note: d.description || undefined,
-            }))
-          );
-          const firstVehicle = load.vehicles[0];
-          const firstInspection = firstVehicle?.pickupInspection;
+      queuePlatformSync({
+        type: "markAsPickedUp",
+        args: {
+          loadNumber: load.loadNumber,
+          legId: platformTripId,
+          driverCode,
+          pickupTime,
+          pickupGPS: {
+            lat: firstInspection?.locationLat ?? 0,
+            lng: firstInspection?.locationLng ?? 0,
+          },
+          pickupPhotos: immediateUrls,
+          ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+          ...(customerSigStr ? { customerSig: customerSigStr } : {}),
+          ...(driverSigStr ? { driverSig: driverSigStr } : {}),
+          customerNotAvailable: isNotAvailable,
+          damages: allDamages,
+          noDamage: allDamages.length === 0,
+          vehicleVin: firstVehicle?.vin || "",
+          pickupPhotoUploadedCount: immediateUrls.length,
+          pickupPhotoExpectedCount,
+        },
+      });
 
-          await markAsPickedUpAction({
+      for (const v of load.vehicles) {
+        const insp = v.pickupInspection;
+        if (!insp) continue;
+        const allPhotoUris = insp.photos ?? [];
+        const photoClientIds = allPhotoUris
+          .map((uri) => photoQueue.getClientIdForUri(uri))
+          .filter((id): id is string => !!id);
+        const httpsAlready = allPhotoUris.filter((p) => p.startsWith("http"));
+        const vehicleDamages = (insp.damages ?? []).map((d) => ({
+          id: d.id, zone: d.zone, type: d.type, severity: d.severity,
+          x: d.xPct != null ? d.xPct / 100 : 0.5,
+          y: d.yPct != null ? d.yPct / 100 : 0.5,
+          diagramView: d.diagramView, note: d.description || undefined,
+        }));
+        queuePlatformSync({
+          type: "syncInspection",
+          args: {
             loadNumber: load.loadNumber,
             legId: platformTripId,
             driverCode,
-            pickupTime: new Date().toISOString(),
-            pickupGPS: {
-              lat: firstInspection?.locationLat ?? 0,
-              lng: firstInspection?.locationLng ?? 0,
+            inspectionType: "pickup",
+            vehicleVin: v.vin || "",
+            photos: httpsAlready,
+            photoClientIds,
+            damages: vehicleDamages,
+            noDamage: insp.noDamage ?? (vehicleDamages.length === 0),
+            gps: {
+              lat: insp.locationLat ?? 0,
+              lng: insp.locationLng ?? 0,
             },
-            pickupPhotos,
-            ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
-            ...(customerSigStr ? { customerSig: customerSigStr } : {}),
-            ...(driverSigStr ? { driverSig: driverSigStr } : {}),
-            customerNotAvailable: isNotAvailable,
-            damages: allDamages,
-            noDamage: allDamages.length === 0,
-            vehicleVin: firstVehicle?.vin || "",
-          });
-        } catch (err) {
-          console.warn("[PickupSignature] Platform sync failed:", err);
-        }
-      })();
+            timestamp: insp.completedAt ?? pickupTime,
+            notes: insp.notes || undefined,
+            photoUploadedCount: httpsAlready.length,
+            photoExpectedCount: allPhotoUris.length,
+            ...(insp.additionalInspection
+              ? { additionalInspection: insp.additionalInspection }
+              : {}),
+          },
+        });
+      }
     }
-  }, [load, isConfirming, customerNotAvailable, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, driverCode, updateLoadStatus, saveSignatureMutation, markAsPickedUpAction]);
+  }, [load, isConfirming, customerNotAvailable, hasCustomerSig, hasDriverSig, customerPaths, driverPaths, driverCode, updateLoadStatus, saveSignatureMutation, queuePlatformSync]);
 
   /**
    * Called when driver confirms their signature on the driver_sig step.

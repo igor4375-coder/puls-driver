@@ -531,6 +531,40 @@ export default function InspectionScreen() {
       ? vehicle?.deliveryInspection?.photos ?? []
       : vehicle?.pickupInspection?.photos ?? []
   );
+
+  // Stay in sync with the underlying inspection record so the background
+  // local→HTTPS swap (run by the loads context) shows up here too. We only
+  // adopt the record when our local edits are a subset of it (i.e. user
+  // hasn't just added or removed photos that haven't been saved yet).
+  const recordPhotos = isDelivery
+    ? vehicle?.deliveryInspection?.photos ?? []
+    : vehicle?.pickupInspection?.photos ?? [];
+  const recordPhotosKey = recordPhotos.join("|");
+  useEffect(() => {
+    setPhotos((prev) => {
+      // Same-length swap: replace any local-only entries with HTTPS
+      // counterparts at the same index.
+      if (prev.length === recordPhotos.length) {
+        let changed = false;
+        const merged = prev.map((u, i) => {
+          if (u.startsWith("http")) return u;
+          const next = recordPhotos[i];
+          if (next?.startsWith("http")) {
+            changed = true;
+            return next;
+          }
+          return u;
+        });
+        return changed ? merged : prev;
+      }
+      // If the record has strictly more photos and includes everything we
+      // have, adopt the record (e.g., another tab added photos).
+      const allPrevInRecord = prev.every((u) => recordPhotos.includes(u));
+      if (allPrevInRecord && recordPhotos.length > prev.length) return recordPhotos;
+      return prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordPhotosKey]);
   const [notes, setNotes] = useState(
     isDelivery
       ? vehicle?.deliveryInspection?.notes ?? ""
@@ -589,12 +623,22 @@ export default function InspectionScreen() {
     return unsub;
   }, []);
 
-  // Compute upload stats for this vehicle's photos
+  // Compute upload stats for this vehicle's photos.
+  // v65+: stuck-pending entries count as failed (same logic as the
+  // sync-status banner and per-load card) so the inspection screen
+  // surfaces "real" failures rather than spinning forever.
   const vehicleQueueEntries = queueEntries.filter(
     (e) => e.loadId === loadId && e.vehicleId === vehicleId
   );
-  const failedUploads = vehicleQueueEntries.filter((e) => e.status === "failed").length;
-  const pendingUploads = vehicleQueueEntries.filter((e) => e.status === "pending" || e.status === "uploading").length;
+  const uploadNow = Date.now();
+  const failedUploads = vehicleQueueEntries.filter(
+    (e) => e.status === "failed" || photoQueue.isStuckPending(e, uploadNow),
+  ).length;
+  const pendingUploads = vehicleQueueEntries.filter(
+    (e) =>
+      (e.status === "pending" || e.status === "uploading") &&
+      !photoQueue.isStuckPending(e, uploadNow),
+  ).length;
   const doneUploads = vehicleQueueEntries.filter((e) => e.status === "done").length;
 
   const handleRetryUploads = async () => {
@@ -673,13 +717,11 @@ export default function InspectionScreen() {
               : undefined,
             vin: vehicle?.vin ?? undefined,
           });
-          photoQueue.enqueue({
-            localUri: stamped,
+          await photoQueue.enqueue(stamped, {
             loadId,
             vehicleId,
+            loadNumber: load?.loadNumber,
             inspectionType: isDelivery ? "delivery" : "pickup",
-            zone: damage.zone,
-            damageId: damage.id,
           });
           stampedUris.push(stamped);
         }
@@ -784,15 +826,38 @@ export default function InspectionScreen() {
     const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
 
     (async () => {
-      let uploadedPhotoUrls: string[] = [];
+      let flushResult: { urls: string[]; uploadedUrls: string[]; pendingClientIds: string[] } = {
+        urls: photos,
+        uploadedUrls: photos.filter((p) => p.startsWith("http")),
+        pendingClientIds: [],
+      };
       try {
-        uploadedPhotoUrls = await photoQueue.flushAndGetUrls(loadId, vehicleId);
+        flushResult = await photoQueue.flushAndGetResult(loadId, vehicleId);
       } catch {
         photoQueue.flushForVehicle(loadId, vehicleId).catch(() => {});
       }
 
-      const existingS3Urls = photos.filter((p) => p.startsWith("http"));
-      const allUploadedPhotos = [...new Set([...existingS3Urls, ...uploadedPhotoUrls])];
+      // Merge any extras the user added that aren't tracked by the queue.
+      const queueUriSet = new Set<string>();
+      for (const cid of flushResult.pendingClientIds) {
+        const entry = photoQueue.getEntries().find((e) => e.clientId === cid);
+        if (entry) queueUriSet.add(entry.localUri);
+      }
+      for (const u of flushResult.uploadedUrls) queueUriSet.add(u);
+      const extraPhotos = photos.filter((p) => !queueUriSet.has(p));
+      const allPhotos = [...flushResult.urls, ...extraPhotos];
+      const allUploadedPhotos = [
+        ...new Set([...flushResult.uploadedUrls, ...extraPhotos.filter((p) => p.startsWith("http"))]),
+      ];
+
+      // Patch the local inspection record with the freshest URI list (HTTPS
+      // where uploaded, permanent local path otherwise) so the driver always
+      // sees every captured photo when they reopen the inspection later.
+      if (isDelivery) {
+        saveDeliveryInspection(loadId, vehicleId, { ...inspection, photos: allPhotos });
+      } else {
+        savePickupInspection(loadId, vehicleId, { ...inspection, photos: allPhotos });
+      }
 
       if (isPlatformLoad && platformTripId && driverCode && vehicle) {
         try {
@@ -838,6 +903,10 @@ export default function InspectionScreen() {
               gps: { lat: locationLat ?? 0, lng: locationLng ?? 0 },
               timestamp: new Date().toISOString(),
               notes: notes || undefined,
+              // v69+: counts so dispatch can render "X / Y uploaded"
+              // until the backfill fills in the rest.
+              photoUploadedCount: allUploadedPhotos.length,
+              photoExpectedCount: allPhotos.length,
               ...(isDelivery && handoffNote.trim() ? { handoffNote: handoffNote.trim() } : {}),
               ...(Object.keys(additionalData).length > 0 && { additionalInspection: additionalData }),
             },
@@ -895,28 +964,49 @@ export default function InspectionScreen() {
       };
       savePickupInspection(loadId, vehicleId, inspection);
 
-      // 3. Upload photos via the unified photo queue (handles compression + retry)
-      let uploadedUrls: string[] = [];
+      // 3. Flush uploads. Result keeps EVERY photo visible: HTTPS where the
+      // upload finished, permanent local path otherwise. Never drops photos
+      // silently — a background follow-up will swap local→HTTPS as
+      // stragglers finish uploading.
+      let flushResult: { urls: string[]; uploadedUrls: string[]; pendingClientIds: string[] } = {
+        urls: photos,
+        uploadedUrls: photos.filter((p) => p.startsWith("http")),
+        pendingClientIds: [],
+      };
       try {
-        uploadedUrls = await photoQueue.flushAndGetUrls(loadId, vehicleId);
+        flushResult = await photoQueue.flushAndGetResult(loadId, vehicleId);
       } catch (flushErr) {
         console.warn("[CompletePickup] Photo flush failed, retrying in background:", flushErr);
         photoQueue.flushForVehicle(loadId, vehicleId).catch(() => {});
       }
-      const existingS3Urls = photos.filter((p) => p.startsWith("http"));
-      uploadedUrls = [...new Set([...existingS3Urls, ...uploadedUrls])];
+      // Merge with anything already on the photos[] state that doesn't
+      // correspond to a queue entry (legacy URLs, manually-added images).
+      const queueUriSet = new Set<string>();
+      for (const cid of flushResult.pendingClientIds) {
+        const entry = photoQueue.getEntries().find((e) => e.clientId === cid);
+        if (entry) queueUriSet.add(entry.localUri);
+      }
+      for (const u of flushResult.uploadedUrls) queueUriSet.add(u);
+      const extraPhotos = photos.filter((p) => !queueUriSet.has(p));
+      const allPhotos = [...flushResult.urls, ...extraPhotos];
+      const allUploadedUrls = [
+        ...new Set([...flushResult.uploadedUrls, ...extraPhotos.filter((p) => p.startsWith("http"))]),
+      ];
 
-      if (uploadedUrls.length === 0) {
+      if (allPhotos.length === 0) {
         Alert.alert(
-          "Upload Failed",
-          "Could not upload inspection photos. Please check your connection and try again."
+          "No Photos",
+          "Please take at least one inspection photo before completing pickup."
         );
         setCompleting(false);
         return;
       }
 
-      // 3b. Persist S3 URLs back into the inspection so deferred sync (field pickups) can use them
-      savePickupInspection(loadId, vehicleId, { ...inspection, photos: uploadedUrls });
+      // 3b. Persist back into the inspection. We keep ALL photos (HTTPS or
+      // local) so the driver can always view them. Background queue retries
+      // will eventually replace local paths with HTTPS, then re-sync.
+      savePickupInspection(loadId, vehicleId, { ...inspection, photos: allPhotos });
+      const uploadedUrls = allUploadedUrls;
 
       // 4. Mark load status locally
       updateLoadStatus(loadId, "picked_up");
@@ -976,6 +1066,8 @@ export default function InspectionScreen() {
             damages: syncDamages,
             noDamage,
             vehicleVin: vehicle?.vin || "",
+            pickupPhotoUploadedCount: uploadedUrls.length,
+            pickupPhotoExpectedCount: allPhotos.length,
             ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
           },
         });
@@ -994,6 +1086,8 @@ export default function InspectionScreen() {
             gps: { lat: gpsLat, lng: gpsLng },
             timestamp: new Date().toISOString(),
             notes: notes || undefined,
+            photoUploadedCount: uploadedUrls.length,
+            photoExpectedCount: allPhotos.length,
             ...(Object.keys(additionalData).length > 0 ? { additionalInspection: additionalData } : {}),
           },
         });
@@ -1050,7 +1144,7 @@ export default function InspectionScreen() {
             <Text style={[styles.vehicleInfoText, { color: colors.foreground }]}>
               {vehicle.year} {vehicle.make} {vehicle.model} · {vehicle.color}
             </Text>
-            <Text style={[styles.vehicleVin, { color: colors.muted }]}>VIN: {vehicle.vin}</Text>
+            <Text style={[styles.vehicleVin, { color: colors.foreground }]}>VIN: {vehicle.vin}</Text>
             {scannedVehicleInfo && (
               <View style={[styles.vinScannedBadge, { backgroundColor: colors.success + "18" }]}>
                 <IconSymbol name="checkmark.circle.fill" size={12} color={colors.success} />
@@ -1605,9 +1699,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   vehicleVin: {
-    fontSize: 11,
-    marginTop: 2,
-    letterSpacing: 0.3,
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 3,
+    letterSpacing: 0.4,
   },
   section: {
     padding: 16,

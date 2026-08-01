@@ -225,7 +225,7 @@ export default function FieldPickupReportScreen() {
             <IconSymbol name="car.fill" size={20} color={colors.primary} />
             <View style={{ flex: 1, marginLeft: 10 }}>
               <Text style={[styles.vehicleTitle, { color: colors.text }]}>{vehicleLabel}</Text>
-              <Text style={[styles.vehicleVin, { color: colors.muted }]}>VIN: {params.vin}</Text>
+              <Text style={[styles.vehicleVin, { color: colors.foreground }]}>VIN: {params.vin}</Text>
               {params.bodyType ? (
                 <Text style={[styles.vehicleVin, { color: colors.muted }]}>
                   {[params.bodyType, params.trim].filter(Boolean).join(" · ")}
@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   vehicleTitle: { fontSize: 16, fontWeight: "700" },
-  vehicleVin: { fontSize: 13, marginTop: 2 },
+  vehicleVin: { fontSize: 14, fontWeight: "600", marginTop: 3, letterSpacing: 0.4 },
   section: {
     padding: 14,
     borderRadius: 10,

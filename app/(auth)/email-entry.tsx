@@ -10,7 +10,7 @@ import {
   Platform,
   ScrollView,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
@@ -19,6 +19,11 @@ import { useColors } from "@/hooks/use-colors";
 
 export default function EmailEntryScreen() {
   const colors = useColors();
+  const params = useLocalSearchParams<{ mode?: string }>();
+  // When entered via the multi-account "Add another account" button, we don't
+  // want to bounce the already-signed-in user back to (tabs) — they're here
+  // intentionally to add a second session.
+  const isAddMode = params.mode === "add";
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -30,11 +35,12 @@ export default function EmailEntryScreen() {
   const clerk = useClerk();
 
   useEffect(() => {
+    if (isAddMode) return;
     if (isSignedIn) {
       while (router.canGoBack()) router.back();
       setTimeout(() => router.replace("/(tabs)"), 100);
     }
-  }, [isSignedIn]);
+  }, [isSignedIn, isAddMode]);
 
   const isValidEmail = () => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -108,6 +114,7 @@ export default function EmailEntryScreen() {
                 isExistingUser: "1",
                 flow: "signIn",
                 method: "email",
+                ...(isAddMode ? { mode: "add" } : {}),
               },
             });
             return;
@@ -187,6 +194,7 @@ export default function EmailEntryScreen() {
           isExistingUser: "0",
           flow: "signUp",
           method: "email",
+          ...(isAddMode ? { mode: "add" } : {}),
         },
       });
     } catch (err: any) {
