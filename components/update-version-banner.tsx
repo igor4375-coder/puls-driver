@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v77-app-store-build";
+const BUILD_TAG = "v78-iphone-only";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
