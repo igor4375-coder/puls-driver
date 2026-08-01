@@ -333,7 +333,7 @@ export function VehicleInspectionModal({ visible, vehicleLabel, vin, initialData
         setPhotos((prev) => [...prev, ...newPhotos]);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       },
-      { vehicleId: vin }
+      { vehicleId: vin, inspectionType: "pickup" }
     );
     router.push("/camera-session");
   };

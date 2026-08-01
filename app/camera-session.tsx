@@ -196,7 +196,18 @@ export default function CameraSessionScreen() {
       if (photo?.uri) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-        const inspType = meta?.inspectionType === "delivery" ? "Delivery Condition" : "Pickup Condition";
+        // Prefer explicit meta.inspectionType; fall back to ?type= on nextRoute
+        // so delivery stamps never default to "Pickup Condition" by accident.
+        const resolvedType =
+          meta?.inspectionType === "delivery" || meta?.inspectionType === "pickup"
+            ? meta.inspectionType
+            : meta?.nextRoute?.includes("type=delivery")
+              ? "delivery"
+              : meta?.nextRoute?.includes("type=pickup")
+                ? "pickup"
+                : undefined;
+        const inspType =
+          resolvedType === "delivery" ? "Delivery Condition" : "Pickup Condition";
         const stampMeta: StampMeta = {
           driverCode: driver?.driverCode,
           companyName: sessionLoad?.orgName ?? "Puls Dispatch",
@@ -212,12 +223,7 @@ export default function CameraSessionScreen() {
           loadId: meta?.loadId,
           vehicleId: meta?.vehicleId,
           loadNumber: sessionLoad?.loadNumber ?? undefined,
-          inspectionType:
-            meta?.inspectionType === "delivery"
-              ? "delivery"
-              : meta?.inspectionType === "pickup"
-                ? "pickup"
-                : undefined,
+          inspectionType: resolvedType,
           stampMeta,
         });
         setItems((prev) => [
@@ -248,16 +254,19 @@ export default function CameraSessionScreen() {
     try {
       const video = await cameraRef.current.recordAsync({ maxDuration: 30 });
       if (video?.uri) {
+        const resolvedType =
+          meta?.inspectionType === "delivery" || meta?.inspectionType === "pickup"
+            ? meta.inspectionType
+            : meta?.nextRoute?.includes("type=delivery")
+              ? "delivery"
+              : meta?.nextRoute?.includes("type=pickup")
+                ? "pickup"
+                : undefined;
         const entry = await photoQueue.enqueue(video.uri, {
           loadId: meta?.loadId,
           vehicleId: meta?.vehicleId,
           loadNumber: sessionLoad?.loadNumber ?? undefined,
-          inspectionType:
-            meta?.inspectionType === "delivery"
-              ? "delivery"
-              : meta?.inspectionType === "pickup"
-                ? "pickup"
-                : undefined,
+          inspectionType: resolvedType,
         });
         setItems((prev) => [
           ...prev,

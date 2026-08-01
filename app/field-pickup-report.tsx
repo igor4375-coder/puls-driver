@@ -124,6 +124,7 @@ export default function FieldPickupReportScreen() {
       vehicleId: vehicle.id,
       nextRoute: `/inspection/${load.id}/${vehicle.id}`,
       pickupConfirm: true,
+      inspectionType: "pickup",
     });
     router.dismissAll();
     router.replace("/camera-session" as any);

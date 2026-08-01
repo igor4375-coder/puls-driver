@@ -410,7 +410,10 @@ export default function AddLoadScreen() {
 
   // Photo session — navigates to dedicated /camera-session route to avoid iOS nested-modal blocking
   const handleRequestPhotoSession = React.useCallback((addPhotos: (uris: string[]) => void) => {
-    cameraSessionStore.open(addPhotos, { vehicleId: inspectionVehicle?.vin });
+    cameraSessionStore.open(addPhotos, {
+      vehicleId: inspectionVehicle?.vin,
+      inspectionType: "pickup",
+    });
     router.push("/camera-session");
   }, [inspectionVehicle?.vin])
 

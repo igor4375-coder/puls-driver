@@ -260,6 +260,7 @@ function VehicleCard({
         loadId,
         vehicleId: vehicle.id,
         nextRoute: `/inspection-review/${loadId}/${vehicle.id}?type=${inspectionTypeForVehicle}`,
+        inspectionType: inspectionTypeForVehicle,
       });
       router.push("/camera-session" as any);
     }
@@ -810,6 +811,7 @@ export default function LoadDetailScreen() {
                 vehicleId: vehicle.id,
                 nextRoute: `/inspection/${load.id}/${vehicle.id}`,
                 pickupConfirm: true,
+                inspectionType: "pickup",
               });
               router.push("/camera-session" as any);
             },
