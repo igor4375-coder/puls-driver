@@ -146,6 +146,12 @@ const config: ExpoConfig = {
         },
         ios: {
           deploymentTarget: "15.5",
+          // Clerk Google Sign-In pulls AppCheckCore (Swift), which needs modular
+          // headers on these ObjC pods when linking as static libraries.
+          extraPods: [
+            { name: "GoogleUtilities", modular_headers: true },
+            { name: "RecaptchaInterop", modular_headers: true },
+          ],
         },
       },
     ],
