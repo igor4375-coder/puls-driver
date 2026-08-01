@@ -28,13 +28,15 @@
     "store": {
       "ios": {
         "appleId": "rico@prairieautotransport.com",
-        "appleTeamId": "4Z7TYAR6MB"
+        "appleTeamId": "4Z7TYAR6MB",
+        "ascAppId": "6761962456"
       }
     },
     "production": {
       "ios": {
         "appleId": "rico@prairieautotransport.com",
-        "appleTeamId": "4Z7TYAR6MB"
+        "appleTeamId": "4Z7TYAR6MB",
+        "ascAppId": "6761962456"
       }
     }
   }
