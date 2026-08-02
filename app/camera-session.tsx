@@ -40,6 +40,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { photoQueue, type PhotoQueueEntry, type StampMeta } from "@/lib/photo-queue";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { getCurrentGPS, reverseGeocodeCoords, type GPSCoords } from "@/lib/photo-stamp";
+import { finalizePhotoProgress } from "@/lib/inspection-photo-progress";
 import { useAuth } from "@/lib/auth-context";
 import { useLoads } from "@/lib/loads-context";
 
@@ -81,6 +82,13 @@ export default function CameraSessionScreen() {
   const meta = cameraSessionStore.getMeta();
   const sessionLoad = meta?.loadId ? getLoad(meta.loadId) : null;
   const sessionVehicle = sessionLoad?.vehicles.find((v) => v.id === meta?.vehicleId);
+  const progressLegId =
+    (sessionLoad as { platformTripId?: number | string } | null)?.platformTripId ??
+    (meta?.loadId?.startsWith("platform-")
+      ? meta.loadId.replace("platform-", "")
+      : undefined);
+  const progressDriverCode =
+    driver?.platformDriverCode ?? driver?.driverCode ?? undefined;
 
   // ── Fetch GPS once when screen mounts ────────────────────────────────────
   useEffect(() => {
@@ -148,6 +156,30 @@ export default function CameraSessionScreen() {
     }
   }, [items]);
 
+  const settleProgressOnCancel = useCallback(() => {
+    const resolvedType =
+      meta?.inspectionType === "delivery" || meta?.inspectionType === "pickup"
+        ? meta.inspectionType
+        : meta?.nextRoute?.includes("type=delivery")
+          ? "delivery"
+          : meta?.nextRoute?.includes("type=pickup")
+            ? "pickup"
+            : undefined;
+    if (
+      progressLegId != null &&
+      progressLegId !== "" &&
+      progressDriverCode &&
+      (resolvedType === "pickup" || resolvedType === "delivery")
+    ) {
+      finalizePhotoProgress({
+        legId: progressLegId,
+        driverCode: progressDriverCode,
+        inspectionType: resolvedType,
+        loadNumber: sessionLoad?.loadNumber,
+      });
+    }
+  }, [meta, progressLegId, progressDriverCode, sessionLoad?.loadNumber]);
+
   const handleCancel = useCallback(() => {
     if (items.length > 0) {
       Alert.alert(
@@ -162,6 +194,7 @@ export default function CameraSessionScreen() {
               for (const item of items) {
                 if (item.clientId) photoQueue.remove(item.clientId).catch(() => {});
               }
+              settleProgressOnCancel();
               cameraSessionStore.cancel();
               router.back();
             },
@@ -169,10 +202,11 @@ export default function CameraSessionScreen() {
         ]
       );
     } else {
+      settleProgressOnCancel();
       cameraSessionStore.cancel();
       router.back();
     }
-  }, [items.length]);
+  }, [items, settleProgressOnCancel]);
 
   const handleTakePhoto = useCallback(async () => {
     if (taking || !cameraRef.current) return;
@@ -225,6 +259,8 @@ export default function CameraSessionScreen() {
           loadNumber: sessionLoad?.loadNumber ?? undefined,
           inspectionType: resolvedType,
           stampMeta,
+          progressLegId,
+          progressDriverCode,
         });
         setItems((prev) => [
           ...prev,
@@ -236,7 +272,7 @@ export default function CameraSessionScreen() {
     } finally {
       setTaking(false);
     }
-  }, [taking, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle]);
+  }, [taking, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle, progressLegId, progressDriverCode]);
 
   const handleStartRecording = useCallback(async () => {
     if (recording || !cameraRef.current || Platform.OS === "web") return;
@@ -267,6 +303,8 @@ export default function CameraSessionScreen() {
           vehicleId: meta?.vehicleId,
           loadNumber: sessionLoad?.loadNumber ?? undefined,
           inspectionType: resolvedType,
+          progressLegId,
+          progressDriverCode,
         });
         setItems((prev) => [
           ...prev,
@@ -284,7 +322,7 @@ export default function CameraSessionScreen() {
         recordTimerRef.current = null;
       }
     }
-  }, [recording, meta]);
+  }, [recording, meta, sessionLoad?.loadNumber, progressLegId, progressDriverCode]);
 
   const handleShutter = useCallback(() => {
     if (mode === "photo") {

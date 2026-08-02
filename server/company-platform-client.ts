@@ -398,6 +398,28 @@ export async function syncInspection(
   );
 }
 
+export interface ReportInspectionPhotoProgressInput {
+  legId: number | string;
+  driverCode: string;
+  inspectionType: "pickup" | "delivery";
+  photoUploadedCount: number;
+  photoExpectedCount: number;
+  photos?: string[];
+  finalize?: boolean;
+  loadNumber?: string;
+}
+
+/** Live upload progress while the driver is still capturing. */
+export async function reportInspectionPhotoProgress(
+  input: ReportInspectionPhotoProgressInput
+): Promise<{ success: boolean }> {
+  return callTRPC<{ success: boolean }>(
+    "driversApi.reportInspectionPhotoProgress",
+    input,
+    "mutation"
+  );
+}
+
 /**
  * Mark a vehicle as delivered on the company platform.
  * Uses the same field mapping pattern as markAsPickedUp.

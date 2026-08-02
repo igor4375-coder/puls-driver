@@ -16,6 +16,10 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Network from "expo-network";
 import { AppState, type AppStateStatus, Platform } from "react-native";
 import { compressImage } from "./image-compress";
+import {
+  reportPhotoCaptured,
+  reportPhotoUploaded,
+} from "./inspection-photo-progress";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +57,13 @@ export interface PhotoQueueEntry {
    * by default in lookups that need it).
    */
   inspectionType?: "pickup" | "delivery";
+  /**
+   * v80+: platform leg id + driver code for live progress drips to
+   * driversApi.reportInspectionPhotoProgress. Optional — absent on
+   * local-only / add-load photos and pre-v80 persisted entries.
+   */
+  progressLegId?: number | string;
+  progressDriverCode?: string;
   createdAt: number;
   stampMeta?: StampMeta;
   stamped?: boolean;
@@ -541,6 +552,9 @@ export class PhotoQueue {
       loadNumber?: string;
       inspectionType?: "pickup" | "delivery";
       stampMeta?: StampMeta;
+      /** Platform leg id for live dispatch progress (v80+) */
+      progressLegId?: number | string;
+      progressDriverCode?: string;
     }
   ): Promise<PhotoQueueEntry> {
     await this.load();
@@ -579,6 +593,8 @@ export class PhotoQueue {
       vehicleId: meta?.vehicleId,
       loadNumber: meta?.loadNumber,
       inspectionType: meta?.inspectionType,
+      progressLegId: meta?.progressLegId,
+      progressDriverCode: meta?.progressDriverCode,
       createdAt: Date.now(),
       stampMeta: meta?.stampMeta,
       stamped: !meta?.stampMeta,
@@ -591,6 +607,22 @@ export class PhotoQueue {
     // either. Otherwise the in-memory state has the photo but the
     // persisted state doesn't yet.
     this.persist().catch(() => {});
+
+    // v80+: bump expected count on the company platform immediately so
+    // Trip Details shows "0 / N uploaded" while the PUT is in flight.
+    if (
+      entry.progressLegId != null &&
+      entry.progressLegId !== "" &&
+      entry.progressDriverCode &&
+      (entry.inspectionType === "pickup" || entry.inspectionType === "delivery")
+    ) {
+      reportPhotoCaptured({
+        legId: entry.progressLegId,
+        driverCode: entry.progressDriverCode,
+        inspectionType: entry.inspectionType,
+        loadNumber: entry.loadNumber,
+      });
+    }
 
     // Kick off network upload in background — does NOT block the caller.
     this.uploadEntry(entry).catch(() => {});
@@ -829,6 +861,24 @@ export class PhotoQueue {
         lastAttemptAt: Date.now(),
         attempts: entry.attempts + 1,
       });
+
+      // v80+: drip uploaded count + URL to dispatch Trip Details.
+      if (
+        entry.progressLegId != null &&
+        entry.progressLegId !== "" &&
+        entry.progressDriverCode &&
+        (entry.inspectionType === "pickup" || entry.inspectionType === "delivery")
+      ) {
+        reportPhotoUploaded(
+          {
+            legId: entry.progressLegId,
+            driverCode: entry.progressDriverCode,
+            inspectionType: entry.inspectionType,
+            loadNumber: entry.loadNumber,
+          },
+          publicUrl,
+        );
+      }
 
       // Step 3: Fire-and-forget async stamp on the server.
       // v65+: drop stampMeta from the entry once stamping succeeds.

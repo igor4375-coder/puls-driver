@@ -722,6 +722,10 @@ export default function InspectionScreen() {
             vehicleId,
             loadNumber: load?.loadNumber,
             inspectionType: isDelivery ? "delivery" : "pickup",
+            progressLegId: loadId.startsWith("platform-")
+              ? (load?.platformTripId ?? loadId.replace("platform-", ""))
+              : undefined,
+            progressDriverCode: driverCode || undefined,
           });
           stampedUris.push(stamped);
         }

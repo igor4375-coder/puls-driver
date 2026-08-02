@@ -190,6 +190,27 @@ export const syncInspection = action({
   },
 });
 
+/**
+ * Live drip of inspection photo upload progress while the driver is
+ * still capturing (before Confirm). Mirrors Puls Dispatch Mobile's
+ * loads.reportInspectionPhotoProgress via the company platform HTTP API.
+ */
+export const reportInspectionPhotoProgress = action({
+  args: {
+    legId: v.union(v.number(), v.string()),
+    driverCode: v.string(),
+    inspectionType: v.union(v.literal("pickup"), v.literal("delivery")),
+    photoUploadedCount: v.number(),
+    photoExpectedCount: v.number(),
+    photos: v.optional(v.array(v.string())),
+    finalize: v.optional(v.boolean()),
+    loadNumber: v.optional(v.string()),
+  },
+  handler: async (_ctx, args) => {
+    return await callTRPC("driversApi.reportInspectionPhotoProgress", args, "mutation");
+  },
+});
+
 export const markAsPickedUp = action({
   args: {
     loadNumber: v.string(),
