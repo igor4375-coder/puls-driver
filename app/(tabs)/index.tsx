@@ -36,8 +36,6 @@ import {
 } from "@/lib/data";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
-import { useQuery as useConvexQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { trpc } from "@/lib/trpc";
 import { useSettings } from "@/lib/settings-context";
@@ -475,7 +473,7 @@ function FAB({ onAddLoad, onScanVIN }: { onAddLoad: () => void; onScanVIN: () =>
 
 export default function LoadsScreen() {
   const colors = useColors();
-  const { canViewRates } = usePermissions();
+  const { canViewRates, exclusive: platformExclusive, refresh: refreshPermissions } = usePermissions();
   const { loads, isLoadingPlatformLoads, platformLoadError, lastSyncedAt, refreshPlatformLoads, refreshDeliveredLoads, deleteLoad, clearNonPlatformLoads, archiveAllDelivered, archiveSingleLoad, clearAllArchived, updateLoadStatus } = useLoads();
 
   const handleDeleteLoad = useCallback((load: Load) => {
@@ -549,10 +547,6 @@ export default function LoadsScreen() {
     }
     return map;
   }, [queueEntries]);
-  const exclusiveStatus = useConvexQuery(
-    api.companies.hasExclusiveLink,
-    driver?.id ? { clerkUserId: driver.id } : "skip",
-  );
   const [activeTab, setActiveTab] = useState<TabFilter>("new");
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -756,7 +750,7 @@ export default function LoadsScreen() {
         .map((v) => ({ loadId: l.id, vin: v.vin as string, loadNumber: l.loadNumber }))
     );
     setPendingLoadVINs(pendingVINs);
-    setIsExclusiveDriver(exclusiveStatus?.hasExclusive === true);
+    setIsExclusiveDriver(platformExclusive === true);
     setVINLaunchContext("add-load");
     router.push("/vin-scanner" as any);
   };
@@ -863,6 +857,7 @@ export default function LoadsScreen() {
   // Check for a pending highlight signal every time this screen gains focus
   useFocusEffect(
     useCallback(() => {
+      void refreshPermissions();
       const signal = pickupHighlightStore.consume();
       if (signal) {
         // Determine swipe direction based on tab order
@@ -873,7 +868,7 @@ export default function LoadsScreen() {
         playTabPulse(signal.tab);
         showTabToast(signal.message);
       }
-    }, [switchTab, playTabPulse, showTabToast])
+    }, [switchTab, playTabPulse, showTabToast, refreshPermissions])
   );
 
   // One-time swipe hint

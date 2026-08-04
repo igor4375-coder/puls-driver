@@ -47,6 +47,8 @@ export default defineSchema({
     address: v.optional(v.string()),
     dotNumber: v.optional(v.string()),
     logoUrl: v.optional(v.string()),
+    /** Platform org id (Clerk/Convex org) — needed for driversApi.leaveCompany */
+    companyOrgId: v.optional(v.string()),
   }).index("by_companyCode", ["companyCode"]),
 
   driverCompanyLinks: defineTable({

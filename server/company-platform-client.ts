@@ -252,14 +252,17 @@ export async function updateTripStatus(
 // ─── Invite Types ────────────────────────────────────────────────────────────
 
 export interface CompanyPlatformInvite {
-  inviteId: number;
-  companyId: string;
+  inviteId: number | string;
+  companyId?: string;
   companyName: string;
   companyCode: string;
+  companyOrgId?: string;
   companyLocation?: string | null;
   companyProvince?: string | null;
-  invitedAt: string;
+  invitedAt?: string;
+  createdAt?: string;
   message?: string;
+  exclusive?: boolean;
 }
 
 /**
@@ -288,12 +291,26 @@ export async function getPendingInvites(driverCode: string): Promise<CompanyPlat
  * When accepted, the driver appears as Active in the company's Connected Drivers list.
  */
 export async function respondToInvite(input: {
-  inviteId: number;
+  inviteId: number | string;
   accept: boolean;
   driverCode: string;
+  exclusive?: boolean;
 }): Promise<{ message: string; success: boolean }> {
   return callTRPC<{ message: string; success: boolean }>(
     "driversApi.respondToInvite",
+    input,
+    "mutation"
+  );
+}
+
+/** Driver-initiated unlink — clears isActive + exclusive on the platform link. */
+export async function leaveCompany(input: {
+  driverCode: string;
+  companyOrgId?: string;
+  companyCode?: string;
+}): Promise<{ success: boolean; deactivated?: number }> {
+  return callTRPC<{ success: boolean; deactivated?: number }>(
+    "driversApi.leaveCompany",
     input,
     "mutation"
   );

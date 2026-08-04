@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { AppState, type AppStateStatus } from "react-native";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
@@ -9,6 +10,7 @@ interface DriverPermissions {
 
 interface PermissionsContextValue extends DriverPermissions {
   loading: boolean;
+  /** Re-fetch from driversApi.getDriverPermissions (source of truth — do not cache invite data). */
   refresh: () => Promise<void>;
 }
 
@@ -23,6 +25,14 @@ export function usePermissions() {
   return useContext(PermissionsContext);
 }
 
+/**
+ * Polls company-platform getDriverPermissions.
+ *
+ * Carriers can flip exclusive / canViewRates without a push, so we refresh:
+ *   - whenever driverCode changes
+ *   - on every AppState → active (foreground)
+ * Callers (My Companies, Profile) should also call refresh() on screen focus.
+ */
 export function PermissionsProvider({
   driverCode,
   children,
@@ -50,7 +60,8 @@ export function PermissionsProvider({
         exclusive: result.exclusive,
       });
     } catch {
-      setPermissions({ canViewRates: true, exclusive: false });
+      // Keep last-known values on transient failures — don't flip rates/exclusive
+      // to defaults mid-session just because the network blipped.
     } finally {
       setLoading(false);
     }
@@ -58,7 +69,15 @@ export function PermissionsProvider({
 
   useEffect(() => {
     setLoading(true);
-    refresh();
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const onChange = (next: AppStateStatus) => {
+      if (next === "active") void refresh();
+    };
+    const sub = AppState.addEventListener("change", onChange);
+    return () => sub.remove();
   }, [refresh]);
 
   return (

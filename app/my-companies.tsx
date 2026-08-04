@@ -7,23 +7,27 @@ import {
   Alert,
   StyleSheet,
   RefreshControl,
+  Platform,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { useAuth } from "@/lib/auth-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useState, useCallback } from "react";
-import { Platform } from "react-native";
+import { usePermissions } from "@/lib/permissions-context";
 
 export default function MyCompaniesScreen() {
   const colors = useColors();
   const { driver } = useAuth();
+  const { exclusive: platformExclusive, refresh: refreshPermissions } = usePermissions();
 
   const clerkUserId = driver?.id ?? "";
+  const driverCode =
+    driver?.platformDriverCode ?? driver?.driverCode ?? "";
 
   const myConnections = useQuery(
     api.companies.getMyCompaniesByClerkUserId,
@@ -32,16 +36,32 @@ export default function MyCompaniesScreen() {
   const isLoading = myConnections === undefined && !!clerkUserId;
   const [isRefetching, setIsRefetching] = useState(false);
 
-  const handleRefresh = useCallback(() => {
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPermissions();
+    }, [refreshPermissions]),
+  );
+
+  const handleRefresh = useCallback(async () => {
     setIsRefetching(true);
-    setTimeout(() => setIsRefetching(false), 1000);
-  }, []);
+    try {
+      await refreshPermissions();
+    } finally {
+      setTimeout(() => setIsRefetching(false), 400);
+    }
+  }, [refreshPermissions]);
 
   const [leavingLinkId, setLeavingLinkId] = useState<string | null>(null);
 
   const removeCompanyMutation = useMutation(api.companies.removeCompany);
+  const leaveCompanyPlatform = useAction(api.platform.leaveCompany);
 
-  const handleLeaveCompany = (linkId: string, companyName: string) => {
+  const handleLeaveCompany = (
+    linkId: string,
+    companyName: string,
+    companyCode?: string,
+    companyOrgId?: string,
+  ) => {
     Alert.alert(
       `Leave ${companyName}?`,
       `You will be disconnected from ${companyName} and will no longer receive load assignments from them.`,
@@ -53,7 +73,23 @@ export default function MyCompaniesScreen() {
           onPress: async () => {
             setLeavingLinkId(linkId);
             try {
+              if (driverCode && (companyOrgId || companyCode)) {
+                try {
+                  await leaveCompanyPlatform({
+                    driverCode,
+                    companyOrgId,
+                    companyCode,
+                  });
+                } catch (platformErr: any) {
+                  // If the platform link is already gone, still clear local.
+                  console.warn(
+                    "[MyCompanies] leaveCompany platform:",
+                    platformErr?.message ?? platformErr,
+                  );
+                }
+              }
               await removeCompanyMutation({ linkId: linkId as any });
+              await refreshPermissions();
               if (Platform.OS !== "web") {
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               }
@@ -89,6 +125,14 @@ export default function MyCompaniesScreen() {
         )}
         {(isLoading || connections.length === 0) && <View style={styles.headerSpacer} />}
       </View>
+
+      {platformExclusive && connections.length > 0 && (
+        <View style={[styles.exclusiveBanner, { backgroundColor: "#E65100" + "18", borderColor: "#E65100" + "40" }]}>
+          <Text style={[styles.exclusiveBannerText, { color: "#E65100" }]}>
+            Exclusive link active — you can't accept invites from other companies until you leave the exclusive company.
+          </Text>
+        </View>
+      )}
 
       <FlatList
         data={connections}
@@ -167,8 +211,15 @@ export default function MyCompaniesScreen() {
               </View>
             </View>
             <TouchableOpacity
-              style={[styles.leaveBtn, { borderColor: colors.error + "50" }]}
-              onPress={() => handleLeaveCompany(item.linkId, item.company?.name ?? "this company")}
+              style={styles.leaveBtn}
+              onPress={() =>
+                handleLeaveCompany(
+                  item.linkId,
+                  item.company?.name ?? "this company",
+                  item.company?.companyCode,
+                  item.company?.companyOrgId,
+                )
+              }
               activeOpacity={0.7}
               disabled={leavingLinkId === item.linkId}
             >
@@ -180,7 +231,6 @@ export default function MyCompaniesScreen() {
             </TouchableOpacity>
           </View>
         )}
-        ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: colors.border }} />}
       />
     </ScreenContainer>
   );
@@ -188,25 +238,23 @@ export default function MyCompaniesScreen() {
 
 const styles = StyleSheet.create({
   header: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
   backBtn: {
     width: 36,
     height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.2)",
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
     flex: 1,
-    fontSize: 20,
-    fontWeight: "700",
+    textAlign: "center",
     color: "#FFFFFF",
+    fontSize: 17,
+    fontWeight: "700",
   },
   headerBadge: {
     minWidth: 28,
@@ -218,30 +266,35 @@ const styles = StyleSheet.create({
   },
   headerBadgeText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "700",
   },
-  headerSpacer: {
-    width: 28,
+  headerSpacer: { width: 36 },
+  exclusiveBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  exclusiveBannerText: {
+    fontSize: 13,
+    fontWeight: "600",
+    lineHeight: 18,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 32,
-  },
-  emptyContainer: {
-    flex: 1,
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-    paddingTop: 80,
+    paddingBottom: 40,
     gap: 12,
   },
-  emptyText: {
-    fontSize: 14,
-    marginTop: 8,
+  emptyContainer: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  emptyState: {
+    alignItems: "center",
+    gap: 12,
   },
   emptyIcon: {
     width: 80,
@@ -252,40 +305,43 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "700",
-    textAlign: "center",
   },
   emptySubtitle: {
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
   },
+  emptyText: {
+    fontSize: 14,
+    marginTop: 8,
+  },
   backToProfileBtn: {
     marginTop: 16,
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 24,
+    borderRadius: 10,
   },
   backToProfileBtnText: {
     color: "#FFFFFF",
-    fontWeight: "600",
+    fontWeight: "700",
     fontSize: 15,
   },
   companyCard: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 16,
-    borderRadius: 0,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
     gap: 12,
   },
   companyIconWrap: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
   },
   companyInfo: {
     flex: 1,
@@ -293,30 +349,29 @@ const styles = StyleSheet.create({
   },
   companyName: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   companyMeta: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
     flexWrap: "wrap",
+    gap: 6,
+    alignItems: "center",
   },
   companyCodeBadge: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   companyCodeText: {
     fontSize: 12,
     fontWeight: "600",
-    letterSpacing: 0.5,
   },
   statusBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   statusDot: {
@@ -329,26 +384,21 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   exclusiveBadge: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
   },
   exclusiveBadgeText: {
     color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.3,
+    fontSize: 11,
+    fontWeight: "700",
   },
   leaveBtn: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
     paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    minWidth: 60,
-    alignItems: "center",
   },
   leaveBtnText: {
-    fontSize: 13,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

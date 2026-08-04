@@ -13,7 +13,9 @@ import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSettings } from "@/lib/settings-context";
 import { useLoads } from "@/lib/loads-context";
+import { usePermissions } from "@/lib/permissions-context";
 import { LinkedAccountsSection } from "@/components/linked-accounts-section";
+import { useFocusEffect } from "expo-router";
 
 // ─── Equipment type helpers ────────────────────────────────────────────────────
 const EQUIPMENT_TYPES = [
@@ -369,19 +371,33 @@ export default function ProfileScreen() {
     clerkUserId ? { clerkUserId } : "skip",
   );
   const activeCompanyCount = myConnections?.length ?? 0;
+  const { exclusive: platformExclusive, refresh: refreshPermissions } = usePermissions();
+
+  // Platform getDriverPermissions is source of truth — refresh whenever Profile is focused
+  // (carrier can toggle exclusive/rates with no push).
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPermissions();
+    }, [refreshPermissions]),
+  );
 
   // ── Respond to invite ──────────────────────────────────────────────────────
   const respondToInvitePlatform = useAction(api.platform.respondToInvite);
   const acceptInviteLocally = useMutation(api.companies.acceptInviteLocally);
 
-  const handleRespond = (inviteId: number | string, accept: boolean, companyName: string, companyCode?: string, isExclusive?: boolean) => {
+  const handleRespond = (inviteId: number | string, accept: boolean, companyName: string, companyCode?: string, isExclusive?: boolean, companyOrgId?: string) => {
     if (!inviteCode || !clerkUserId) return;
 
     if (accept) {
-      if (exclusiveStatus?.hasExclusive) {
+      // Trust aggregate exclusive from getDriverPermissions (may be true even if
+      // multiple local links exist — carrier toggle does not re-validate).
+      if (platformExclusive) {
+        const linkedName = exclusiveStatus?.companyName;
         Alert.alert(
           "Exclusive Link Active",
-          `You are exclusively linked to ${exclusiveStatus.companyName}. Unlink from them first to accept invites from other companies.`,
+          linkedName
+            ? `You are exclusively linked to ${linkedName}. Unlink from them first to accept invites from other companies.`
+            : "You are exclusively linked to a company. Unlink first to accept invites from other companies.",
         );
         return;
       }
@@ -424,22 +440,27 @@ export default function ProfileScreen() {
                     companyCode: companyCode || "UNKNOWN",
                     companyName,
                     exclusive: isExclusive ?? false,
+                    companyOrgId,
                   });
                 } catch (linkErr) {
                   console.warn("[Profile] Failed to create local company link:", linkErr);
                 }
               }
 
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              fetchInvites();
+              if (Platform.OS !== "web") {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              }
+              await refreshPermissions();
+              await fetchInvites();
               Alert.alert(
                 accept ? "Invite Accepted!" : "Invite Declined",
                 accept
                   ? "You are now connected to this company. Pull to refresh on the Loads tab to see your assigned loads."
-                  : "You have declined this invitation."
+                  : "You have declined this invitation.",
               );
             } catch (err: any) {
-              Alert.alert("Error", err.message ?? "Could not respond to invite. Please try again.");
+              const msg = (err?.message ?? String(err)).replace(/^\[.*?\]\s*/, "");
+              Alert.alert("Could not update invite", msg || "Please try again.");
             } finally {
               setRespondingId(null);
             }
@@ -639,7 +660,7 @@ export default function ProfileScreen() {
             ) : (
               pendingInvites.map((invite: any, index: number) => {
                 const isBlocked =
-                  (exclusiveStatus?.hasExclusive === true) ||
+                  platformExclusive ||
                   (invite.exclusive === true && activeCompanyCount > 0);
                 return (
                   <View
@@ -667,15 +688,17 @@ export default function ProfileScreen() {
                     ) : null}
                     {isBlocked && (
                       <Text style={[styles.inviteBlockedText, { color: colors.error }]}>
-                        {exclusiveStatus?.hasExclusive
-                          ? `You are exclusively linked to ${exclusiveStatus.companyName}. Unlink first to accept.`
+                        {platformExclusive
+                          ? exclusiveStatus?.companyName
+                            ? `You are exclusively linked to ${exclusiveStatus.companyName}. Unlink first to accept.`
+                            : "You are exclusively linked to a company. Unlink first to accept."
                           : `This company requires exclusive access. Unlink from all other companies first.`}
                       </Text>
                     )}
                     <View style={styles.inviteActions}>
                       <TouchableOpacity
                         style={[styles.declineBtn, { borderColor: colors.error + "60" }]}
-                        onPress={() => handleRespond(invite.inviteId, false, invite.companyName, invite.companyCode, invite.exclusive)}
+                        onPress={() => handleRespond(invite.inviteId, false, invite.companyName, invite.companyCode, invite.exclusive, invite.companyOrgId)}
                         activeOpacity={0.7}
                         disabled={respondingId === invite.inviteId}
                       >
@@ -687,7 +710,7 @@ export default function ProfileScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[styles.acceptBtn, { backgroundColor: isBlocked ? colors.border : colors.success, opacity: isBlocked ? 0.5 : 1 }]}
-                        onPress={() => handleRespond(invite.inviteId, true, invite.companyName, invite.companyCode, invite.exclusive)}
+                        onPress={() => handleRespond(invite.inviteId, true, invite.companyName, invite.companyCode, invite.exclusive, invite.companyOrgId)}
                         activeOpacity={0.8}
                         disabled={respondingId === invite.inviteId || isBlocked}
                       >

@@ -361,6 +361,17 @@ export const respondToInvite = action({
   },
 });
 
+export const leaveCompany = action({
+  args: {
+    driverCode: v.string(),
+    companyOrgId: v.optional(v.string()),
+    companyCode: v.optional(v.string()),
+  },
+  handler: async (_ctx, args) => {
+    return await callTRPC("driversApi.leaveCompany", args, "mutation");
+  },
+});
+
 export const registerDriver = action({
   args: {
     name: v.string(),

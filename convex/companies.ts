@@ -86,6 +86,7 @@ export const getMyCompaniesByClerkUserId = query({
           company: {
             name: company.name,
             companyCode: company.companyCode,
+            companyOrgId: company.companyOrgId,
             email: company.email,
             phone: company.phone,
           },
@@ -156,6 +157,7 @@ export const acceptInviteLocally = mutation({
     companyCode: v.string(),
     companyName: v.string(),
     exclusive: v.optional(v.boolean()),
+    companyOrgId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const profile = await ctx.db
@@ -174,8 +176,12 @@ export const acceptInviteLocally = mutation({
       const companyId = await ctx.db.insert("companies", {
         companyCode: args.companyCode,
         name: args.companyName,
+        companyOrgId: args.companyOrgId,
       });
       company = await ctx.db.get(companyId);
+    } else if (args.companyOrgId && !company.companyOrgId) {
+      await ctx.db.patch(company._id, { companyOrgId: args.companyOrgId });
+      company = await ctx.db.get(company._id);
     }
 
     if (!company) throw new Error("Failed to create company record");
@@ -193,6 +199,10 @@ export const acceptInviteLocally = mutation({
           status: "active",
           exclusive: args.exclusive ?? false,
           respondedAt: Date.now(),
+        });
+      } else if (args.exclusive !== undefined) {
+        await ctx.db.patch(existingLink._id, {
+          exclusive: args.exclusive,
         });
       }
       return { success: true };
