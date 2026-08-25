@@ -97,6 +97,21 @@ const STALE_UPLOAD_MS = 60_000;
 // the bytes already in flight.
 const UPLOAD_TIMEOUT_WIFI_MS = 30_000;
 const UPLOAD_TIMEOUT_CELLULAR_MS = 90_000;
+// v83+: absolute ceiling on a single upload attempt, covering compression,
+// presign, and the PUT together. Every individual step already has its own
+// timeout, but this is the backstop that guarantees an attempt can only
+// ever end in success or failure — never limbo. A hung attempt used to
+// leave the queue's mutex held forever, which silently killed all uploads
+// until the app was force-quit.
+const UPLOAD_ATTEMPT_DEADLINE_MS = 180_000;
+// v83+: how long the sync mutex may be held without any batch completing
+// before another caller is allowed to steal it. Refreshed after every
+// completed batch, so genuine progress on a long queue never trips it.
+const SYNC_LEASE_MS = 240_000;
+// v83+: an entry sitting in "uploading" for longer than this is treated as
+// stuck for UI purposes, so the driver sees "stuck" and a working Retry
+// instead of a reassuring "uploading…" that never advances.
+const STUCK_UPLOADING_MS = 3 * 60_000;
 // v65+: a queue entry that's been "pending" with at least one failed
 // attempt and a recorded error for longer than this threshold is
 // considered stuck for UI purposes (surfaced as "Stuck" to the driver
@@ -172,6 +187,44 @@ function fetchWithTimeout(url: string, opts: RequestInit = {}, ms = UPLOAD_TIMEO
   return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
+/**
+ * v83+: like fetchWithTimeout, but keeps the abort armed through the JSON
+ * body read. `fetch` resolves as soon as response HEADERS arrive, so
+ * clearing the timer at that point leaves the body read unprotected — a
+ * connection that dies mid-body (routine on weak cellular) would hang the
+ * read forever. That was the trigger for the wedged-queue incident.
+ */
+async function fetchJsonWithTimeout<T>(url: string, ms: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Rejects if `promise` hasn't settled within `ms`. */
+function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 // ─── Queue Class ──────────────────────────────────────────────────────────────
 
 type Listener = (entries: PhotoQueueEntry[]) => void;
@@ -179,7 +232,14 @@ type Listener = (entries: PhotoQueueEntry[]) => void;
 export class PhotoQueue {
   entries: PhotoQueueEntry[] = [];
   private listeners: Set<Listener> = new Set();
-  private syncing = false;
+  // v83+: a LEASE, not a boolean. Holds the timestamp of the last observed
+  // progress (lease taken, or a batch completed). Any caller may steal the
+  // lease once it goes stale, so a hung upload can no longer kill the queue
+  // for the lifetime of the process. Previously this was a plain boolean
+  // cleared in a `finally` — and since an upload attempt had no overall
+  // deadline, one attempt that never settled meant the flag was never
+  // cleared and every subsequent sync() returned at the guard forever.
+  private syncLeaseAt: number | null = null;
   private loaded = false;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private appStateSub: { remove: () => void } | null = null;
@@ -711,13 +771,16 @@ export class PhotoQueue {
   }
 
   async sync(): Promise<void> {
-    if (this.syncing) return;
     await this.load();
 
     const now = Date.now();
 
     // Watchdog: reset entries stuck in "uploading" for over 60 s back to
     // "pending" so they get retried instead of hanging forever.
+    //
+    // v83+: this runs BEFORE the lease check. It used to sit after the
+    // mutex guard, which meant the one safety net capable of rescuing a
+    // wedged queue was itself unreachable whenever the queue was wedged.
     let rescued = false;
     for (const e of this.entries) {
       if (e.status === "uploading" && e.lastAttemptAt && now - e.lastAttemptAt > STALE_UPLOAD_MS) {
@@ -728,6 +791,14 @@ export class PhotoQueue {
     if (rescued) {
       this.schedulePersist();
       this.emit();
+    }
+
+    // Lease check: bail only if another pass is actively making progress.
+    if (this.syncLeaseAt !== null && now - this.syncLeaseAt < SYNC_LEASE_MS) return;
+    if (this.syncLeaseAt !== null) {
+      console.warn(
+        `[PhotoQueue] Stealing stale sync lease (held ${Math.round((now - this.syncLeaseAt) / 1000)}s)`,
+      );
     }
 
     // v66+: NO max-retry cap. Every pending/failed entry is eligible
@@ -752,21 +823,53 @@ export class PhotoQueue {
     const online = await isOnline();
     if (!online) return;
 
-    this.syncing = true;
+    this.syncLeaseAt = Date.now();
     try {
       const concurrency = await getCurrentConcurrency();
       for (let i = 0; i < ready.length; i += concurrency) {
         const batch = ready.slice(i, i + concurrency);
         await Promise.all(batch.map((entry) => this.uploadEntry(entry)));
+        // Renew the lease after every completed batch so a long but
+        // healthy queue is never mistaken for a wedged one.
+        this.syncLeaseAt = Date.now();
       }
     } finally {
-      this.syncing = false;
+      this.syncLeaseAt = null;
     }
   }
 
+  /**
+   * One upload attempt, guaranteed to settle. All status transitions and
+   * error handling live here; the actual work is in runUploadAttempt.
+   */
   private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
     this.updateEntry(entry.clientId, { status: "uploading", lastAttemptAt: Date.now() });
+    try {
+      await withDeadline(
+        this.runUploadAttempt(entry),
+        UPLOAD_ATTEMPT_DEADLINE_MS,
+        "Upload attempt exceeded deadline",
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      // The attempt may have actually succeeded and merely lost the race to
+      // the deadline. Never downgrade an entry that already reached "done".
+      const live = this.entries.find((e) => e.clientId === entry.clientId);
+      if (live?.status === "done") return;
+      // v66+: never give up. An entry stays "pending" no matter how many
+      // attempts have failed — the scheduler keeps retrying it on the
+      // capped (5-minute max) backoff. The only paths out of the queue
+      // are a successful upload, or the driver tapping Delete.
+      this.updateEntry(entry.clientId, {
+        status: "pending",
+        lastError: message,
+        lastAttemptAt: Date.now(),
+        attempts: entry.attempts + 1,
+      });
+    }
+  }
 
+  private async runUploadAttempt(entry: PhotoQueueEntry): Promise<void> {
     // v66+: snapshot the current network state ONCE per upload attempt
     // so compression target + timeout + session type all see the same
     // value. Avoids edge cases where the driver's connection flips
@@ -779,8 +882,9 @@ export class PhotoQueue {
       networkType = null;
     }
     const isWifi = networkType === Network.NetworkStateType.WIFI;
+    const presignTimeoutMs = isWifi ? UPLOAD_TIMEOUT_WIFI_MS : UPLOAD_TIMEOUT_CELLULAR_MS;
 
-    try {
+    {
       // v66+: compress with network-aware quality. Cellular gets smaller
       // photos (~120–280 KB) so each PUT fits inside a stable TCP window
       // on weak LTE. Wi-Fi keeps the higher-quality target (~400–800 KB).
@@ -793,22 +897,19 @@ export class PhotoQueue {
           : [entry.loadId, entry.vehicleId].filter(Boolean).join("-") || "inspections";
       const apiBase = getUploadApiBase();
 
-      // Step 1: Get a presigned upload URL (with timeout)
+      // Step 1: Get a presigned upload URL. The timeout covers the JSON
+      // body read too — see fetchJsonWithTimeout.
       const params = new URLSearchParams({
         ext: "jpg",
         groupKey,
         clientId: entry.clientId,
       });
-      const presignRes = await fetchWithTimeout(`${apiBase}/api/photos/upload-url?${params}`);
-      if (!presignRes.ok) {
-        throw new Error(`Presign failed: HTTP ${presignRes.status}`);
-      }
-      const { uploadUrl, publicUrl, key } = await presignRes.json() as {
+      const { uploadUrl, publicUrl, key } = await fetchJsonWithTimeout<{
         uploadUrl: string;
         publicUrl: string;
         key: string;
         clientId: string;
-      };
+      }>(`${apiBase}/api/photos/upload-url?${params}`, presignTimeoutMs);
 
       // Step 2: Upload compressed photo directly to R2
       if (Platform.OS === "web") {
@@ -891,20 +992,6 @@ export class PhotoQueue {
           this.updateEntry(entry.clientId, { stamped: true, stampMeta: undefined });
         }).catch(() => {});
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Upload failed";
-      const attempts = entry.attempts + 1;
-      // v66+: never give up. An entry stays "pending" no matter how many
-      // attempts have failed — the scheduler will keep retrying it on
-      // the capped (5-minute max) backoff. The only paths out of the
-      // queue are: (a) successful upload → "done", or (b) the driver
-      // taps Delete in the Upload Queue modal.
-      this.updateEntry(entry.clientId, {
-        status: "pending",
-        lastError: message,
-        lastAttemptAt: Date.now(),
-        attempts,
-      });
     }
   }
 
@@ -966,11 +1053,17 @@ export class PhotoQueue {
       if (e.status === "failed") {
         return { ...e, status: "pending" as PhotoStatus, attempts: 0, lastAttemptAt: null };
       }
-      if (this.isStuckPending(e, now)) {
+      // v83+: also rescue entries wedged in "uploading" — otherwise Retry
+      // was a no-op for exactly the state drivers were most likely to be
+      // staring at.
+      if (this.isStuck(e, now)) {
         return { ...e, status: "pending" as PhotoStatus, attempts: 0, lastAttemptAt: null, lastError: null };
       }
       return e;
     });
+    // Drop any stale lease so the sync below can't be blocked by a
+    // previous pass that hung. Manual Retry must always do something.
+    this.syncLeaseAt = null;
     await this.persist();
     this.emit();
     await this.sync();
@@ -992,6 +1085,25 @@ export class PhotoQueue {
   }
 
   /**
+   * v83+: an entry that has claimed "uploading" for minutes without
+   * finishing. Before this existed, a wedged queue showed the driver a
+   * calm "Uploading 2 photos…" indefinitely — no warning, and no Retry
+   * button, because the UI only offered Retry when something was
+   * classified as failed. Counting these as failed gives the driver an
+   * accurate picture and a working escape hatch.
+   */
+  isStuckUploading(entry: PhotoQueueEntry, now = Date.now()): boolean {
+    if (entry.status !== "uploading") return false;
+    if (!entry.lastAttemptAt) return false;
+    return now - entry.lastAttemptAt > STUCK_UPLOADING_MS;
+  }
+
+  /** Either flavour of stuck — the check UI counters should use. */
+  isStuck(entry: PhotoQueueEntry, now = Date.now()): boolean {
+    return this.isStuckPending(entry, now) || this.isStuckUploading(entry, now);
+  }
+
+  /**
    * v65+: a stats variant that surfaces stuck-pending entries as
    * failed. Use this for any UI-facing counter so what the driver
    * sees matches what they're being asked to do.
@@ -1003,7 +1115,10 @@ export class PhotoQueue {
     let done = 0;
     let failed = 0;
     for (const e of this.entries) {
-      if (e.status === "uploading") uploading++;
+      if (e.status === "uploading") {
+        if (this.isStuckUploading(e, now)) failed++;
+        else uploading++;
+      }
       else if (e.status === "done") done++;
       else if (e.status === "failed") failed++;
       else if (e.status === "pending") {

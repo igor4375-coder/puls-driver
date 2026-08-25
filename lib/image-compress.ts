@@ -26,7 +26,21 @@ const WIFI_JPEG_QUALITY = 0.82;
 const CELLULAR_MAX_DIMENSION = 1280;
 const CELLULAR_JPEG_QUALITY = 0.72;
 
+// v83+: hard ceilings so a wedged native decoder can never stall the
+// upload pipeline. `manipulateAsync` is a native call that, on rare
+// occasions (low memory, module detached while backgrounded), neither
+// resolves nor rejects. Without these two timeouts, one such call used
+// to poison the semaphore chain below and permanently prevent every
+// future photo on the device from being compressed — which in turn
+// wedged the whole upload queue.
+const COMPRESS_TIMEOUT_MS = 25_000;
+const LOCK_WAIT_TIMEOUT_MS = 40_000;
+
 let compressLock: Promise<void> = Promise.resolve();
+
+function timeout(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => setTimeout(() => resolve("timeout"), ms));
+}
 
 /**
  * Compress a local image URI: resize to MAX_DIMENSION and JPEG quality.
@@ -50,14 +64,27 @@ export async function compressImage(
   const ticket = new Promise<void>((r) => { release = r; });
   const wait = compressLock;
   compressLock = ticket;
-  await wait;
+
+  // Bounded wait: if the predecessor in the chain never releases, proceed
+  // anyway rather than blocking forever. Two concurrent compressions is a
+  // memory risk worth taking over a permanently dead upload queue.
+  const lockResult = await Promise.race([wait, timeout(LOCK_WAIT_TIMEOUT_MS)]);
+  if (lockResult === "timeout") {
+    console.warn("[compressImage] Lock wait timed out — proceeding without it");
+  }
 
   try {
-    const result = await manipulateAsync(
-      uri,
-      [{ resize: { width: maxDim } }],
-      { compress: quality, format: SaveFormat.JPEG },
-    );
+    const result = await Promise.race([
+      manipulateAsync(uri, [{ resize: { width: maxDim } }], {
+        compress: quality,
+        format: SaveFormat.JPEG,
+      }),
+      timeout(COMPRESS_TIMEOUT_MS),
+    ]);
+    if (result === "timeout") {
+      console.warn("[compressImage] Timed out, using original");
+      return uri;
+    }
     return result.uri;
   } catch (err) {
     console.warn("[compressImage] Failed, using original:", err);
