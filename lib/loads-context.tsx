@@ -7,7 +7,6 @@ import React, {
   useRef,
 } from "react";
 import { AppState, type AppStateStatus } from "react-native";
-import * as Network from "expo-network";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -494,67 +493,6 @@ function mergeServerDeliveredWithLocal(server: Load, local: Load): Load {
  */
 export type PlatformSyncTaskStatus = "pending" | "failed_permanent" | "deferred";
 
-// ─── Platform sync retry policy (v83+) ───────────────────────────────────────
-//
-// Before v83 a task got 5 back-to-back attempts with NO delay between them
-// (each failure wrote to state, which immediately re-triggered the
-// processing effect), then went to `failed_permanent` and sat there until
-// the driver noticed and tapped "Retry All" in their Profile. A 20-second
-// dead zone was therefore enough to permanently strand a pickup.
-//
-// The platform's markAsPickedUp / markAsDelivered / syncInspection calls are
-// all idempotent, so there is no reason to ever stop retrying a transient
-// failure. v83 policy:
-//   • Transient failure  → stay `pending` forever, backing off up to 5 min.
-//   • Non-retryable      → `failed_permanent` immediately (no point burning
-//                          5 attempts on a request the server will always
-//                          reject), surfaced in Profile for a human.
-const SYNC_RETRY_DELAYS_MS = [2_000, 6_000, 15_000, 40_000, 90_000, 180_000, 300_000];
-const MAX_SYNC_RETRY_DELAY_MS = 300_000;
-// Hard ceiling on a single Convex action. A dropped websocket can otherwise
-// leave the promise pending indefinitely — no rejection, so the per-task
-// try/catch never fires and the whole queue stalls.
-const SYNC_ACTION_TIMEOUT_MS = 45_000;
-// How long the processing mutex may be held without progress before another
-// pass may steal it.
-const SYNC_LEASE_MS = 120_000;
-// Heartbeat that re-examines the queue, so retries no longer depend solely
-// on a state change happening to re-trigger the effect.
-const SYNC_TICK_MS = 15_000;
-
-function syncBackoffMs(attempts: number): number {
-  const idx = Math.min(Math.max(attempts - 1, 0), SYNC_RETRY_DELAYS_MS.length - 1);
-  return Math.min(SYNC_RETRY_DELAYS_MS[idx] ?? MAX_SYNC_RETRY_DELAY_MS, MAX_SYNC_RETRY_DELAY_MS);
-}
-
-/** Rejects if `promise` hasn't settled within `ms`. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(label)), ms);
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}
-
-/**
- * Errors that retrying can never fix — a malformed payload, a validator
- * mismatch, an unknown leg. Anything else (timeouts, socket drops, 5xx,
- * "network request failed") is treated as transient and retried forever.
- */
-function isNonRetryableSyncError(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("argumentvalidationerror") ||
-    m.includes("validator") ||
-    m.includes("invalid argument") ||
-    m.includes("not found") ||
-    m.includes("unauthorized") ||
-    m.includes("forbidden")
-  );
-}
-
 type PlatformSyncTaskBase = {
   id: string;
   attempts: number;
@@ -574,12 +512,6 @@ type PlatformSyncTaskBase = {
    * a field it doesn't know about).
    */
   deferCount?: number;
-  /**
-   * v83+: earliest timestamp at which this task may be attempted again.
-   * Absent means "eligible now". Persisted, so a backoff survives an app
-   * restart instead of resetting to an immediate hot retry.
-   */
-  nextAttemptAt?: number;
 };
 
 export type PlatformSyncTask =
@@ -834,16 +766,7 @@ export function LoadsProvider({
   // Persistent queue of platform API calls that must survive screen navigation
   // and app restarts. Processed here in the always-mounted LoadsProvider.
   const [syncQueue, setSyncQueue] = useState<PlatformSyncTask[]>([]);
-  // v83+: a LEASE (timestamp), not a boolean. The old boolean was set before
-  // the network calls and cleared as the last statement of the async IIFE —
-  // not in a `finally` — and the Convex actions it awaited had no timeout.
-  // One hung action therefore left it `true` forever, which silently killed
-  // every future sync (the processing effect and the foreground retry both
-  // returned early on it). Niklas's pickup was stranded exactly this way.
-  const syncLeaseRef = React.useRef<number | null>(null);
-  // Heartbeat counter — bumping this re-runs the processing effect so due
-  // retries fire without needing an unrelated state change.
-  const [syncTick, setSyncTick] = useState(0);
+  const syncProcessingRef = React.useRef(false);
 
   // Load persisted sync queue on startup AND whenever the active driver
   // swaps. The reset effect below clears in-memory state first, so this
@@ -881,7 +804,6 @@ export function LoadsProvider({
                 status: "pending" as PlatformSyncTaskStatus,
                 attempts: 0,
                 lastError: undefined,
-                nextAttemptAt: undefined,
               };
             });
             if (resetCount > 0) {
@@ -946,7 +868,7 @@ export function LoadsProvider({
         });
         if (!stillPending) {
           changed = true;
-          return { ...t, status: "pending" as PlatformSyncTaskStatus, nextAttemptAt: undefined };
+          return { ...t, status: "pending" as PlatformSyncTaskStatus };
         }
         return t;
       });
@@ -973,30 +895,17 @@ export function LoadsProvider({
 
   // Process the sync queue
   useEffect(() => {
-    if (syncQueue.length === 0) return;
-
-    // Lease check — bail only if another pass is actively making progress.
-    const leaseNow = Date.now();
-    if (syncLeaseRef.current !== null && leaseNow - syncLeaseRef.current < SYNC_LEASE_MS) return;
-    if (syncLeaseRef.current !== null) {
-      console.warn(
-        `[PlatformSync] Stealing stale lease (held ${Math.round((leaseNow - syncLeaseRef.current) / 1000)}s)`,
-      );
-    }
-
-    // Only process pending tasks whose backoff has elapsed. Failed-permanent
-    // tasks stay in the queue for visibility but don't auto-retry. Deferred
-    // tasks (v71+: photo-deferred syncInspection) wait for the photoQueue
+    if (syncQueue.length === 0 || syncProcessingRef.current) return;
+    // Only process pending tasks. Failed-permanent tasks stay in the queue
+    // for visibility / manual retry but don't auto-retry. Deferred tasks
+    // (v71+: photo-deferred syncInspection) wait for the photoQueue
     // subscription to promote them back to pending when their uploads
     // finish — see promoteDeferredSyncTasks below.
     const pendingTasks = syncQueue.filter(
-      (t) =>
-        t.status !== "failed_permanent" &&
-        t.status !== "deferred" &&
-        (t.nextAttemptAt == null || t.nextAttemptAt <= leaseNow),
+      (t) => t.status !== "failed_permanent" && t.status !== "deferred",
     );
     if (pendingTasks.length === 0) return;
-    syncLeaseRef.current = leaseNow;
+    syncProcessingRef.current = true;
 
     // CRITICAL: snapshot the IDs of tasks we're processing on this pass.
     // Without this, any task queued WHILE this pass is awaiting a network
@@ -1009,7 +918,6 @@ export function LoadsProvider({
     const processingIds = new Set(processingSnapshot.map((t) => t.id));
 
     (async () => {
-     try {
       const remaining: PlatformSyncTask[] = [];
       const permanentlyFailed: PlatformSyncTask[] = [];
       // v71+: tasks whose `photoClientIds` haven't all resolved to HTTPS yet
@@ -1019,23 +927,12 @@ export function LoadsProvider({
       // changes — see the kick at the end of the backfill effect below).
       const deferred: PlatformSyncTask[] = [];
       for (const task of processingSnapshot) {
-        // Renew the lease per task so a long queue of healthy tasks is
-        // never mistaken for a wedged one.
-        syncLeaseRef.current = Date.now();
         try {
           console.log(`[PlatformSync] Processing ${task.type} (attempt ${task.attempts + 1})`);
           if (task.type === "markAsPickedUp") {
-            await withTimeout(
-              markAsPickedUpAction(task.args as any),
-              SYNC_ACTION_TIMEOUT_MS,
-              "markAsPickedUp timed out",
-            );
+            await markAsPickedUpAction(task.args as any);
           } else if (task.type === "markAsDelivered") {
-            await withTimeout(
-              markAsDeliveredAction(task.args as any),
-              SYNC_ACTION_TIMEOUT_MS,
-              "markAsDelivered timed out",
-            );
+            await markAsDeliveredAction(task.args as any);
             // Platform has confirmed delivery — force the local state to
             // "delivered" too. This closes the loop so a successful platform
             // delivery deterministically pulls the driver's screen out of
@@ -1149,41 +1046,29 @@ export function LoadsProvider({
                   ? rawArgs.photoExpectedCount
                   : photoClientIds?.length ?? resolvedPhotos.length,
             };
-            await withTimeout(
-              syncInspectionAction(finalArgs as any),
-              SYNC_ACTION_TIMEOUT_MS,
-              "syncInspection timed out",
-            );
+            await syncInspectionAction(finalArgs as any);
           }
           console.log(`[PlatformSync] ${task.type} succeeded`);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          const attempts = task.attempts + 1;
-          if (isNonRetryableSyncError(errMsg)) {
-            // Retrying can't fix this — surface it for a human instead of
-            // hammering the platform.
-            console.error(`[PlatformSync] ${task.type} non-retryable:`, errMsg, task);
-            permanentlyFailed.push({
+          console.warn(`[PlatformSync] ${task.type} failed (attempt ${task.attempts + 1}):`, errMsg);
+          const maxAttempts = 5;
+          if (task.attempts + 1 < maxAttempts) {
+            remaining.push({
               ...task,
-              attempts,
-              status: "failed_permanent",
+              attempts: task.attempts + 1,
               lastError: errMsg,
             });
           } else {
-            // Transient — retry forever on a capped backoff. No attempt
-            // ceiling, so no driver ever has to tap Retry to unstick a
-            // pickup that failed during a dead zone.
-            const delay = syncBackoffMs(attempts);
-            console.warn(
-              `[PlatformSync] ${task.type} failed (attempt ${attempts}), retrying in ${Math.round(delay / 1000)}s:`,
-              errMsg,
-            );
-            remaining.push({
+            console.error(`[PlatformSync] ${task.type} permanently failed after ${maxAttempts} attempts`, task);
+            // Keep failed-permanent tasks in the queue (status=failed_permanent)
+            // so they can be inspected by the user / retried manually instead
+            // of being silently dropped.
+            permanentlyFailed.push({
               ...task,
-              attempts,
+              attempts: task.attempts + 1,
+              status: "failed_permanent",
               lastError: errMsg,
-              status: "pending" as PlatformSyncTaskStatus,
-              nextAttemptAt: Date.now() + delay,
             });
           }
         }
@@ -1206,63 +1091,15 @@ export function LoadsProvider({
         persistSyncQueue(merged);
         return merged;
       });
-     } finally {
-       // ALWAYS release the lease, including on an unexpected throw outside
-       // the per-task try/catch. This is the guarantee the old boolean
-       // didn't make.
-       syncLeaseRef.current = null;
-     }
+      syncProcessingRef.current = false;
     })();
-  }, [syncQueue, syncTick, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
+  }, [syncQueue, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
 
-  // v83+: heartbeat. Re-examines the queue every SYNC_TICK_MS so a task
-  // waiting on its backoff actually gets retried. Previously the processing
-  // effect only ran when queue state changed, so a task whose retry had been
-  // scheduled had nothing to wake it up.
-  useEffect(() => {
-    if (syncQueue.length === 0) return;
-    const t = setInterval(() => setSyncTick((n) => n + 1), SYNC_TICK_MS);
-    return () => clearInterval(t);
-  }, [syncQueue.length]);
-
-  // Nudge the queue the moment connectivity returns, rather than waiting out
-  // the remaining backoff.
-  useEffect(() => {
-    let sub: { remove: () => void } | null = null;
-    try {
-      sub = Network.addNetworkStateListener((state) => {
-        const online = Boolean(state.isConnected) && state.isInternetReachable !== false;
-        if (!online) return;
-        setSyncQueue((prev) => {
-          if (prev.length === 0) return prev;
-          // Clear pending backoffs so everything is immediately eligible.
-          let changed = false;
-          const next = prev.map((t) => {
-            if (t.status === "failed_permanent" || t.status === "deferred") return t;
-            if (t.nextAttemptAt == null) return t;
-            changed = true;
-            return { ...t, nextAttemptAt: undefined };
-          });
-          if (!changed) return prev;
-          persistSyncQueue(next);
-          return next;
-        });
-        setSyncTick((n) => n + 1);
-      }) as { remove: () => void };
-    } catch {
-      // expo-network listener unavailable — the heartbeat still covers us.
-    }
-    return () => sub?.remove();
-  }, [persistSyncQueue]);
-
-  // Retry sync tasks when app comes to foreground
+  // Retry failed sync tasks when app comes to foreground
   useEffect(() => {
     const handleAppState = (state: AppStateStatus) => {
-      if (state === "active" && syncQueue.length > 0) {
-        // No lease guard here — a stale lease is exactly the situation we
-        // most want a foreground event to break out of. The processing
-        // effect decides whether the lease is still valid.
-        setSyncTick((n) => n + 1);
+      if (state === "active" && syncQueue.length > 0 && !syncProcessingRef.current) {
+        setSyncQueue((prev) => [...prev]); // trigger re-process
       }
     };
     const sub = AppState.addEventListener("change", handleAppState);
@@ -2915,21 +2752,10 @@ export function LoadsProvider({
   }, []);
 
   const retryFailedSyncTasks = useCallback(() => {
-    // Manual override. With v83's endless backoff retries this should almost
-    // never be needed — only `failed_permanent` (non-retryable) tasks land
-    // here now. Drop any stale lease so a retry always does something.
-    syncLeaseRef.current = null;
-    setSyncTick((n) => n + 1);
     setSyncQueue((current) => {
       const reset = current.map((t) =>
         t.status === "failed_permanent"
-          ? {
-              ...t,
-              status: "pending" as PlatformSyncTaskStatus,
-              attempts: 0,
-              lastError: undefined,
-              nextAttemptAt: undefined,
-            }
+          ? { ...t, status: "pending" as PlatformSyncTaskStatus, attempts: 0, lastError: undefined }
           : t,
       );
       persistSyncQueue(reset);

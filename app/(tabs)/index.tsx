@@ -559,14 +559,13 @@ export default function LoadsScreen() {
   const queueCountsByLoad = useMemo(() => {
     // v65+: stuck-pending entries (pending with a real error for >5 min)
     // surface as failed so the per-card badge matches what the driver
-    // sees in the Upload Queue modal. v83+ also counts entries wedged in
-    // "uploading", which previously read as healthy progress forever.
+    // sees in the Upload Queue modal.
     const now = Date.now();
     const map: Record<string, { pending: number; failed: number }> = {};
     for (const e of queueEntries) {
       if (!e.loadId) continue;
       if (!map[e.loadId]) map[e.loadId] = { pending: 0, failed: 0 };
-      if (e.status === "failed" || photoQueue.isStuck(e, now)) {
+      if (e.status === "failed" || photoQueue.isStuckPending(e, now)) {
         map[e.loadId].failed++;
       } else if (e.status === "pending" || e.status === "uploading") {
         map[e.loadId].pending++;
