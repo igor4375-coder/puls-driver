@@ -126,6 +126,7 @@ const MAPPING = {
   "arrow.down.circle.fill": "arrow-downward",
   "arrow.up": "arrow-upward",
   "arrow.down": "arrow-downward",
+  "note.text": "sticky-note-2",
 } as IconMapping;
 
 /**

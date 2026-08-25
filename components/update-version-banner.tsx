@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-const BUILD_TAG = "v81-permissions-poll";
+const BUILD_TAG = "v82-load-notes-badge";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();

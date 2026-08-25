@@ -1500,6 +1500,18 @@ export default function LoadDetailScreen() {
               </View>
             </>
           ) : null}
+
+          {/* Plain notes — manually added loads only ever populate `notes`, so
+              without this their notes never surface anywhere but the BOL. */}
+          {!load.dispatchNotes?.trim() && !load.driverNotes?.trim() && load.notes?.trim() ? (
+            <>
+              <SectionHeader title="NOTES" />
+              <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 10, backgroundColor: "#FFF8E1", borderRadius: 14, padding: 14, borderWidth: 1, borderColor: "#FFD54F" }}>
+                <IconSymbol name="note.text" size={15} color="#F9A825" />
+                <Text style={{ flex: 1, fontSize: 14, color: "#5D4037", lineHeight: 20 }}>{load.notes.trim()}</Text>
+              </View>
+            </>
+          ) : null}
           {/* Gate Pass Section — hidden for field pickups */}
           {!load.isFieldPickup && <SectionHeader title="GATE PASS" />}
           {!load.isFieldPickup && (load.gatePassUrl ? (() => {

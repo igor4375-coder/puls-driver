@@ -34,6 +34,7 @@ import {
   formatDate,
   getPaymentLabel,
 } from "@/lib/data";
+import { collectLoadNotes, noteToPreview, NOTE_TONE_STYLES } from "@/lib/load-notes";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -75,8 +76,8 @@ function StatusBadge({ status }: { status: LoadStatus }) {
 
 // ─── Load Card ────────────────────────────────────────────────────────────────
 
-const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchive, onForceMarkDelivered, pendingCount = 0, failedCount = 0 }: {
-  load: Load; onPress: () => void; onDelete?: () => void; onArchive?: () => void; onForceMarkDelivered?: () => void; pendingCount?: number; failedCount?: number;
+const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDelete, onArchive, onForceMarkDelivered, pendingCount = 0, failedCount = 0 }: {
+  load: Load; onPress: () => void; onOpenNotes?: () => void; onDelete?: () => void; onArchive?: () => void; onForceMarkDelivered?: () => void; pendingCount?: number; failedCount?: number;
 }) {
   const colors = useColors();
   const { canViewRates } = usePermissions();
@@ -99,6 +100,9 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
     return `${baseLabel} & ${vehicleCount - 1} more`;
   })();
   const showDates = load.status === "delivered" || load.status === "archived";
+  const notes = collectLoadNotes(load);
+  const topNote = notes[0];
+  const noteTone = topNote ? NOTE_TONE_STYLES[topNote.tone] : null;
   const stripeColor =
     load.status === "new" ? colors.warning :
     load.status === "picked_up" ? colors.primary :
@@ -208,6 +212,28 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onDelete, onArchi
             </Text>
           </View>
         )}
+        {/* Attached notes — tap to read without leaving the list */}
+        {topNote && noteTone && (
+          <TouchableOpacity
+            style={[styles.noteStrip, { backgroundColor: noteTone.bg, borderColor: noteTone.border }]}
+            onPress={onOpenNotes ?? onPress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`${notes.length} note${notes.length !== 1 ? "s" : ""} attached. Tap to read.`}
+          >
+            <IconSymbol name={noteTone.icon} size={15} color={noteTone.accent} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.noteStripLabel, { color: noteTone.label }]} numberOfLines={1}>
+                {notes.length > 1 ? `${notes.length} Notes · ${topNote.label}` : topNote.label}
+              </Text>
+              <Text style={[styles.noteStripPreview, { color: noteTone.body }]} numberOfLines={1}>
+                {noteToPreview(topNote.text)}
+              </Text>
+            </View>
+            <IconSymbol name="chevron.right" size={14} color={noteTone.accent} />
+          </TouchableOpacity>
+        )}
+
         {/* Pending upload indicator — visible even after picked up */}
         {(pendingCount > 0 || failedCount > 0) && (
           <View style={[styles.uploadBanner, {
@@ -552,6 +578,24 @@ export default function LoadsScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [groupMode, setGroupMode] = useState<"default" | "pickup" | "dropoff" | "shipper" | "pickupState" | "dropoffState">("default");
   const [showSortSheet, setShowSortSheet] = useState(false);
+
+  // Notes quick-view sheet. Tracked by id so a background poll that changes the
+  // notes refreshes what the driver is reading instead of showing a stale copy.
+  const [notesSheetLoadId, setNotesSheetLoadId] = useState<string | null>(null);
+  const notesSheetLoad = useMemo(
+    () => (notesSheetLoadId ? loads.find((l) => l.id === notesSheetLoadId) ?? null : null),
+    [notesSheetLoadId, loads],
+  );
+  const notesSheetNotes = useMemo(
+    () => (notesSheetLoad ? collectLoadNotes(notesSheetLoad) : []),
+    [notesSheetLoad],
+  );
+  const handleOpenNotes = useCallback((load: Load) => {
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setNotesSheetLoadId(load.id);
+  }, []);
 
   // Clear search when switching tabs
   // When the driver switches to the Delivered tab, pull the latest
@@ -1290,6 +1334,61 @@ export default function LoadsScreen() {
             </View>
           </View>
         </Modal>
+        {/* Notes Quick-View Sheet */}
+        <Modal
+          visible={notesSheetLoad !== null && notesSheetNotes.length > 0}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setNotesSheetLoadId(null)}
+        >
+          <View style={styles.sortSheetWrapper}>
+            <Pressable style={styles.sortSheetBackdrop} onPress={() => setNotesSheetLoadId(null)} />
+            <View style={[styles.sortSheetContainer, { backgroundColor: colors.surface }]}>
+              <View style={[styles.sortSheetHandle, { backgroundColor: colors.border }]} />
+              <Text style={[styles.sortSheetTitle, { color: colors.foreground, marginBottom: 2 }]}>
+                {notesSheetNotes.length > 1 ? `${notesSheetNotes.length} Notes` : "Note"}
+              </Text>
+              {notesSheetLoad && (
+                <Text style={[styles.noteSheetSubtitle, { color: colors.muted }]} numberOfLines={1}>
+                  {[notesSheetLoad.vehicles[0]?.year, notesSheetLoad.vehicles[0]?.make, notesSheetLoad.vehicles[0]?.model]
+                    .filter(Boolean)
+                    .join(" ") || `Load #${notesSheetLoad.loadNumber}`}
+                </Text>
+              )}
+              <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+                {notesSheetNotes.map((note) => {
+                  const tone = NOTE_TONE_STYLES[note.tone];
+                  return (
+                    <View
+                      key={note.key}
+                      style={[styles.noteCallout, { backgroundColor: tone.bg, borderColor: tone.border }]}
+                    >
+                      <IconSymbol name={tone.icon} size={16} color={tone.accent} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.noteCalloutLabel, { color: tone.label }]}>{note.label}</Text>
+                        <Text style={[styles.noteCalloutText, { color: tone.body }]} selectable>
+                          {note.text}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+              <TouchableOpacity
+                style={[styles.noteSheetOpenBtn, { backgroundColor: colors.primary }]}
+                activeOpacity={0.85}
+                onPress={() => {
+                  const load = notesSheetLoad;
+                  setNotesSheetLoadId(null);
+                  if (load) handleLoadPress(load);
+                }}
+              >
+                <Text style={styles.noteSheetOpenBtnText}>Open Load</Text>
+                <IconSymbol name="chevron.right" size={15} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
         {/* Offline / stale data banner */}
         {platformLoadError && !isLoadingPlatformLoads && (
           <View style={[styles.offlineBanner, { backgroundColor: colors.warning + "18", borderColor: colors.warning + "44" }]}>
@@ -1334,6 +1433,7 @@ export default function LoadsScreen() {
                   <LoadCard
                     load={item}
                     onPress={() => handleLoadPress(item)}
+                    onOpenNotes={() => handleOpenNotes(item)}
                     onDelete={!item.id.startsWith("platform-") ? () => handleDeleteLoad(item) : undefined}
                     onArchive={item.status === "delivered" ? () => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1795,6 +1895,64 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.2,
+  },
+  noteStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  noteStripLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    marginBottom: 1,
+  },
+  noteStripPreview: {
+    fontSize: 12.5,
+    fontWeight: "500",
+  },
+  noteSheetSubtitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 14,
+  },
+  noteCallout: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 8,
+  },
+  noteCalloutLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    marginBottom: 3,
+  },
+  noteCalloutText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  noteSheetOpenBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 8,
+  },
+  noteSheetOpenBtnText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
   },
   deleteAction: {
     justifyContent: "center" as const,
