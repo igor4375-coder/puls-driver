@@ -163,6 +163,7 @@ function AppContent() {
         photoQueuePending: pending,
         photoQueueUploading: uploading,
         photoQueueFailed: failed,
+        photoQueueBytes: photoQueue.payloadBytes,
       };
     });
     return () => setQueueSnapshotProvider(null);

@@ -113,6 +113,24 @@ const MAX_DONE_ENTRIES = 200;
 // to swap local→HTTPS into inspection.photos before we drop the
 // queue's pointer to the local file.
 const SAFE_PRUNE_MIN_AGE_MS = 60 * 60_000;
+// v85+: how many entries a single sync() pass may touch.
+//
+// sync() used to walk the *entire* ready list in one call. Each uploadEntry
+// updates its entry at least twice, and every update copied the whole entries
+// array to notify listeners, so the work grew with the square of the queue
+// length. On a driver whose backlog could not drain, the pass that starts
+// immediately at launch exhausted the JS heap in about 13 seconds and Hermes
+// aborted the process. Capping the pass keeps that cost flat; the 15-second
+// background tick still drains the backlog steadily.
+const MAX_ENTRIES_PER_SYNC = 12;
+// v85+: coalescing window for listener notifications. A burst of status
+// changes during a sync pass collapses into one React update instead of one
+// per entry.
+const EMIT_THROTTLE_MS = 200;
+// v85+: absolute ceiling on retained entries, regardless of status.
+// pruneDoneEntries only drops done+stamped entries, so a queue full of
+// undrainable pending entries had no upper bound at all.
+const HARD_MAX_ENTRIES = 1500;
 
 function getUploadApiBase(): string {
   const fromEnv =
@@ -195,6 +213,14 @@ export class PhotoQueue {
   // thread (which was the main cause of capture lag past ~12 photos).
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistPending = false;
+  // v85+: coalesced listener notifications. See emit().
+  private emitTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastEmitAt = 0;
+  /** Size of the last persisted payload, for diagnostics. */
+  private lastPayloadBytes = 0;
+  /** Set when emergencyTrim had to bound the queue. Surfaced in diagnostics
+   *  so a runaway queue is visible before it becomes a crash. */
+  lastTrim: { at: number; from: number; to: number; quarantined: number } | null = null;
 
   // v60+ multi-account isolation: each driverCode gets its own scoped storage
   // key. `null` means "no driver signed in" — entries persist under the base
@@ -262,16 +288,71 @@ export class PhotoQueue {
     if (this.loaded) return;
     try {
       const raw = await AsyncStorage.getItem(this.currentStorageKey());
+      this.lastPayloadBytes = raw?.length ?? 0;
       this.entries = raw ? JSON.parse(raw) : [];
       this.entries = this.entries.map((e) =>
         e.status === "uploading" ? { ...e, status: "pending" as PhotoStatus } : e
       );
       this.loaded = true;
+      await this.emergencyTrim();
       this.emit();
     } catch {
       this.entries = [];
       this.loaded = true;
     }
+  }
+
+  /**
+   * Bounds the queue when it has grown past HARD_MAX_ENTRIES.
+   *
+   * Completed entries go first — those already reached R2, so dropping the
+   * local pointer costs nothing. Only if the queue is still over the ceiling
+   * does this touch un-uploaded entries, and those are moved to a quarantine
+   * key rather than deleted, so inspection evidence is never silently
+   * destroyed just because the queue got out of hand.
+   */
+  private async emergencyTrim(): Promise<void> {
+    const startCount = this.entries.length;
+    const overBy = startCount - HARD_MAX_ENTRIES;
+    if (overBy <= 0) return;
+
+    const oldestDone = this.entries
+      .filter((e) => e.status === "done")
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const dropIds = new Set(oldestDone.slice(0, overBy).map((e) => e.clientId));
+    let survivors = this.entries.filter((e) => !dropIds.has(e.clientId));
+
+    let quarantined: PhotoQueueEntry[] = [];
+    if (survivors.length > HARD_MAX_ENTRIES) {
+      const newestFirst = survivors.slice().sort((a, b) => b.createdAt - a.createdAt);
+      survivors = newestFirst.slice(0, HARD_MAX_ENTRIES);
+      quarantined = newestFirst.slice(HARD_MAX_ENTRIES);
+      try {
+        await AsyncStorage.setItem(
+          `${this.currentStorageKey()}:quarantine`,
+          JSON.stringify(quarantined),
+        );
+      } catch {
+        // Quarantine is a courtesy; bounding the queue matters more.
+      }
+    }
+
+    this.entries = survivors;
+    this.lastTrim = {
+      at: Date.now(),
+      from: startCount,
+      to: survivors.length,
+      quarantined: quarantined.length,
+    };
+    console.warn(
+      `[PhotoQueue] emergency trim ${startCount}->${survivors.length} dropped=${dropIds.size} quarantined=${quarantined.length}`,
+    );
+    await this.persist();
+  }
+
+  /** Approximate size of the persisted queue payload, in bytes. */
+  get payloadBytes(): number {
+    return this.lastPayloadBytes;
   }
 
   /** Debounced write — fire-and-forget for hot paths (enqueue, updateEntry). */
@@ -281,7 +362,9 @@ export class PhotoQueue {
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       this.persistPending = false;
-      AsyncStorage.setItem(this.currentStorageKey(), JSON.stringify(this.entries)).catch(() => {});
+      const json = JSON.stringify(this.entries);
+      this.lastPayloadBytes = json.length;
+      AsyncStorage.setItem(this.currentStorageKey(), json).catch(() => {});
     }, 250);
   }
 
@@ -293,11 +376,36 @@ export class PhotoQueue {
     }
     this.persistPending = false;
     try {
-      await AsyncStorage.setItem(this.currentStorageKey(), JSON.stringify(this.entries));
+      const json = JSON.stringify(this.entries);
+      this.lastPayloadBytes = json.length;
+      await AsyncStorage.setItem(this.currentStorageKey(), json);
     } catch {}
   }
 
+  /**
+   * Notifies listeners at most once per EMIT_THROTTLE_MS.
+   *
+   * Fires straight away when idle, so single actions (capturing a photo,
+   * deleting an entry) still feel instant, then coalesces bursts. Without
+   * this, a sync pass over N entries copied the N-length array and re-rendered
+   * the list on every status change, which is what made a large queue
+   * quadratic and eventually fatal.
+   */
   private emit() {
+    if (this.emitTimer) return;
+    const sinceLast = Date.now() - this.lastEmitAt;
+    if (sinceLast >= EMIT_THROTTLE_MS) {
+      this.flushEmit();
+      return;
+    }
+    this.emitTimer = setTimeout(() => {
+      this.emitTimer = null;
+      this.flushEmit();
+    }, EMIT_THROTTLE_MS - sinceLast);
+  }
+
+  private flushEmit() {
+    this.lastEmitAt = Date.now();
     const snapshot = [...this.entries];
     this.listeners.forEach((fn) => fn(snapshot));
   }
@@ -755,8 +863,14 @@ export class PhotoQueue {
     this.syncing = true;
     try {
       const concurrency = await getCurrentConcurrency();
-      for (let i = 0; i < ready.length; i += concurrency) {
-        const batch = ready.slice(i, i + concurrency);
+      // Only ever work a bounded slice per pass. Oldest first, so a backlog
+      // drains in the order it was captured rather than starving early photos.
+      const thisPass = ready
+        .slice()
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .slice(0, MAX_ENTRIES_PER_SYNC);
+      for (let i = 0; i < thisPass.length; i += concurrency) {
+        const batch = thisPass.slice(i, i + concurrency);
         await Promise.all(batch.map((entry) => this.uploadEntry(entry)));
       }
     } finally {

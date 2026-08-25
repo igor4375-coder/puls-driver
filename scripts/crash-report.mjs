@@ -38,7 +38,7 @@ for (const r of rows) {
   console.log(`  driver=${r.driverCode ?? "?"}  build=${r.buildTag ?? "?"}  device=${r.deviceModel ?? "?"} iOS ${r.osVersion ?? "?"}  ram=${mb(r.totalMemoryBytes)}`);
   console.log(`  appState=${r.appState ?? "?"}  route=${r.route ?? "?"}  memoryWarnings=${r.memoryWarnings ?? 0}`);
   console.log(
-    `  photoQueue: total=${r.photoQueueTotal ?? "?"} pending=${r.photoQueuePending ?? "?"} uploading=${r.photoQueueUploading ?? "?"} failed=${r.photoQueueFailed ?? "?"}  syncQueue=${r.syncQueueDepth ?? "?"}`,
+    `  photoQueue: total=${r.photoQueueTotal ?? "?"} pending=${r.photoQueuePending ?? "?"} uploading=${r.photoQueueUploading ?? "?"} failed=${r.photoQueueFailed ?? "?"} payload=${mb(r.photoQueueBytes)}  syncQueue=${r.syncQueueDepth ?? "?"}`,
   );
   if (r.silentForMs != null) {
     console.log(`  silent for ${Math.round(r.silentForMs / 1000)}s before relaunch`);

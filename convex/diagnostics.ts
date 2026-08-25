@@ -26,6 +26,7 @@ const reportFields = {
   photoQueuePending: v.optional(v.number()),
   photoQueueUploading: v.optional(v.number()),
   photoQueueFailed: v.optional(v.number()),
+  photoQueueBytes: v.optional(v.float64()),
   syncQueueDepth: v.optional(v.number()),
   memoryWarnings: v.optional(v.number()),
   breadcrumbs: v.optional(v.array(v.string())),

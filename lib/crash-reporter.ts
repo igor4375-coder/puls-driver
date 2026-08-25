@@ -45,6 +45,7 @@ export interface QueueSnapshot {
   photoQueuePending?: number;
   photoQueueUploading?: number;
   photoQueueFailed?: number;
+  photoQueueBytes?: number;
   syncQueueDepth?: number;
 }
 
@@ -223,6 +224,7 @@ async function reportPreviousSession(): Promise<void> {
     photoQueuePending: previous.photoQueuePending,
     photoQueueUploading: previous.photoQueueUploading,
     photoQueueFailed: previous.photoQueueFailed,
+    photoQueueBytes: previous.photoQueueBytes,
     syncQueueDepth: previous.syncQueueDepth,
     memoryWarnings: previous.memoryWarnings,
     breadcrumbs: previous.breadcrumbs,
@@ -279,6 +281,7 @@ export function reportError(error: unknown, context?: string): void {
     photoQueuePending: session.photoQueuePending,
     photoQueueUploading: session.photoQueueUploading,
     photoQueueFailed: session.photoQueueFailed,
+    photoQueueBytes: session.photoQueueBytes,
     syncQueueDepth: session.syncQueueDepth,
     memoryWarnings: session.memoryWarnings,
     breadcrumbs: [...session.breadcrumbs],
@@ -315,6 +318,7 @@ function handleMemoryWarning(): void {
     photoQueuePending: session.photoQueuePending,
     photoQueueUploading: session.photoQueueUploading,
     photoQueueFailed: session.photoQueueFailed,
+    photoQueueBytes: session.photoQueueBytes,
     syncQueueDepth: session.syncQueueDepth,
     memoryWarnings: session.memoryWarnings,
     breadcrumbs: [...session.breadcrumbs],

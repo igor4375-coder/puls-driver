@@ -195,6 +195,10 @@ export default defineSchema({
     photoQueuePending: v.optional(v.number()),
     photoQueueUploading: v.optional(v.number()),
     photoQueueFailed: v.optional(v.number()),
+    /** Size of the persisted photo queue payload. A queue that cannot drain
+     *  grows without bound and is what exhausted the JS heap in the v84
+     *  crashes, so it is worth watching directly. */
+    photoQueueBytes: v.optional(v.float64()),
     syncQueueDepth: v.optional(v.number()),
     memoryWarnings: v.optional(v.number()),
     breadcrumbs: v.optional(v.array(v.string())),
