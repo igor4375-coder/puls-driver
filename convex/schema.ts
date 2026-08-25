@@ -162,4 +162,48 @@ export default defineSchema({
     .index("by_clerkUserId", ["clerkUserId"])
     .index("by_vin", ["vin"])
     .index("by_status", ["status"]),
+
+  /**
+   * Client-side diagnostics. The driver app has no native crash reporter, so
+   * an OS-level kill (out-of-memory jetsam, watchdog timeout) leaves no trace
+   * at all — no JS error is ever thrown. Instead the app heartbeats a session
+   * record to disk; if a session is found on the next launch it means the
+   * process died without shutting down, and we report it here along with the
+   * state it was in when it stopped breathing.
+   */
+  clientDiagnostics: defineTable({
+    kind: v.union(
+      v.literal("abnormal_termination"),
+      v.literal("js_error"),
+      v.literal("memory_warning"),
+    ),
+    sessionId: v.string(),
+    driverCode: v.optional(v.string()),
+    buildTag: v.optional(v.string()),
+    updateId: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    osVersion: v.optional(v.string()),
+    deviceModel: v.optional(v.string()),
+    totalMemoryBytes: v.optional(v.float64()),
+    message: v.optional(v.string()),
+    stack: v.optional(v.string()),
+    /** App state at the last heartbeat. "active" means it died in the
+     *  driver's hands, which is the case worth paging on. */
+    appState: v.optional(v.string()),
+    route: v.optional(v.string()),
+    photoQueueTotal: v.optional(v.number()),
+    photoQueuePending: v.optional(v.number()),
+    photoQueueUploading: v.optional(v.number()),
+    photoQueueFailed: v.optional(v.number()),
+    syncQueueDepth: v.optional(v.number()),
+    memoryWarnings: v.optional(v.number()),
+    breadcrumbs: v.optional(v.array(v.string())),
+    sessionStartedAt: v.optional(v.float64()),
+    lastHeartbeatAt: v.optional(v.float64()),
+    /** Gap between the final heartbeat and the next launch. */
+    silentForMs: v.optional(v.float64()),
+    reportedAt: v.string(),
+  })
+    .index("by_driverCode", ["driverCode"])
+    .index("by_kind", ["kind"]),
 });

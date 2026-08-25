@@ -9,6 +9,7 @@
  */
 
 import type * as companies from "../companies.js";
+import type * as diagnostics from "../diagnostics.js";
 import type * as driverProfiles from "../driverProfiles.js";
 import type * as expenses from "../expenses.js";
 import type * as fieldPickups from "../fieldPickups.js";
@@ -25,6 +26,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   companies: typeof companies;
+  diagnostics: typeof diagnostics;
   driverProfiles: typeof driverProfiles;
   expenses: typeof expenses;
   fieldPickups: typeof fieldPickups;

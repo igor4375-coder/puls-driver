@@ -31,6 +31,11 @@ import { PermissionsProvider } from "@/lib/permissions-context";
 import { SyncStatusBanner } from "@/components/sync-status-banner";
 import { UpdateVersionBanner } from "@/components/update-version-banner";
 import { ErrorBoundary } from "@/components/error-boundary";
+import {
+  initCrashReporter,
+  setQueueSnapshotProvider,
+  setDiagnosticContext,
+} from "@/lib/crash-reporter";
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
 import { photoQueue } from "@/lib/photo-queue";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
@@ -45,6 +50,11 @@ const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "
 const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL ?? "";
 
 const convex = CONVEX_URL ? new ConvexReactClient(CONVEX_URL) : null;
+
+// Started at module scope rather than in an effect so the previous session's
+// crash record is picked up, and the global error handler is installed, before
+// any of the app's own code gets a chance to fail.
+void initCrashReporter();
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -95,6 +105,10 @@ function LoadsProviderWithAuth({ children }: { children: React.ReactNode }) {
     );
   }, [driverCode]);
 
+  useEffect(() => {
+    setDiagnosticContext({ driverCode });
+  }, [driverCode]);
+
   return (
     <PermissionsProvider driverCode={driverCode}>
       <LoadsProvider driverCode={driverCode}>
@@ -128,6 +142,30 @@ function AppContent() {
   useEffect(() => {
     photoQueue.startBackgroundRetry();
     return () => photoQueue.stopBackgroundRetry();
+  }, []);
+
+  // Queue depth is the single most useful number attached to a crash: an
+  // out-of-memory kill on a driver with a large photo backlog looks completely
+  // different from one on an idle queue.
+  useEffect(() => {
+    setQueueSnapshotProvider(() => {
+      const entries = photoQueue.getEntries();
+      let pending = 0;
+      let uploading = 0;
+      let failed = 0;
+      for (const entry of entries) {
+        if (entry.status === "pending") pending += 1;
+        else if (entry.status === "uploading") uploading += 1;
+        else if (entry.status === "failed") failed += 1;
+      }
+      return {
+        photoQueueTotal: entries.length,
+        photoQueuePending: pending,
+        photoQueueUploading: uploading,
+        photoQueueFailed: failed,
+      };
+    });
+    return () => setQueueSnapshotProvider(null);
   }, []);
 
   return (

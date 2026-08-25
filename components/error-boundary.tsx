@@ -1,5 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { reportError } from "@/lib/crash-reporter";
 
 interface Props {
   children: React.ReactNode;
@@ -22,6 +23,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[ErrorBoundary] Uncaught error:", error, info.componentStack);
+    reportError(error, `render${info.componentStack?.split("\n")[1] ?? ""}`);
   }
 
   handleReset = () => {

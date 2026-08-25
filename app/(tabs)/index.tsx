@@ -35,6 +35,7 @@ import {
   getPaymentLabel,
 } from "@/lib/data";
 import { collectLoadNotes, noteToPreview, NOTE_TONE_STYLES } from "@/lib/load-notes";
+import { addBreadcrumb } from "@/lib/crash-reporter";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -777,6 +778,7 @@ export default function LoadsScreen() {
 
   const handleLoadPress = (load: Load) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    addBreadcrumb(`open load ${load.loadNumber ?? load.id}`);
     router.push(`/load/${load.id}` as any);
   };
 

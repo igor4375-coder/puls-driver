@@ -1,0 +1,68 @@
+#!/usr/bin/expect -f
+set timeout 300
+set udid [lindex $argv 0]
+set name [lindex $argv 1]
+if {$udid eq "" || $name eq ""} { puts "Usage: register-device.expect UDID Name"; exit 1 }
+
+cd "/Users/rico/Library/CloudStorage/Dropbox/Driver App"
+spawn -noecho npx eas-cli@latest device:create
+
+expect {
+  timeout { puts "TIMEOUT at start"; exit 1 }
+  -re "Would you like to use the.*account" { send "\r" }
+}
+
+expect {
+  timeout { puts "TIMEOUT at Apple login"; exit 1 }
+  "Restoring session" { }
+  -re {\? Apple ID:} {
+    send "\r"
+    expect "Restoring session"
+  }
+}
+
+expect {
+  timeout { puts "TIMEOUT waiting for login"; exit 1 }
+  "Logged in Local session"
+}
+
+sleep 2.0
+send "\033\[B"
+sleep 0.3
+send "\033\[B"
+sleep 0.3
+send "\r"
+
+expect {
+  timeout { puts "TIMEOUT at UDID prompt"; exit 1 }
+  -re {UDID:} { send "$udid\r" }
+}
+
+expect {
+  timeout { puts "TIMEOUT at device name"; exit 1 }
+  -re {Device name} { send "$name\r" }
+}
+
+expect {
+  timeout { puts "TIMEOUT at device class"; exit 1 }
+  -re {Device class.*iPhone}
+}
+sleep 0.5
+send "\r"
+
+expect {
+  timeout { puts "TIMEOUT at confirm"; exit 1 }
+  -re {Is this what you want to register} { send "y\r" }
+}
+
+expect {
+  timeout { puts "TIMEOUT at register another"; exit 1 }
+  -re {Do you want to register another device} { send "n\r" }
+}
+
+expect {
+  timeout { puts "TIMEOUT waiting for Registered"; exit 1 }
+  "Registered"
+}
+
+expect eof
