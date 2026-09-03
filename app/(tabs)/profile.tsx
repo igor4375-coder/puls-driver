@@ -279,11 +279,14 @@ export default function ProfileScreen() {
   const updateProfileMutation = useMutation(api.driverProfiles.updateProfile);
 
   const driverCode = convexProfile?.driverCode ?? driver?.driverCode ?? null;
-  const isValidLocalCode = /^D-\d{5}$/.test(driverCode ?? "");
 
   const platformDriverCode = convexProfile?.platformDriverCode ?? null;
   const inviteCode = platformDriverCode ?? driverCode;
-  const isValidCode = /^D-\d{5}$/.test(inviteCode ?? "");
+  // Deliberately not format-checked. Dispatch owns the code format and mints
+  // six digits, so the old /^D-\d{5}$/ test silently disabled invite polling
+  // for every driver who adopted a platform code. An unknown code costs one
+  // empty indexed lookup, which is cheaper than guessing the shape wrong.
+  const hasInviteCode = !!inviteCode;
 
   // Register push token once profile is loaded
   const tokenRegistered = useRef(false);
@@ -339,7 +342,7 @@ export default function ProfileScreen() {
   const hasFetchedInvites = useRef(false);
 
   const fetchInvites = useCallback(async () => {
-    if (!isValidCode || !inviteCode) return;
+    if (!hasInviteCode || !inviteCode) return;
     if (!hasFetchedInvites.current) setInvitesLoading(true);
     try {
       const result = await getPendingInvitesAction({ driverCode: inviteCode });
@@ -351,7 +354,7 @@ export default function ProfileScreen() {
       setInvitesLoading(false);
       hasFetchedInvites.current = true;
     }
-  }, [isValidCode, inviteCode, getPendingInvitesAction]);
+  }, [hasInviteCode, inviteCode, getPendingInvitesAction]);
 
   useEffect(() => {
     fetchInvites();
@@ -642,7 +645,7 @@ export default function ProfileScreen() {
         </TouchableOpacity>
 
         {/* ── PENDING INVITES SECTION ── */}
-        {isValidCode && (invitesLoading || inviteCount > 0) && (
+        {hasInviteCode && (invitesLoading || inviteCount > 0) && (
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.warning + "60" }]}>
             <View style={styles.sectionTitleRow}>
               <Text style={[styles.sectionTitle, { color: colors.warning }]}>PENDING INVITATIONS</Text>

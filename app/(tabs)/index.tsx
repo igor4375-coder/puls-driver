@@ -621,10 +621,9 @@ export default function LoadsScreen() {
   // Fetch the DB profile by local code — same source as Profile screen.
   // getMyProfile only works for session-auth users; getProfileByCode works for all phone-auth drivers.
   const localDriverCode = driver?.driverCode ?? null;
-  const isValidLocalCode = /^D-\d{5}$/.test(localDriverCode ?? "");
   const { data: dbProfile } = trpc.driver.getProfileByCode.useQuery(
     { driverCode: localDriverCode ?? "D-00000" },
-    { enabled: isValidLocalCode, retry: false, staleTime: 60_000 }
+    { enabled: !!localDriverCode, retry: false, staleTime: 60_000 }
   );
   // Platform code (D-68544) takes priority; fall back to local code only if platform code not yet assigned
   const displayDriverCode = dbProfile?.platformDriverCode ?? localDriverCode ?? null;

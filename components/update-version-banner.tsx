@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v86-photo-upload-dedup";
+export const BUILD_TAG = "v87-driver-code-identity";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();

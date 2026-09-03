@@ -107,34 +107,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Register driver on the company platform if not yet registered.
   // This gives the driver a platformDriverCode that dispatchers can use to invite them.
   const platformRegAttempted = React.useRef(false);
+  const platformRegFailures = React.useRef(0);
+  const platformRegTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [platformRegNonce, setPlatformRegNonce] = useState(0);
+  const needsPlatformReg = !!activeProfile && !activeProfile.platformDriverCode;
+
   useEffect(() => {
     if (!activeProfile || activeProfile.platformDriverCode || platformRegAttempted.current) return;
     if (!clerkUser?.id) return;
     platformRegAttempted.current = true;
 
+    const clerkUserId = clerkUser.id;
     const name = activeProfile.name ?? "Driver";
     const phone = activeProfile.phone ?? "";
     const email = activeProfile.email
       ?? clerkUser.primaryEmailAddress?.emailAddress
       ?? "";
 
+    // Clearing the ref alone doesn't re-run this effect, so a registration
+    // dropped on bad signal used to wait for the next cold start — and a
+    // driver who never force-quits could hold an unregistered code for days.
+    // Reschedule with backoff instead, capped so we stop hammering.
+    const scheduleRetry = () => {
+      platformRegAttempted.current = false;
+      platformRegFailures.current += 1;
+      const delay = Math.min(30_000 * 2 ** (platformRegFailures.current - 1), 10 * 60_000);
+      if (platformRegTimer.current) clearTimeout(platformRegTimer.current);
+      platformRegTimer.current = setTimeout(() => setPlatformRegNonce((n) => n + 1), delay);
+    };
+
     console.log("[Auth] Registering driver on company platform:", { name, phone, email, driverCode: activeProfile.driverCode });
 
-    registerDriverOnPlatform({ name, phone, email, driverCode: activeProfile.driverCode })
+    registerDriverOnPlatform({ name, phone, email, clerkUserId, driverCode: activeProfile.driverCode })
       .then((platformId) => {
-        if (platformId && clerkUser?.id) {
-          updateProfile({ clerkUserId: clerkUser.id, platformDriverCode: platformId });
+        if (platformId) {
+          platformRegFailures.current = 0;
+          updateProfile({ clerkUserId, platformDriverCode: platformId });
           console.log("[Auth] Registered on company platform:", platformId);
         } else {
-          console.warn("[Auth] Platform registration returned null — will retry on next mount");
-          platformRegAttempted.current = false;
+          console.warn("[Auth] Platform registration returned null — will retry");
+          scheduleRetry();
         }
       })
       .catch((err) => {
         console.warn("[Auth] Platform registration failed (will retry):", err);
-        platformRegAttempted.current = false;
+        scheduleRetry();
       });
-  }, [activeProfile, clerkUser?.id]);
+  }, [activeProfile, clerkUser?.id, platformRegNonce]);
+
+  useEffect(() => () => {
+    if (platformRegTimer.current) clearTimeout(platformRegTimer.current);
+  }, []);
 
   const driver: Driver | null = useMemo(() => {
     if (!effectiveSignedIn || !effectiveClerkId || !activeProfile) return null;
@@ -177,13 +200,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const handleAppStateChange = (nextState: AppStateStatus) => {
-      if (nextState === "active" && driver?.driverCode && clerkUser?.id) {
+      if (nextState !== "active") return;
+      if (driver?.driverCode && clerkUser?.id) {
         refreshPushTokenIfNeeded(driver.driverCode, updateProfile, registerPlatformToken, clerkUser.id, pushSyncOpts);
+      }
+      // Returning to foreground is the cheapest signal that connectivity may
+      // be back, so retry ahead of the backoff timer while a code is missing.
+      if (needsPlatformReg) {
+        setPlatformRegNonce((n) => n + 1);
       }
     };
     const subscription = AppState.addEventListener("change", handleAppStateChange);
     return () => subscription.remove();
-  }, [driver?.driverCode, clerkUser?.id, pushSyncOpts]);
+  }, [driver?.driverCode, clerkUser?.id, pushSyncOpts, needsPlatformReg]);
 
   const logout = async () => {
     setHadSession(false);

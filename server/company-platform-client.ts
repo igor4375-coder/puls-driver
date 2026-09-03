@@ -599,18 +599,20 @@ export async function registerDriver(
   phone: string,
   localDriverCode?: string
 ): Promise<string | null> {
-  const normalizedPhone = phone && phone.trim() ? phone.trim() : "000-000-0000";
+  // See convex/platform.ts:registerDriver — a "000-000-0000" filler is a
+  // valid phone to dispatch's normalizer, so it collapsed every phone-less
+  // driver onto the first one. Send the field only when it's real.
+  const trimmedPhone = phone && phone.trim() ? phone.trim() : undefined;
   const url = `${BASE_URL}/driversApi.registerDriver?batch=1`;
 
   const body = {
     "0": {
       json: {
         name,
-        email: "",
-        phone: normalizedPhone,
         truckType: "",
         capacity: 1,
         mcNumber: "",
+        ...(trimmedPhone ? { phone: trimmedPhone } : {}),
         ...(localDriverCode ? { driverCode: localDriverCode } : {}),
       },
     },

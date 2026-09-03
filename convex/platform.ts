@@ -378,30 +378,37 @@ export const registerDriver = action({
     phone: v.string(),
     email: v.optional(v.string()),
     driverCode: v.optional(v.string()),
+    clerkUserId: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     if (!BASE_URL) {
       console.warn("[registerDriver] COMPANY_PLATFORM_URL not set — skipping");
       return null;
     }
-    const normalizedPhone = args.phone?.trim() || "000-000-0000";
+    // Omit an absent phone rather than filling it. "000-000-0000" normalizes
+    // to a perfectly valid +10000000000 on dispatch, so every phone-less
+    // signup matched the previous one on phone and was handed that driver's
+    // code instead of being inserted. Same reasoning for a blank email.
+    const phone = args.phone?.trim() || undefined;
+    const email = args.email?.trim() || undefined;
 
     try {
       const result = await callTRPC<{ driverId?: string }>(
         "driversApi.registerDriver",
         {
           name: args.name,
-          email: args.email?.trim() || "",
-          phone: normalizedPhone,
           truckType: "",
           capacity: 1,
           mcNumber: "",
+          ...(phone ? { phone } : {}),
+          ...(email ? { email } : {}),
           ...(args.driverCode ? { driverCode: args.driverCode } : {}),
+          ...(args.clerkUserId ? { clerkUserId: args.clerkUserId } : {}),
         },
         "mutation",
       );
       const driverId = result?.driverId ?? null;
-      console.log("[registerDriver] Success:", { driverId, name: args.name, phone: normalizedPhone });
+      console.log("[registerDriver] Success:", { driverId, name: args.name, phone: phone ?? "(none)" });
       return driverId;
     } catch (err) {
       console.error("[registerDriver] Failed:", err);
