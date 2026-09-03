@@ -73,8 +73,16 @@ async function startServer() {
       const clientId = (req.query.clientId as string) || "";
       const contentType = ext === "png" ? "image/png" : "image/jpeg";
 
-      const suffix = Math.random().toString(36).slice(2, 10);
-      const key = `${groupKey}/${Date.now()}-${suffix}.${ext}`;
+      // The key is derived from the caller's clientId so that re-uploading
+      // the same photo overwrites one object instead of minting a new URL
+      // each attempt. Dispatch dedups inspection photos by URL, so unstable
+      // keys made every retry look like an additional photo (one leg
+      // accumulated 718 entries for ~36 captures). Callers that don't send
+      // a clientId keep the old random key.
+      const safeClientId = clientId.replace(/[^a-zA-Z0-9_-]/g, "");
+      const key = safeClientId
+        ? `${groupKey}/${safeClientId}.${ext}`
+        : `${groupKey}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
 
       const result = await createPresignedUploadUrl(key, contentType);
       res.json({ ...result, clientId });

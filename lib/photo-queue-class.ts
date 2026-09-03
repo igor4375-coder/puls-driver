@@ -91,12 +91,16 @@ const BACKGROUND_INTERVAL_MS = 15_000;
 // drops (NSURLErrorDomain Code=-1005) on weak LTE signal.
 const UPLOAD_CONCURRENCY_CELLULAR = 2;
 const UPLOAD_CONCURRENCY_WIFI = 4;
-const STALE_UPLOAD_MS = 60_000;
 // v66+: longer cellular timeout. A genuinely-slow 500 KB upload over
 // 2-bar LTE can take 60–80 s — better to wait than time out and waste
 // the bytes already in flight.
 const UPLOAD_TIMEOUT_WIFI_MS = 30_000;
 const UPLOAD_TIMEOUT_CELLULAR_MS = 90_000;
+// Must stay above UPLOAD_TIMEOUT_CELLULAR_MS. At the previous 60 s this
+// fired while a legitimate cellular upload was still running, so the
+// entry was retried, the original request still landed on R2, and the
+// photo existed twice.
+const STALE_UPLOAD_MS = UPLOAD_TIMEOUT_CELLULAR_MS + 30_000;
 // v65+: a queue entry that's been "pending" with at least one failed
 // attempt and a recorded error for longer than this threshold is
 // considered stuck for UI purposes (surfaced as "Stuck" to the driver
@@ -198,6 +202,13 @@ export class PhotoQueue {
   entries: PhotoQueueEntry[] = [];
   private listeners: Set<Listener> = new Set();
   private syncing = false;
+  // clientIds with an HTTP request live in THIS process right now. The
+  // stale-upload watchdog exists to rescue entries orphaned when the app
+  // was killed mid-upload; it must not reclaim a request that is still
+  // running, or the retry uploads the same bytes a second time. After a
+  // relaunch this set is empty, so genuinely orphaned entries are still
+  // rescued on the first sync tick.
+  private inFlight: Set<string> = new Set();
   private loaded = false;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private appStateSub: { remove: () => void } | null = null;
@@ -824,11 +835,18 @@ export class PhotoQueue {
 
     const now = Date.now();
 
-    // Watchdog: reset entries stuck in "uploading" for over 60 s back to
-    // "pending" so they get retried instead of hanging forever.
+    // Watchdog: reset entries orphaned in "uploading" back to "pending" so
+    // they get retried instead of hanging forever. Entries whose request is
+    // still live in this process are skipped — retrying those duplicated the
+    // upload rather than rescuing it.
     let rescued = false;
     for (const e of this.entries) {
-      if (e.status === "uploading" && e.lastAttemptAt && now - e.lastAttemptAt > STALE_UPLOAD_MS) {
+      if (
+        e.status === "uploading" &&
+        !this.inFlight.has(e.clientId) &&
+        e.lastAttemptAt &&
+        now - e.lastAttemptAt > STALE_UPLOAD_MS
+      ) {
         e.status = "pending";
         rescued = true;
       }
@@ -879,6 +897,15 @@ export class PhotoQueue {
   }
 
   private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
+    this.inFlight.add(entry.clientId);
+    try {
+      await this.uploadEntryInner(entry);
+    } finally {
+      this.inFlight.delete(entry.clientId);
+    }
+  }
+
+  private async uploadEntryInner(entry: PhotoQueueEntry): Promise<void> {
     this.updateEntry(entry.clientId, { status: "uploading", lastAttemptAt: Date.now() });
 
     // v66+: snapshot the current network state ONCE per upload attempt
