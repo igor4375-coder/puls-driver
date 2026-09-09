@@ -14,6 +14,12 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
+import {
+  liveSignIn,
+  liveSignUp,
+  oauthOnlyMessage,
+  clerkErrorMessage,
+} from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -90,62 +96,37 @@ export default function EmailEntryScreen() {
           return;
         }
       } else {
-        if (si.status === "needs_first_factor") {
-          const hasEmailCode = si.supportedFirstFactors?.some(
-            (f: any) => f.strategy === "email_code",
-          );
-          const ssoFactor = si.supportedFirstFactors?.find(
-            (f: any) => f.strategy?.startsWith("oauth_"),
-          );
+        // Ask for the code first rather than gating on `si.status`, which is a
+        // pre-create snapshot at this point and never reads as
+        // "needs_first_factor". Only inspect live state if sending fails.
+        const { error: sendErr } = await si.emailCode.sendCode();
 
-          if (hasEmailCode) {
-            const { error: sendErr } = await si.emailCode.sendCode();
-
-            if (sendErr) {
-              setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send code");
-              return;
-            }
-
-            router.push({
-              pathname: "/(auth)/phone-verify" as any,
-              params: {
-                identifier: trimmedEmail,
-                displayIdentifier: trimmedEmail,
-                isExistingUser: "1",
-                flow: "signIn",
-                method: "email",
-                ...(isAddMode ? { mode: "add" } : {}),
-              },
-            });
-            return;
-          }
-
-          if (ssoFactor) {
-            const provider = ssoFactor.strategy.replace("oauth_", "");
-            const label =
-              provider === "google"
-                ? "Google"
-                : provider === "apple"
-                  ? "Apple"
-                  : provider;
-            setError(
-              `This account uses ${label} sign-in. Go back and tap "Continue with ${label}".`,
-            );
-            return;
-          }
-
-          setError("No supported sign-in method found for this account.");
+        if (!sendErr) {
+          router.push({
+            pathname: "/(auth)/phone-verify" as any,
+            params: {
+              identifier: trimmedEmail,
+              displayIdentifier: trimmedEmail,
+              isExistingUser: "1",
+              flow: "signIn",
+              method: "email",
+              ...(isAddMode ? { mode: "add" } : {}),
+            },
+          });
           return;
         }
 
-        if (si.status === "complete") {
+        const live = liveSignIn(clerk);
+
+        if (live?.status === "complete") {
           await si.finalize();
           while (router.canGoBack()) router.back();
           setTimeout(() => router.replace("/(tabs)"), 100);
           return;
         }
 
-        setError("Unexpected sign-in state. Please try again.");
+        const ssoMessage = oauthOnlyMessage(live?.supportedFirstFactors);
+        setError(ssoMessage ?? clerkErrorMessage(sendErr, "Failed to send code"));
         return;
       }
 
@@ -162,27 +143,21 @@ export default function EmailEntryScreen() {
       });
 
       if (suCreateErr) {
-        const msg =
-          (suCreateErr as any).errors?.[0]?.longMessage ??
-          (suCreateErr as any).errors?.[0]?.message ??
-          suCreateErr.longMessage ??
-          suCreateErr.message ??
-          "Sign-up failed";
-        setError(msg);
-        return;
-      }
-
-      if (su.status === "complete") {
-        await su.finalize();
-        while (router.canGoBack()) router.back();
-        setTimeout(() => router.replace("/(tabs)"), 100);
+        setError(clerkErrorMessage(suCreateErr, "Sign-up failed"));
         return;
       }
 
       const { error: sendErr } = await su.verifications.sendEmailCode();
 
       if (sendErr) {
-        setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send verification code");
+        // A sign-up that completed outright has nothing left to verify.
+        if (liveSignUp(clerk)?.status === "complete") {
+          await su.finalize();
+          while (router.canGoBack()) router.back();
+          setTimeout(() => router.replace("/(tabs)"), 100);
+          return;
+        }
+        setError(clerkErrorMessage(sendErr, "Failed to send verification code"));
         return;
       }
 

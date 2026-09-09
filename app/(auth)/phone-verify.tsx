@@ -13,6 +13,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk } from "@clerk/expo";
+import { clerkErrorMessage } from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -122,45 +123,34 @@ export default function VerifyScreen() {
           throw new Error("Sign-in session expired. Please go back and try again.");
         }
 
-        // Verify the code using the new API
-        const verifyFn = isEmail
-          ? si.emailCode?.verifyCode
-          : si.phoneCode?.verifyCode;
-
-        if (!verifyFn) {
-          throw new Error("Verification method unavailable. Please go back and try again.");
-        }
-
         const { error: verifyErr } = await (isEmail
           ? si.emailCode.verifyCode({ code: enteredCode })
           : si.phoneCode.verifyCode({ code: enteredCode }));
 
         if (verifyErr) {
-          const msg =
-            (verifyErr as any).errors?.[0]?.longMessage ??
-            (verifyErr as any).errors?.[0]?.message ??
-            verifyErr.longMessage ??
-            verifyErr.message ??
-            "Invalid code. Please try again.";
-          setError(msg);
+          setError(clerkErrorMessage(verifyErr, "Invalid code. Please try again."));
           setDigits(Array(CODE_LENGTH).fill(""));
           setTimeout(() => inputRefs.current[0]?.focus(), 100);
           return;
         }
 
-        if (si.status === "complete") {
-          const { error: finalizeErr } = await si.finalize();
-          if (finalizeErr) {
-            console.log("[Verify] finalize error:", finalizeErr.message);
-          }
-          if (Platform.OS !== "web") {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-          navigateToApp();
-        } else {
-          console.log("[Verify] SignIn status after verify:", si.status);
-          setError("Verification incomplete. Please try again.");
+        // `si.status` is the snapshot from before verifyCode resolved, so it
+        // still reads "needs_first_factor" on a code that just succeeded.
+        // finalize() is the authoritative check — it fails if the sign-in
+        // genuinely isn't complete.
+        const { error: finalizeErr } = await si.finalize();
+
+        if (finalizeErr) {
+          setError(clerkErrorMessage(finalizeErr, "Verification incomplete. Please try again."));
+          setDigits(Array(CODE_LENGTH).fill(""));
+          setTimeout(() => inputRefs.current[0]?.focus(), 100);
+          return;
         }
+
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        navigateToApp();
       } else {
         // Sign-Up verification
         if (!su) {
@@ -172,49 +162,28 @@ export default function VerifyScreen() {
           : su.verifications.verifyPhoneCode({ code: enteredCode }));
 
         if (verifyErr) {
-          const msg =
-            (verifyErr as any).errors?.[0]?.longMessage ??
-            (verifyErr as any).errors?.[0]?.message ??
-            verifyErr.longMessage ??
-            verifyErr.message ??
-            "Invalid code. Please try again.";
-          setError(msg);
+          setError(clerkErrorMessage(verifyErr, "Invalid code. Please try again."));
           setDigits(Array(CODE_LENGTH).fill(""));
           setTimeout(() => inputRefs.current[0]?.focus(), 100);
           return;
         }
 
-        console.log("[Verify] SignUp status after verify:", su.status);
+        // Same stale-snapshot reason as the sign-in branch: let finalize()
+        // decide, and report what it says when the sign-up really is missing
+        // something rather than inventing a status string.
+        const { error: finalizeErr } = await su.finalize();
 
-        if (su.status === "complete") {
-          const { error: finalizeErr } = await su.finalize();
-          if (finalizeErr) {
-            console.log("[Verify] finalize error:", finalizeErr.message);
-          }
-          if (Platform.OS !== "web") {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-          navigateToApp();
-        } else if (su.status === "missing_requirements") {
-          const missing = su.missingFields || [];
-          const unverified = su.unverifiedFields || [];
-          console.log("[Verify] missing_requirements — missing:", missing, "unverified:", unverified);
-
-          if (missing.length === 0 && unverified.length === 0) {
-            const { error: finalizeErr } = await su.finalize();
-            if (finalizeErr) {
-              setError(`Sign-up incomplete: ${finalizeErr.longMessage ?? finalizeErr.message}`);
-            } else {
-              navigateToApp();
-            }
-          } else {
-            setError(
-              `Additional info needed: ${missing.join(", ") || unverified.join(", ")}. Please try again.`,
-            );
-          }
-        } else {
-          setError(`Verification status: ${su.status}. Please try again.`);
+        if (finalizeErr) {
+          setError(clerkErrorMessage(finalizeErr, "Sign-up incomplete. Please try again."));
+          setDigits(Array(CODE_LENGTH).fill(""));
+          setTimeout(() => inputRefs.current[0]?.focus(), 100);
+          return;
         }
+
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        navigateToApp();
       }
     } catch (err: any) {
       if (Platform.OS !== "web") {

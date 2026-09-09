@@ -12,7 +12,8 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useSignUp, useSignIn } from "@clerk/expo";
+import { useSignUp, useSignIn, useClerk } from "@clerk/expo";
+import { liveSignIn, oauthOnlyMessage, clerkErrorMessage } from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -34,6 +35,7 @@ export default function PhoneEntryScreen() {
 
   const { signUp } = useSignUp();
   const { signIn } = useSignIn();
+  const clerk = useClerk();
 
   const formatPhone = (raw: string) => {
     const digits = raw.replace(/\D/g, "");
@@ -100,18 +102,13 @@ export default function PhoneEntryScreen() {
             return;
           }
           userNotFound = true;
-        } else if (si.status === "needs_first_factor") {
-          const hasPhoneCode = si.supportedFirstFactors?.some(
-            (f: any) => f.strategy === "phone_code",
-          );
+        } else {
+          // Request the code instead of gating on `si.status`, which is still
+          // the pre-create snapshot here. The old check fell through to a bare
+          // `return`, so the button just stopped with no message at all.
+          const { error: sendErr } = await si.phoneCode.sendCode();
 
-          if (hasPhoneCode) {
-            const { error: sendErr } = await si.phoneCode.sendCode();
-            if (sendErr) {
-              setError(sendErr.longMessage ?? sendErr.message ?? "Failed to send code");
-              return;
-            }
-
+          if (!sendErr) {
             router.push({
               pathname: "/(auth)/phone-verify" as any,
               params: {
@@ -125,10 +122,18 @@ export default function PhoneEntryScreen() {
             });
             return;
           }
-        } else if (si.status === "complete") {
-          await si.finalize();
-          while (router.canGoBack()) router.back();
-          setTimeout(() => router.replace("/(tabs)"), 100);
+
+          const live = liveSignIn(clerk);
+
+          if (live?.status === "complete") {
+            await si.finalize();
+            while (router.canGoBack()) router.back();
+            setTimeout(() => router.replace("/(tabs)"), 100);
+            return;
+          }
+
+          const ssoMessage = oauthOnlyMessage(live?.supportedFirstFactors);
+          setError(ssoMessage ?? clerkErrorMessage(sendErr, "Failed to send code"));
           return;
         }
       } else {

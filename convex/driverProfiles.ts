@@ -1,5 +1,10 @@
 import { v } from "convex/values";
-import { mutation, query, internalQuery } from "./_generated/server";
+import {
+  mutation,
+  query,
+  internalQuery,
+  internalMutation,
+} from "./_generated/server";
 
 function generateDriverCode(): string {
   const num = Math.floor(10000 + Math.random() * 90000);
@@ -187,6 +192,74 @@ export const adminFindByEmail = internalQuery({
  * Example:
  *   npx convex run driverProfiles:adminListAll
  */
+/**
+ * Admin-only — move a driver's newer sign-in identity onto their original
+ * profile and delete the duplicate.
+ *
+ * Needed when a driver signs in with a provider or address different from the
+ * one they first used: Clerk issues a separate user id, getOrCreateProfile sees
+ * an unknown id and mints a second profile with a fresh code, while dispatch
+ * still has their loads under the original code. Nothing can infer the two are
+ * one person when the emails differ, so the join is made here by hand.
+ *
+ * The kept row keeps its _id so driverCompanyLinks references stay valid; links
+ * on the dropped row are repointed rather than deleted.
+ *
+ * Example:
+ *   npx convex run driverProfiles:adminMergeProfiles \
+ *     '{"keepDriverCode":"D-29680","dropDriverCode":"D-52880"}'
+ */
+export const adminMergeProfiles = internalMutation({
+  args: {
+    /** Code to survive the merge — the one dispatch already has loads under. */
+    keepDriverCode: v.string(),
+    /** Code of the accidental duplicate, deleted at the end. */
+    dropDriverCode: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const findByCode = async (code: string) =>
+      await ctx.db
+        .query("driverProfiles")
+        .withIndex("by_driverCode", (q) => q.eq("driverCode", code))
+        .unique();
+
+    const keep = await findByCode(args.keepDriverCode);
+    const drop = await findByCode(args.dropDriverCode);
+
+    if (!keep) throw new Error(`No profile with code ${args.keepDriverCode}`);
+    if (!drop) throw new Error(`No profile with code ${args.dropDriverCode}`);
+    if (keep._id === drop._id) throw new Error("Both codes are the same profile");
+
+    const links = await ctx.db
+      .query("driverCompanyLinks")
+      .withIndex("by_driverProfileId", (q) => q.eq("driverProfileId", drop._id))
+      .collect();
+    for (const link of links) {
+      await ctx.db.patch(link._id, { driverProfileId: keep._id });
+    }
+
+    // Delete before patching: by_clerkUserId must never hold two rows for one
+    // Clerk user, or getByClerkUserId's .unique() starts throwing.
+    const inherited = {
+      clerkUserId: drop.clerkUserId,
+      name: drop.name ?? keep.name,
+      email: drop.email ?? keep.email,
+      phone: drop.phone ?? keep.phone,
+      pushToken: drop.pushToken ?? keep.pushToken,
+    };
+    await ctx.db.delete(drop._id);
+    await ctx.db.patch(keep._id, inherited);
+
+    return {
+      merged: true,
+      keptCode: keep.driverCode,
+      droppedCode: drop.driverCode,
+      movedCompanyLinks: links.length,
+      nowSignsInAs: inherited.clerkUserId,
+    };
+  },
+});
+
 export const adminListAll = internalQuery({
   args: {},
   handler: async (ctx) => {
