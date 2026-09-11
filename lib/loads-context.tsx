@@ -512,7 +512,32 @@ type PlatformSyncTaskBase = {
    * a field it doesn't know about).
    */
   deferCount?: number;
+  /**
+   * Earliest time this task may be attempted again. Absent means "now".
+   *
+   * The processing effect is triggered by `syncQueue` changing identity, and
+   * it ends by writing failed tasks back into the queue — so a failure was
+   * its own retry trigger, firing the next attempt in the same tick. A task
+   * burned its entire retry budget in a tight loop of back-to-back network
+   * calls, and a queue full of failing tasks could keep the JS thread busy
+   * indefinitely, which reads as a frozen app to the driver.
+   */
+  nextAttemptAt?: number;
 };
+
+/** Spacing between platform-sync retry attempts. */
+const SYNC_RETRY_DELAYS_MS = [5_000, 15_000, 45_000, 120_000];
+
+function syncRetryDelayMs(attempts: number): number {
+  return SYNC_RETRY_DELAYS_MS[attempts - 1] ?? 120_000;
+}
+
+/**
+ * Tasks attempted per pass. Each pass awaits its network calls sequentially,
+ * so an uncapped pass over a large queue holds the thread for as long as that
+ * takes. Capping it lets the UI breathe between batches.
+ */
+const MAX_SYNC_TASKS_PER_PASS = 3;
 
 export type PlatformSyncTask =
   | ({ type: "markAsPickedUp"; args: Record<string, unknown> } & PlatformSyncTaskBase)
@@ -671,6 +696,14 @@ export function LoadsProvider({
 
   const [localLoads, setLocalLoadsRaw] = useState<Load[]>([]);
   const localLoadsInitRef = React.useRef(false);
+  // Mirrors of state that background passes need to READ. Without these the
+  // only way to read current state from a timer callback was to call the
+  // setter with an identity updater, and because these setters serialize the
+  // whole payload to persist it, every such "read" cost a full JSON.stringify
+  // of every load.
+  const localLoadsRef = React.useRef<Load[]>([]);
+  localLoadsRef.current = localLoads;
+  const deliveredSnapshotsRef = React.useRef<Load[]>([]);
 
   // Wrap setLocalLoads to auto-persist (uses the active driver's scoped key)
   const setLocalLoads = React.useCallback((updater: Load[] | ((prev: Load[]) => Load[])) => {
@@ -767,6 +800,18 @@ export function LoadsProvider({
   // and app restarts. Processed here in the always-mounted LoadsProvider.
   const [syncQueue, setSyncQueue] = useState<PlatformSyncTask[]>([]);
   const syncProcessingRef = React.useRef(false);
+  const syncQueueRef = React.useRef<PlatformSyncTask[]>([]);
+  syncQueueRef.current = syncQueue;
+  // Bumped by the backoff timer to re-enter the processing effect when the
+  // next retry comes due.
+  const [retryTick, setRetryTick] = useState(0);
+  const retryWakeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (retryWakeTimerRef.current) clearTimeout(retryWakeTimerRef.current);
+    },
+    [],
+  );
 
   // Load persisted sync queue on startup AND whenever the active driver
   // swaps. The reset effect below clears in-memory state first, so this
@@ -905,6 +950,25 @@ export function LoadsProvider({
       (t) => t.status !== "failed_permanent" && t.status !== "deferred",
     );
     if (pendingTasks.length === 0) return;
+
+    // Respect each task's backoff. If nothing is due yet, wake up once when
+    // the soonest one is — rather than returning and being re-entered on the
+    // next queue mutation, which is what turned retries into a spin.
+    const now = Date.now();
+    const dueTasks = pendingTasks.filter((t) => (t.nextAttemptAt ?? 0) <= now);
+    if (dueTasks.length === 0) {
+      const soonest = pendingTasks.reduce(
+        (min, t) => Math.min(min, t.nextAttemptAt ?? 0),
+        Infinity,
+      );
+      if (retryWakeTimerRef.current) clearTimeout(retryWakeTimerRef.current);
+      retryWakeTimerRef.current = setTimeout(
+        () => setRetryTick((n) => n + 1),
+        Math.max(250, soonest - now),
+      );
+      return;
+    }
+
     syncProcessingRef.current = true;
 
     // CRITICAL: snapshot the IDs of tasks we're processing on this pass.
@@ -914,7 +978,10 @@ export function LoadsProvider({
     // taken when the effect first ran. This was the root cause of the
     // "marked picked up locally but platform still shows assigned" bug
     // when drivers tapped Pick Up on multiple vehicles in succession.
-    const processingSnapshot = pendingTasks;
+    // Anything beyond the cap is simply left untouched: it isn't in
+    // `processingIds`, so the merge below preserves it and the next pass
+    // picks it up.
+    const processingSnapshot = dueTasks.slice(0, MAX_SYNC_TASKS_PER_PASS);
     const processingIds = new Set(processingSnapshot.map((t) => t.id));
 
     (async () => {
@@ -1058,6 +1125,7 @@ export function LoadsProvider({
               ...task,
               attempts: task.attempts + 1,
               lastError: errMsg,
+              nextAttemptAt: Date.now() + syncRetryDelayMs(task.attempts + 1),
             });
           } else {
             console.error(`[PlatformSync] ${task.type} permanently failed after ${maxAttempts} attempts`, task);
@@ -1093,7 +1161,7 @@ export function LoadsProvider({
       });
       syncProcessingRef.current = false;
     })();
-  }, [syncQueue, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
+  }, [syncQueue, retryTick, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
 
   // Retry failed sync tasks when app comes to foreground
   useEffect(() => {
@@ -1384,20 +1452,8 @@ export function LoadsProvider({
             }
           };
           platformLoadsRef.current.forEach(collectFromLoad);
-          // Local loads + delivered snapshots — read via setter functional
-          // form to grab current state without forcing a re-render. We can't
-          // safely use a ref here for localLoads because the setter wraps
-          // persistence and the ref isn't being updated, so just inspect
-          // both. (deliveredSnapshotsRef and localLoadsRef don't exist; reading
-          // by passing a no-op updater is cheap.)
-          setLocalLoads((prev) => {
-            prev.forEach(collectFromLoad);
-            return prev;
-          });
-          setDeliveredSnapshots((prev) => {
-            prev.forEach(collectFromLoad);
-            return prev;
-          });
+          localLoadsRef.current.forEach(collectFromLoad);
+          deliveredSnapshotsRef.current.forEach(collectFromLoad);
           // v71+: ALSO mark every clientId referenced by a deferred or
           // pending syncInspection task as "still needed" by resolving its
           // current bestUriFor and adding that to the reference set. Without
@@ -1406,19 +1462,16 @@ export function LoadsProvider({
           // no longer points at (because of the platform-echo wipe we just
           // fixed in swapInsp). Once dropped, the deferred task's clientId
           // resolves to null forever and the inspection never syncs.
-          setSyncQueue((prev) => {
-            for (const t of prev) {
-              if (t.type !== "syncInspection") continue;
-              const ids = (t.args as { photoClientIds?: unknown }).photoClientIds;
-              if (!Array.isArray(ids)) continue;
-              for (const id of ids as string[]) {
-                if (typeof id !== "string" || !id) continue;
-                const uri = photoQueue.bestUriFor(id);
-                if (uri && uri.startsWith("http")) referenced.add(uri);
-              }
+          for (const t of syncQueueRef.current) {
+            if (t.type !== "syncInspection") continue;
+            const ids = (t.args as { photoClientIds?: unknown }).photoClientIds;
+            if (!Array.isArray(ids)) continue;
+            for (const id of ids as string[]) {
+              if (typeof id !== "string" || !id) continue;
+              const uri = photoQueue.bestUriFor(id);
+              if (uri && uri.startsWith("http")) referenced.add(uri);
             }
-            return prev;
-          });
+          }
 
           photoQueue.pruneDoneEntries(referenced).catch((err) => {
             console.warn("[Prune] pruneDoneEntries failed:", err);
@@ -1464,6 +1517,7 @@ export function LoadsProvider({
   // Full Load snapshots for delivered loads that the platform may have
   // removed from the driver's assignment list (e.g. reassigned to next leg).
   const [deliveredSnapshots, setDeliveredSnapshots] = useState<Load[]>([]);
+  deliveredSnapshotsRef.current = deliveredSnapshots;
 
   // v63 repair: undo the v59-v62 "force delivered" corruption.
   //
@@ -2736,8 +2790,6 @@ export function LoadsProvider({
   // Polls the syncQueue length until it hits zero. Used before swapping Clerk
   // sessions in the multi-account flow so platform API calls fire with the
   // correct auth token.
-  const syncQueueRef = React.useRef(syncQueue);
-  syncQueueRef.current = syncQueue;
   const flushPlatformSyncQueue = useCallback(async (timeoutMs = 5000): Promise<boolean> => {
     if (syncQueueRef.current.length === 0) return true;
     const start = Date.now();

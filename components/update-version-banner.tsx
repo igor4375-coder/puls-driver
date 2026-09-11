@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v90-startup-gate-trace";
+export const BUILD_TAG = "v91-sync-retry-pacing";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
