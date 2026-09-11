@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from "react-native";
 import { Image } from "expo-image";
 import { router } from "expo-router";
@@ -18,13 +18,20 @@ export default function WelcomeScreen() {
   const { isSignedIn } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  // Must stay above the isSignedIn return. Declared below it, this hook stopped
+  // running the moment a sign-in completed, so React saw fewer hooks than the
+  // previous render and killed the app — a launch-and-die loop for anyone whose
+  // session resolved while this screen was still mounted.
+  const [loadingProvider, setLoadingProvider] = useState<"google" | "apple" | null>(null);
+
+  // Navigating during render is not allowed either; it has to be an effect.
+  useEffect(() => {
+    if (isSignedIn) router.replace("/(tabs)");
+  }, [isSignedIn]);
 
   if (isSignedIn) {
-    router.replace("/(tabs)");
     return null;
   }
-
-  const [loadingProvider, setLoadingProvider] = useState<"google" | "apple" | null>(null);
 
   const handleSSOAuth = async (strategy: "oauth_google" | "oauth_apple") => {
     if (isLoading) return;
