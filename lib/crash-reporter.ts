@@ -32,10 +32,17 @@ const SESSION_KEY = "@autohaul/diag_session_v1";
 const OUTBOX_KEY = "@autohaul/diag_outbox_v1";
 
 const HEARTBEAT_MS = 10_000;
-const MAX_BREADCRUMBS = 25;
+// #region agent log
+// Temporarily widened for the freeze investigation: the trail has to survive
+// long enough to show what ran before the thread stopped, and every crumb has
+// to be on disk because the app never gets a chance to flush.
+const MAX_BREADCRUMBS = 60;
+// #endregion
 const MAX_BREADCRUMB_LEN = 180;
 /** How long after launch breadcrumbs are flushed to disk as they happen. */
-const STARTUP_TRACE_MS = 30_000;
+// #region agent log
+const STARTUP_TRACE_MS = 10 * 60_000;
+// #endregion
 /** First heartbeat, so a death inside the startup window still has a timeline. */
 const FIRST_HEARTBEAT_MS = 2_000;
 const MAX_OUTBOX = 25;

@@ -71,6 +71,16 @@ export function probe(
     });
 }
 
+/**
+ * Breadcrumbs are the only channel that reaches a real device, since the
+ * loopback endpoint is unreachable there. Everything we need to see has to go
+ * through here.
+ */
+export function crumb(message: string, data?: Record<string, unknown>): void {
+  addBreadcrumb(message);
+  probe("H6", "lib/debug-probe.ts:crumb", message, data ?? {});
+}
+
 let stateProvider: (() => Record<string, unknown>) | null = null;
 
 /** Lets loads-context expose sync-queue composition without an import cycle. */

@@ -17,7 +17,7 @@ import * as Network from "expo-network";
 import { AppState, type AppStateStatus, Platform } from "react-native";
 import { compressImage } from "./image-compress";
 // #region agent log
-import { bump as debugBump, probe as debugProbe } from "./debug-probe";
+import { bump as debugBump, probe as debugProbe, crumb as debugCrumb } from "./debug-probe";
 // #endregion
 import {
   reportPhotoCaptured,
@@ -428,12 +428,15 @@ export class PhotoQueue {
     this.listeners.forEach((fn) => fn(snapshot));
     // #region agent log
     const emitDuration = Date.now() - emitStartedAt;
-    if (emitDuration > 50) {
-      debugProbe("H3", "lib/photo-queue-class.ts:flushEmit", "slow photo queue emit", {
-        durationMs: emitDuration,
-        listeners: this.listeners.size,
-        entries: snapshot.length,
-      });
+    debugProbe("H3", "lib/photo-queue-class.ts:flushEmit", "photo queue emit", {
+      durationMs: emitDuration,
+      listeners: this.listeners.size,
+      entries: snapshot.length,
+    });
+    // A leaked subscriber set or a slow notify are both visible here, and this
+    // has to reach the device channel, not just the loopback endpoint.
+    if (emitDuration > 100 || this.listeners.size > 20) {
+      debugCrumb(`emit ${emitDuration}ms L=${this.listeners.size} n=${snapshot.length}`);
     }
     // #endregion
   }

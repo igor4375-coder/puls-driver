@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v92-freeze-instrumentation";
+export const BUILD_TAG = "v93-photo-queue-leak-fix";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();

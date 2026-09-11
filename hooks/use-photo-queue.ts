@@ -16,31 +16,37 @@ export function usePhotoQueue() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    // Load queue and subscribe
+    // The cleanup below used to be returned from inside `.then()`, which hands
+    // it to the promise rather than to React. Nothing was ever torn down, so
+    // every mount permanently leaked a queue subscriber, a 30s sync interval
+    // and an AppState listener. A load screen mounts one of these per vehicle,
+    // so opening a 16-vehicle load leaked 16 of each, every visit.
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const appStateSub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state === "active") {
+        photoQueue.sync().catch(() => {});
+      }
+    });
+
     photoQueue.load().then(() => {
-      const unsub = photoQueue.subscribe(setEntries);
-
-      // Sync on mount
+      if (cancelled) return;
+      unsub = photoQueue.subscribe(setEntries);
       photoQueue.sync().catch(() => {});
-
-      // Periodic sync
-      intervalRef.current = setInterval(() => {
+      interval = setInterval(() => {
         photoQueue.sync().catch(() => {});
       }, SYNC_INTERVAL_MS);
-
-      // Sync when app comes back to foreground
-      const appStateSub = AppState.addEventListener("change", (state: AppStateStatus) => {
-        if (state === "active") {
-          photoQueue.sync().catch(() => {});
-        }
-      });
-
-      return () => {
-        unsub();
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        appStateSub.remove();
-      };
+      intervalRef.current = interval;
     });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+      if (interval) clearInterval(interval);
+      appStateSub.remove();
+    };
   }, []);
 
   // v65+: use `visibleStats` so entries that have been stuck pending
