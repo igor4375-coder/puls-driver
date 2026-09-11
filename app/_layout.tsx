@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { AppState, Platform, View } from "react-native";
+import { AppState, Platform } from "react-native";
 import "@/lib/_core/nativewind-pressable";
 import { ThemeProvider } from "@/lib/theme-provider";
 import {
@@ -39,7 +39,6 @@ import {
   setDiagnosticContext,
 } from "@/lib/crash-reporter";
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
-import { bump, probe, startLoopLagProbe } from "@/lib/debug-probe";
 import { photoQueue } from "@/lib/photo-queue";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
 import { startLocationTracking, stopLocationTracking, flushLocationQueue } from "@/lib/location-tracker";
@@ -138,11 +137,6 @@ function AppContent() {
     addBreadcrumb("providers mounted");
   }, []);
 
-  // #region agent log
-  useEffect(() => {
-    startLoopLagProbe();
-  }, []);
-  // #endregion
 
   useEffect(() => {
     initManusRuntime();
@@ -290,22 +284,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ErrorBoundary>
-        {/* #region agent log */}
-        <View
-          style={{ flex: 1 }}
-          onStartShouldSetResponderCapture={(e) => {
-            bump("touches");
-            probe("H5", "app/_layout.tsx:RootLayout", "touch reached JS", {
-              pageX: Math.round(e.nativeEvent.pageX),
-              pageY: Math.round(e.nativeEvent.pageY),
-              target: String((e.nativeEvent as { target?: unknown }).target ?? ""),
-            });
-            return false; // observe only — never intercept the touch
-          }}
-        >
-          {/* #endregion */}
-          <ThemeProvider>{safeAreaContent(authedContent)}</ThemeProvider>
-        </View>
+        <ThemeProvider>{safeAreaContent(authedContent)}</ThemeProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>
   );

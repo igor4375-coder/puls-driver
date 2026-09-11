@@ -50,9 +50,6 @@ import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import { haversineDistanceMiles, DELIVERY_PROXIMITY_THRESHOLD_MILES } from "@/lib/geo-utils";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
-// #region agent log
-import { crumb as debugCrumb } from "@/lib/debug-probe";
-// #endregion
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -194,11 +191,6 @@ function InfoRow({
     </>
   );
 }
-// #region agent log
-let screenRenders = 0;
-let cardRenders = 0;
-// #endregion
-
 function VehicleCard({
   vehicle,
   loadId,
@@ -214,12 +206,6 @@ function VehicleCard({
   platformTripId: number | null;
   driverCode: string;
 }) {
-  // #region agent log
-  cardRenders += 1;
-  if (cardRenders % 50 === 0) {
-    debugCrumb(`vehicle cards rendered ${cardRenders} (screen=${screenRenders})`);
-  }
-  // #endregion
   const colors = useColors();
   const { entries: queueEntries } = usePhotoQueue();
 
@@ -509,15 +495,6 @@ function getCtaConfig(load: Load): { label: string; action: () => void; color: s
 }
 
 export default function LoadDetailScreen() {
-  // #region agent log
-  screenRenders += 1;
-  if (screenRenders <= 5 || screenRenders % 25 === 0) {
-    debugCrumb(`load screen render ${screenRenders} (cards=${cardRenders})`);
-  }
-  useEffect(() => {
-    debugCrumb("load screen committed");
-  }, []);
-  // #endregion
   const colors = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { getLoad, updateLoadStatus, queuePlatformSync } = useLoads();

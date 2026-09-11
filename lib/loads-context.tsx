@@ -13,9 +13,6 @@ import { api } from "@/convex/_generated/api";
 import { type Load, type LoadStatus, type VehicleInspection } from "./data";
 import { useSettings } from "./settings-context";
 import { photoQueue } from "./photo-queue";
-// #region agent log
-import { bump, probe, setDebugStateProvider } from "./debug-probe";
-// #endregion
 
 // ─── Debounced AsyncStorage writes (reduces I/O pressure) ───────────────────────
 
@@ -806,38 +803,6 @@ export function LoadsProvider({
   const syncQueueRef = React.useRef<PlatformSyncTask[]>([]);
   syncQueueRef.current = syncQueue;
 
-  // #region agent log
-  bump("loadsRenders");
-  useEffect(() => {
-    setDebugStateProvider(() => {
-      const q = syncQueueRef.current;
-      let pending = 0;
-      let deferred = 0;
-      let failedPermanent = 0;
-      let due = 0;
-      const now = Date.now();
-      for (const t of q) {
-        if (t.status === "deferred") deferred += 1;
-        else if (t.status === "failed_permanent") failedPermanent += 1;
-        else {
-          pending += 1;
-          if ((t.nextAttemptAt ?? 0) <= now) due += 1;
-        }
-      }
-      return {
-        syncQueueTotal: q.length,
-        syncPending: pending,
-        syncDue: due,
-        syncDeferred: deferred,
-        syncFailedPermanent: failedPermanent,
-        photoQueueTotal: photoQueue.getEntries().length,
-        localLoads: localLoadsRef.current.length,
-        platformLoads: platformLoadsRef.current.length,
-      };
-    });
-    return () => setDebugStateProvider(null);
-  }, []);
-  // #endregion
   // Bumped by the backoff timer to re-enter the processing effect when the
   // next retry comes due.
   const [retryTick, setRetryTick] = useState(0);
@@ -1020,17 +985,6 @@ export function LoadsProvider({
     const processingSnapshot = dueTasks.slice(0, MAX_SYNC_TASKS_PER_PASS);
     const processingIds = new Set(processingSnapshot.map((t) => t.id));
 
-    // #region agent log
-    bump("syncPasses");
-    const passStartedAt = Date.now();
-    probe("H4", "lib/loads-context.tsx:syncPass", "sync pass start", {
-      queueTotal: syncQueue.length,
-      pending: pendingTasks.length,
-      due: dueTasks.length,
-      processing: processingSnapshot.map((t) => t.type),
-    });
-    // #endregion
-
     (async () => {
       const remaining: PlatformSyncTask[] = [];
       const permanentlyFailed: PlatformSyncTask[] = [];
@@ -1206,16 +1160,6 @@ export function LoadsProvider({
         persistSyncQueue(merged);
         return merged;
       });
-      // #region agent log
-      probe("H4", "lib/loads-context.tsx:syncPass", "sync pass end", {
-        durationMs: Date.now() - passStartedAt,
-        succeeded: processingSnapshot.length - remaining.length - permanentlyFailed.length - deferred.length,
-        retrying: remaining.length,
-        deferred: deferred.length,
-        permanentlyFailed: permanentlyFailed.length,
-        firstError: remaining[0]?.lastError ?? permanentlyFailed[0]?.lastError,
-      });
-      // #endregion
       syncProcessingRef.current = false;
     })();
   }, [syncQueue, retryTick, markAsPickedUpAction, markAsDeliveredAction, syncInspectionAction, persistSyncQueue, setLocalLoads, setPlatformLoads]);
@@ -1545,19 +1489,7 @@ export function LoadsProvider({
       timer = setTimeout(() => {
         timer = null;
         try {
-          // #region agent log
-          bump("backfillRuns");
-          const backfillStartedAt = Date.now();
-          // #endregion
           runBackfill();
-          // #region agent log
-          probe("H3", "lib/loads-context.tsx:backfill", "backfill pass", {
-            durationMs: Date.now() - backfillStartedAt,
-            photoEntries: photoQueue.getEntries().length,
-            localLoads: localLoadsRef.current.length,
-            platformLoads: platformLoadsRef.current.length,
-          });
-          // #endregion
           schedulePrune();
           // v71+: every photo-queue change is also our cue to promote any
           // photo-deferred syncInspection tasks whose clientIds have all
