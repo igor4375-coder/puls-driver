@@ -15,8 +15,9 @@ import {
 } from "react-native-safe-area-context";
 import type { EdgeInsets, Metrics, Rect } from "react-native-safe-area-context";
 
-import { ClerkProvider, ClerkLoaded } from "@clerk/expo";
+import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@/lib/clerk-token-cache";
+import { StartupGate } from "@/components/startup-gate";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ConvexReactClient, useConvex } from "convex/react";
 import { useAuth as useClerkAuth } from "@clerk/expo";
@@ -32,6 +33,7 @@ import { SyncStatusBanner } from "@/components/sync-status-banner";
 import { UpdateVersionBanner } from "@/components/update-version-banner";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
+  addBreadcrumb,
   initCrashReporter,
   setQueueSnapshotProvider,
   setDiagnosticContext,
@@ -107,6 +109,7 @@ function LoadsProviderWithAuth({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setDiagnosticContext({ driverCode });
+    addBreadcrumb(driverCode ? `driver ${driverCode}` : "driver pending");
   }, [driverCode]);
 
   return (
@@ -129,6 +132,10 @@ function AppContent() {
       }),
   );
   const [trpcClient] = useState(() => createTRPCClient());
+
+  useEffect(() => {
+    addBreadcrumb("providers mounted");
+  }, []);
 
   useEffect(() => {
     initManusRuntime();
@@ -251,42 +258,33 @@ export default function RootLayout() {
     );
   };
 
-  const appContent = (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ErrorBoundary>
-        <AppContent />
-      </ErrorBoundary>
-    </GestureHandlerRootView>
-  );
+  const appContent = <AppContent />;
 
-  if (!CLERK_PUBLISHABLE_KEY) {
-    // Fallback: run without Clerk (for development without keys)
-    return (
-      <ThemeProvider>
-        {safeAreaContent(appContent)}
-      </ThemeProvider>
-    );
-  }
-
-  const wrappedContent = convex ? (
+  const authedContent = CLERK_PUBLISHABLE_KEY ? (
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
-      <ClerkLoaded>
-        <ConvexProviderWithClerk client={convex} useAuth={useClerkAuth}>
-          {appContent}
-        </ConvexProviderWithClerk>
-      </ClerkLoaded>
+      <StartupGate>
+        {convex ? (
+          <ConvexProviderWithClerk client={convex} useAuth={useClerkAuth}>
+            {appContent}
+          </ConvexProviderWithClerk>
+        ) : (
+          appContent
+        )}
+      </StartupGate>
     </ClerkProvider>
   ) : (
-    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} tokenCache={tokenCache}>
-      <ClerkLoaded>
-        {appContent}
-      </ClerkLoaded>
-    </ClerkProvider>
+    // Fallback: run without Clerk (for development without keys)
+    appContent
   );
 
+  // The boundary belongs above the provider stack, not inside it. Sitting below
+  // ClerkProvider/ConvexProvider it could only catch app-screen failures, so a
+  // throw from provider initialization had nothing between it and the process.
   return (
-    <ThemeProvider>
-      {safeAreaContent(wrappedContent)}
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ErrorBoundary>
+        <ThemeProvider>{safeAreaContent(authedContent)}</ThemeProvider>
+      </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }

@@ -95,3 +95,21 @@ export async function nukeAllClerkTokens(): Promise<void> {
   _trackedKeys.clear();
   _migratedKeys.clear();
 }
+
+// _trackedKeys is populated as Clerk reads/writes, so on a cold start it is
+// empty and nukeAllClerkTokens() clears nothing. Recovering a device that
+// cannot get past Clerk init has to name the keys outright.
+const KNOWN_CLERK_KEYS = ["__clerk_client_jwt", "__clerk_cache_session_jwt"];
+
+/**
+ * Clear Clerk's persisted session state without needing a live Clerk instance.
+ * Safe to call before/while Clerk is initializing; the user simply signs in again.
+ */
+export async function resetClerkStorage(): Promise<void> {
+  const keys = new Set([..._trackedKeys, ...KNOWN_CLERK_KEYS]);
+  for (const key of keys) {
+    await tokenCache.clearToken(key);
+  }
+  _trackedKeys.clear();
+  _migratedKeys.clear();
+}

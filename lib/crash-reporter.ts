@@ -34,6 +34,10 @@ const OUTBOX_KEY = "@autohaul/diag_outbox_v1";
 const HEARTBEAT_MS = 10_000;
 const MAX_BREADCRUMBS = 25;
 const MAX_BREADCRUMB_LEN = 180;
+/** How long after launch breadcrumbs are flushed to disk as they happen. */
+const STARTUP_TRACE_MS = 30_000;
+/** First heartbeat, so a death inside the startup window still has a timeline. */
+const FIRST_HEARTBEAT_MS = 2_000;
 const MAX_OUTBOX = 25;
 /** A heartbeat gap this large means the app was suspended, not killed mid-use. */
 const STALE_HEARTBEAT_MS = 90_000;
@@ -89,6 +93,7 @@ interface SessionRecord extends QueueSnapshot {
 
 let session: SessionRecord | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let startupHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let subscriptions: { remove: () => void }[] = [];
 let queueSnapshotProvider: (() => QueueSnapshot) | null = null;
 let convexClient: ConvexHttpClient | null = null;
@@ -256,6 +261,12 @@ export function addBreadcrumb(message: string): void {
   const stamped = `${new Date().toISOString().slice(11, 19)} ${message}`.slice(0, MAX_BREADCRUMB_LEN);
   session.breadcrumbs.push(stamped);
   if (session.breadcrumbs.length > MAX_BREADCRUMBS) session.breadcrumbs.shift();
+
+  // Breadcrumbs normally reach disk on the next heartbeat, which is up to
+  // HEARTBEAT_MS away. A launch-time death therefore persisted nothing but the
+  // "launch" crumb, leaving every startup crash looking identical and
+  // undiagnosable. Inside the startup window, write through immediately.
+  if (Date.now() - session.startedAt < STARTUP_TRACE_MS) void persistSession();
 }
 
 export function reportError(error: unknown, context?: string): void {
@@ -373,6 +384,17 @@ export async function initCrashReporter(): Promise<void> {
     addBreadcrumb(`launch ${BUILD_TAG}`);
     await persistSession();
 
+    // Every startup crash reported "0s alive" purely because the first
+    // heartbeat was HEARTBEAT_MS away and the app never got there. An early
+    // tick makes the difference between "died on the splash screen" and "died
+    // eight seconds in" visible.
+    startupHeartbeatTimer = setTimeout(() => {
+      if (!session) return;
+      session.lastHeartbeatAt = Date.now();
+      applyQueueSnapshot();
+      void persistSession();
+    }, FIRST_HEARTBEAT_MS);
+
     heartbeatTimer = setInterval(() => {
       if (!session) return;
       session.lastHeartbeatAt = Date.now();
@@ -403,6 +425,8 @@ export async function initCrashReporter(): Promise<void> {
 export function stopCrashReporter(): void {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
+  if (startupHeartbeatTimer) clearTimeout(startupHeartbeatTimer);
+  startupHeartbeatTimer = null;
   for (const sub of subscriptions) {
     try {
       sub.remove();
