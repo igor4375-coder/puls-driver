@@ -32,10 +32,16 @@ const SESSION_KEY = "@autohaul/diag_session_v1";
 const OUTBOX_KEY = "@autohaul/diag_outbox_v1";
 
 const HEARTBEAT_MS = 10_000;
-const MAX_BREADCRUMBS = 25;
+// #region agent log
+// Temporarily widened for the camera-freeze investigation. Photo capture
+// happens minutes after launch, so the write-through window has to cover it.
+const MAX_BREADCRUMBS = 80;
+// #endregion
 const MAX_BREADCRUMB_LEN = 180;
 /** How long after launch breadcrumbs are flushed to disk as they happen. */
-const STARTUP_TRACE_MS = 30_000;
+// #region agent log
+const STARTUP_TRACE_MS = 15 * 60_000;
+// #endregion
 /** First heartbeat, so a death inside the startup window still has a timeline. */
 const FIRST_HEARTBEAT_MS = 2_000;
 const MAX_OUTBOX = 25;

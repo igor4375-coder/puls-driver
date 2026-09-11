@@ -16,6 +16,10 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Network from "expo-network";
 import { AppState, type AppStateStatus, Platform } from "react-native";
 import { compressImage } from "./image-compress";
+// #region agent log
+import { addBreadcrumb } from "./crash-reporter";
+let emitCount = 0;
+// #endregion
 import {
   reportPhotoCaptured,
   reportPhotoUploaded,
@@ -418,7 +422,17 @@ export class PhotoQueue {
   private flushEmit() {
     this.lastEmitAt = Date.now();
     const snapshot = [...this.entries];
+    // #region agent log
+    emitCount += 1;
+    const emitStartedAt = Date.now();
+    // #endregion
     this.listeners.forEach((fn) => fn(snapshot));
+    // #region agent log
+    const emitMs = Date.now() - emitStartedAt;
+    if (emitMs > 100 || emitCount % 25 === 0) {
+      addBreadcrumb(`emit #${emitCount} ${emitMs}ms L=${this.listeners.size} n=${snapshot.length}`);
+    }
+    // #endregion
   }
 
   subscribe(fn: Listener): () => void {
@@ -906,6 +920,11 @@ export class PhotoQueue {
   }
 
   private async uploadEntryInner(entry: PhotoQueueEntry): Promise<void> {
+    // #region agent log
+    addBreadcrumb(
+      `upload start ${entry.clientId.slice(0, 6)} inFlight=${this.inFlight.size} L=${this.listeners.size} n=${this.entries.length}`,
+    );
+    // #endregion
     this.updateEntry(entry.clientId, { status: "uploading", lastAttemptAt: Date.now() });
 
     // v66+: snapshot the current network state ONCE per upload attempt

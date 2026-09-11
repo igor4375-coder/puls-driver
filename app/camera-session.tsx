@@ -43,6 +43,9 @@ import { getCurrentGPS, reverseGeocodeCoords, type GPSCoords } from "@/lib/photo
 import { finalizePhotoProgress } from "@/lib/inspection-photo-progress";
 import { useAuth } from "@/lib/auth-context";
 import { useLoads } from "@/lib/loads-context";
+// #region agent log
+import { addBreadcrumb } from "@/lib/crash-reporter";
+// #endregion
 
 type SessionMode = "photo" | "video";
 
@@ -57,7 +60,18 @@ interface CapturedItem {
   type: "photo" | "video";
 }
 
+// #region agent log
+let camRenders = 0;
+let shotCount = 0;
+// #endregion
+
 export default function CameraSessionScreen() {
+  // #region agent log
+  camRenders += 1;
+  if (camRenders <= 3 || camRenders % 20 === 0) {
+    addBreadcrumb(`camera render ${camRenders}`);
+  }
+  // #endregion
   const cameraRef = useRef<CameraView>(null);
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
@@ -117,8 +131,14 @@ export default function CameraSessionScreen() {
   }, [ultraWideLensName]);
 
   useEffect(() => {
+    // #region agent log
+    addBreadcrumb("camera mounted");
+    // #endregion
     const unsub = photoQueue.subscribe(setQueueEntries);
     return () => {
+      // #region agent log
+      addBreadcrumb(`camera unmounted renders=${camRenders}`);
+      // #endregion
       unsub();
       if (recordTimerRef.current) clearInterval(recordTimerRef.current);
     };
@@ -209,10 +229,18 @@ export default function CameraSessionScreen() {
   }, [items, settleProgressOnCancel]);
 
   const handleTakePhoto = useCallback(async () => {
+    // #region agent log
+    addBreadcrumb(`shot tap #${shotCount + 1} taking=${taking} items=${items.length}`);
+    // #endregion
     if (taking || !cameraRef.current) return;
     setTaking(true);
     setShutterFlash(true);
     setTimeout(() => setShutterFlash(false), 80);
+    // #region agent log
+    shotCount += 1;
+    const shotNo = shotCount;
+    const captureStartedAt = Date.now();
+    // #endregion
     try {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.8,
@@ -227,6 +255,9 @@ export default function CameraSessionScreen() {
         base64: false,
         shutterSound: false,
       });
+      // #region agent log
+      addBreadcrumb(`shot ${shotNo} captured in ${Date.now() - captureStartedAt}ms uri=${!!photo?.uri}`);
+      // #endregion
       if (photo?.uri) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -262,17 +293,26 @@ export default function CameraSessionScreen() {
           progressLegId,
           progressDriverCode,
         });
+        // #region agent log
+        addBreadcrumb(`shot ${shotNo} enqueued in ${Date.now() - captureStartedAt}ms`);
+        // #endregion
         setItems((prev) => [
           ...prev,
           { uri: entry.localUri, clientId: entry.clientId, type: "photo" },
         ]);
       }
-    } catch {
+    } catch (err) {
       // Capture failed — silently allow next shot
+      // #region agent log
+      addBreadcrumb(`shot ${shotNo} THREW ${err instanceof Error ? err.message : String(err)}`);
+      // #endregion
     } finally {
       setTaking(false);
+      // #region agent log
+      addBreadcrumb(`shot ${shotNo} released after ${Date.now() - captureStartedAt}ms`);
+      // #endregion
     }
-  }, [taking, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle, progressLegId, progressDriverCode]);
+  }, [taking, items.length, meta, gpsCoords, locationLabel, driver, sessionLoad, sessionVehicle, progressLegId, progressDriverCode]);
 
   const handleStartRecording = useCallback(async () => {
     if (recording || !cameraRef.current || Platform.OS === "web") return;

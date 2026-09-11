@@ -11,6 +11,9 @@
 
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
+// #region agent log
+import { addBreadcrumb } from "./crash-reporter";
+// #endregion
 
 export type NetworkProfile = "wifi" | "cellular";
 
@@ -27,6 +30,11 @@ const CELLULAR_MAX_DIMENSION = 1280;
 const CELLULAR_JPEG_QUALITY = 0.72;
 
 let compressLock: Promise<void> = Promise.resolve();
+
+// #region agent log
+let waiting = 0;
+let compressSeq = 0;
+// #endregion
 
 /**
  * Compress a local image URI: resize to MAX_DIMENSION and JPEG quality.
@@ -50,7 +58,19 @@ export async function compressImage(
   const ticket = new Promise<void>((r) => { release = r; });
   const wait = compressLock;
   compressLock = ticket;
+  // #region agent log
+  // If manipulateAsync ever fails to settle, the semaphore is never released
+  // and every later compression waits forever. `waiting` makes that visible.
+  waiting += 1;
+  const seq = ++compressSeq;
+  const queuedAt = Date.now();
+  addBreadcrumb(`compress ${seq} queued (waiting=${waiting})`);
+  // #endregion
   await wait;
+  // #region agent log
+  const startedAt = Date.now();
+  addBreadcrumb(`compress ${seq} start (waited ${startedAt - queuedAt}ms)`);
+  // #endregion
 
   try {
     const result = await manipulateAsync(
@@ -58,11 +78,20 @@ export async function compressImage(
       [{ resize: { width: maxDim } }],
       { compress: quality, format: SaveFormat.JPEG },
     );
+    // #region agent log
+    addBreadcrumb(`compress ${seq} done in ${Date.now() - startedAt}ms`);
+    // #endregion
     return result.uri;
   } catch (err) {
     console.warn("[compressImage] Failed, using original:", err);
+    // #region agent log
+    addBreadcrumb(`compress ${seq} FAILED ${err instanceof Error ? err.message : String(err)}`);
+    // #endregion
     return uri;
   } finally {
+    // #region agent log
+    waiting -= 1;
+    // #endregion
     release!();
   }
 }
