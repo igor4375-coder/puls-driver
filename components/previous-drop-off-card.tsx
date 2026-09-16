@@ -40,7 +40,9 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
     previousDropOff?.driverName?.trim() ||
     (previousDropOff ? previousDropOffSourceLabel(previousDropOff.source) : null);
   const when = formatDroppedAt(previousDropOff?.droppedAt);
-  const where = previousDropOff?.locationName?.trim() || null;
+  const showKeys =
+    !!keysLocation &&
+    (!note || keysLocation.toLowerCase() !== note.toLowerCase());
   const hasDetails = !!(previousDropOff || note);
 
   const [photosExpanded, setPhotosExpanded] = useState(false);
@@ -70,50 +72,34 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
         compact && styles.cardCompact,
       ]}
     >
-      <TouchableOpacity
-        style={styles.headerRow}
-        onPress={hasPhotos ? togglePhotos : undefined}
-        activeOpacity={hasPhotos ? 0.75 : 1}
-        disabled={!hasPhotos}
-        accessibilityRole={hasPhotos ? "button" : undefined}
-        accessibilityLabel={
-          hasPhotos
-            ? photosExpanded
-              ? "Hide previous drop-off photos"
-              : `Show ${photos.length} previous drop-off photo${photos.length === 1 ? "" : "s"}`
-            : undefined
-        }
-      >
-        <View style={[styles.iconWrap, hasPhotos ? styles.iconWrapPhotos : styles.iconWrapMuted]}>
-          <IconSymbol
-            name={hasPhotos ? "photo.on.rectangle" : "camera.fill"}
-            size={compact ? 16 : 18}
-            color={hasPhotos ? "#E65100" : hasDetails ? "#F9A825" : "#8D6E63"}
-          />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.kicker, hasPhotos ? styles.kickerPhotos : styles.kickerMuted]}>
-            PREVIOUS DROP-OFF
-          </Text>
-          <Text style={[styles.title, hasPhotos ? styles.titlePhotos : styles.titleMuted]}>
-            {hasPhotos
-              ? `${photos.length} photo${photos.length === 1 ? "" : "s"} from ${who ?? "previous drop-off"}`
-              : hasDetails
-                ? "No previous drop-off photos"
-                : "No previous drop-off photos or notes"}
-          </Text>
-          {hasPhotos && !photosExpanded ? (
-            <Text style={styles.tapHint}>Tap to view photos</Text>
-          ) : null}
-        </View>
+      <View style={styles.headerRow}>
+        <Text style={[styles.kicker, hasPhotos || note ? styles.kickerPhotos : styles.kickerMuted]}>
+          PREVIOUS DROP-OFF
+        </Text>
         {hasPhotos ? (
-          <IconSymbol
-            name={photosExpanded ? "chevron.up" : "chevron.down"}
-            size={16}
-            color="#E65100"
-          />
+          <TouchableOpacity
+            style={styles.photoChip}
+            onPress={togglePhotos}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={
+              photosExpanded
+                ? "Hide previous drop-off photos"
+                : `Show ${photos.length} previous drop-off photo${photos.length === 1 ? "" : "s"}`
+            }
+          >
+            <IconSymbol name="photo.on.rectangle" size={13} color="#E65100" />
+            <Text style={styles.photoChipText}>
+              {photos.length} photo{photos.length === 1 ? "" : "s"}
+            </Text>
+            <IconSymbol
+              name={photosExpanded ? "chevron.up" : "chevron.down"}
+              size={12}
+              color="#E65100"
+            />
+          </TouchableOpacity>
         ) : null}
-      </TouchableOpacity>
+      </View>
 
       {hasPhotos && photosExpanded ? (
         <>
@@ -146,28 +132,23 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
         </>
       ) : null}
 
-      {(who || when || where) && (
-        <Text style={styles.meta}>
-          {[
-            who,
-            when ? `dropped ${when}` : null,
-            where,
-          ].filter(Boolean).join(" · ")}
-        </Text>
-      )}
+      {note ? (
+        <Text style={styles.noteText}>{note}</Text>
+      ) : !hasPhotos ? (
+        <Text style={styles.emptyText}>No previous drop-off photos or notes</Text>
+      ) : null}
 
-      {keysLocation ? (
+      {showKeys ? (
         <View style={styles.keysRow}>
-          <IconSymbol name="key.fill" size={14} color="#E65100" />
+          <IconSymbol name="key.fill" size={13} color="#BF360C" />
           <Text style={styles.keysText}>{keysLocation}</Text>
         </View>
       ) : null}
 
-      {note ? (
-        <View style={styles.noteBlock}>
-          <Text style={styles.noteLabel}>Note</Text>
-          <Text style={styles.noteText}>{note}</Text>
-        </View>
+      {(who || when) ? (
+        <Text style={styles.meta}>
+          {[who, when].filter(Boolean).join(" · ")}
+        </Text>
       ) : null}
 
       <Modal
@@ -224,13 +205,15 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 14,
-    padding: 14,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderWidth: 1.5,
     marginBottom: 12,
   },
   cardCompact: {
-    padding: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     marginBottom: 0,
   },
   cardWithPhotos: {
@@ -239,7 +222,7 @@ const styles = StyleSheet.create({
   },
   cardWithNote: {
     backgroundColor: "#FFF8E1",
-    borderColor: "#FFD54F",
+    borderColor: "#FFB300",
   },
   cardEmpty: {
     backgroundColor: "#F5F5F5",
@@ -249,26 +232,13 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-  },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconWrapPhotos: {
-    backgroundColor: "#FFE082",
-  },
-  iconWrapMuted: {
-    backgroundColor: "rgba(0,0,0,0.06)",
+    justifyContent: "space-between",
+    gap: 8,
   },
   kicker: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.6,
-    marginBottom: 2,
   },
   kickerPhotos: {
     color: "#E65100",
@@ -276,25 +246,55 @@ const styles = StyleSheet.create({
   kickerMuted: {
     color: "#8D6E63",
   },
-  title: {
-    fontSize: 15,
-    fontWeight: "700",
-    lineHeight: 20,
+  photoChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FFE082",
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
-  titlePhotos: {
-    color: "#E65100",
-  },
-  titleMuted: {
-    color: "#5D4037",
-  },
-  tapHint: {
-    marginTop: 2,
+  photoChipText: {
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "800",
     color: "#E65100",
+  },
+  noteText: {
+    marginTop: 6,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: "800",
+    color: "#BF360C",
+  },
+  emptyText: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#6D4C41",
+  },
+  keysRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 6,
+  },
+  keysText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 18,
+    color: "#BF360C",
+    fontWeight: "700",
+  },
+  meta: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 15,
+    color: "#8D6E63",
+    fontWeight: "600",
   },
   thumbStrip: {
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: 4,
   },
   thumbWrap: {
@@ -310,54 +310,19 @@ const styles = StyleSheet.create({
     height: 96,
   },
   viewBtn: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
     backgroundColor: "#FFE082",
     borderRadius: 10,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   viewBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#E65100",
-  },
-  meta: {
-    marginTop: 10,
-    fontSize: 12,
-    lineHeight: 17,
-    color: "#6D4C41",
-    fontWeight: "600",
-  },
-  keysRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-    marginTop: 8,
-  },
-  keysText: {
-    flex: 1,
     fontSize: 13,
-    lineHeight: 18,
-    color: "#5D4037",
-    fontWeight: "600",
-  },
-  noteBlock: {
-    marginTop: 10,
-  },
-  noteLabel: {
-    fontSize: 11,
     fontWeight: "700",
     color: "#E65100",
-    marginBottom: 3,
-    letterSpacing: 0.3,
-  },
-  noteText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#5D4037",
   },
   lightboxOverlay: {
     flex: 1,

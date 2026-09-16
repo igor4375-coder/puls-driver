@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v101-remove-dates-payment-type";
+export const BUILD_TAG = "v102-compact-dropoff-note";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
