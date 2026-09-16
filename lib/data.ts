@@ -109,6 +109,19 @@ export interface Vehicle {
   previousLegNotes?: string | null;
 }
 
+/** Photos + notes from whoever left the vehicle at this yard (previous driver or customer). */
+export type PreviousDropOffSource = "previous_driver" | "customer";
+
+export interface PreviousDropOff {
+  source: PreviousDropOffSource;
+  driverName: string | null;
+  droppedAt: string | null;
+  locationName: string | null;
+  note: string | null;
+  keysLocation: string | null;
+  photos: string[];
+}
+
 export interface ContactInfo {
   name: string;
   company: string;
@@ -149,6 +162,12 @@ export interface Load {
   pickupInstructions?: string | null;
   /** Dropoff-specific instructions for this leg */
   dropoffInstructions?: string | null;
+  /**
+   * Photos + notes from whoever left the unit at this pickup yard.
+   * Read-only. Never merge `photos` into this driver's inspection galleries.
+   * Null when nobody has dropped the unit yet, or there are no photos and no note.
+   */
+  previousDropOff?: PreviousDropOff | null;
   assignedAt: string;
   /**
    * The legId from the company platform, set fresh on every platform fetch.

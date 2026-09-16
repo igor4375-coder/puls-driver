@@ -31,6 +31,8 @@ import { useAuth } from "@/lib/auth-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
+import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
+import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
 import { useSettings } from "@/lib/settings-context";
 import {
   type Damage,
@@ -1142,6 +1144,16 @@ export default function InspectionScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {!isDelivery && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <PreviousDropOffCard
+              previousDropOff={load.previousDropOff}
+              fallbackNote={fallbackPreviousLegNote(load)}
+              compact
+            />
+          </View>
+        )}
+
         {/* Vehicle Info */}
         <View style={[styles.vehicleInfoBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={{ flex: 1 }}>
@@ -1384,19 +1396,6 @@ export default function InspectionScreen() {
               multiline
               numberOfLines={3}
             />
-          </View>
-        )}
-
-        {/* Previous Leg Notes — pickup only, from previous leg's delivery driver */}
-        {!isDelivery && vehicle?.previousLegNotes && (
-          <View style={styles.section}>
-            <View style={[styles.prevLegBanner, { backgroundColor: "#FFF8E1", borderColor: "#FFD54F" }]}>
-              <IconSymbol name="info.circle.fill" size={18} color="#F9A825" />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.prevLegTitle, { color: "#E65100" }]}>Note from previous driver</Text>
-                <Text style={[styles.prevLegText, { color: "#5D4037" }]}>{vehicle.previousLegNotes}</Text>
-              </View>
-            </View>
           </View>
         )}
 

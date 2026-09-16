@@ -68,6 +68,16 @@ export interface CompanyPlatformLoad {
   pickupPhotos?: string[];
   /** HTTPS inspection photo URLs from the platform (delivery phase) */
   deliveryPhotos?: string[];
+  /** Photos + notes from whoever left the unit at this pickup yard. */
+  previousDropOff?: {
+    source: "previous_driver" | "customer";
+    driverName: string | null;
+    droppedAt: string | null;
+    locationName: string | null;
+    note: string | null;
+    keysLocation: string | null;
+    photos: string[];
+  } | null;
 }
 
 export interface SyncInspectionDamage {

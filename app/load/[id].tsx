@@ -50,6 +50,8 @@ import * as WebBrowser from "expo-web-browser";
 import * as Location from "expo-location";
 import { haversineDistanceMiles, DELIVERY_PROXIMITY_THRESHOLD_MILES } from "@/lib/geo-utils";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
+import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
+import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -315,16 +317,6 @@ function VehicleCard({
                   <Text style={{ fontSize: 11, color: vehicle.drives ? colors.success : colors.error, fontWeight: "600" }}>Drives: {vehicle.drives ? "Yes" : "No"}</Text>
                 </View>
               )}
-            </View>
-          )}
-          {/* Previous leg driver note */}
-          {vehicle.previousLegNotes && (
-            <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 8, backgroundColor: "#FFF8E1", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#FFD54F" }}>
-              <IconSymbol name="info.circle.fill" size={15} color="#F9A825" />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#E65100", marginBottom: 2 }}>Note from previous driver</Text>
-                <Text style={{ fontSize: 12, color: "#5D4037", lineHeight: 17 }}>{vehicle.previousLegNotes}</Text>
-              </View>
             </View>
           )}
         </View>
@@ -1325,6 +1317,14 @@ export default function LoadDetailScreen() {
                 </TouchableOpacity>
               )}
             </View>
+          )}
+
+          {/* Previous drop-off — always visible so missing photos are obvious */}
+          {!load.isFieldPickup && (
+            <PreviousDropOffCard
+              previousDropOff={load.previousDropOff}
+              fallbackNote={fallbackPreviousLegNote(load)}
+            />
           )}
 
           {/* Vehicle — always one per load */}

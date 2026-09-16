@@ -35,14 +35,29 @@ export function collectLoadNotes(load: Load): LoadNote[] {
 
   push("dispatch", "Dispatch Notes", "critical", load.dispatchNotes);
 
-  for (const vehicle of load.vehicles) {
-    const vinLast6 = vehicle.vin && vehicle.vin.length >= 6 ? vehicle.vin.slice(-6).toUpperCase() : null;
-    push(
-      `previous-leg-${vehicle.id}`,
-      vinLast6 ? `From Previous Driver · ${vinLast6}` : "From Previous Driver",
-      "critical",
-      vehicle.previousLegNotes,
+  if (load.previousDropOff) {
+    const photoCount = load.previousDropOff.photos.length;
+    const parts: string[] = [];
+    parts.push(
+      photoCount > 0
+        ? `${photoCount} drop-off photo${photoCount === 1 ? "" : "s"}`
+        : "No drop-off photos",
     );
+    const note = load.previousDropOff.note?.trim();
+    const keys = load.previousDropOff.keysLocation?.trim();
+    if (note) parts.push(note);
+    else if (keys) parts.push(`Keys: ${keys}`);
+    push("previous-dropoff", "Previous drop-off", "warning", parts.join(" · "));
+  } else {
+    for (const vehicle of load.vehicles) {
+      const vinLast6 = vehicle.vin && vehicle.vin.length >= 6 ? vehicle.vin.slice(-6).toUpperCase() : null;
+      push(
+        `previous-leg-${vehicle.id}`,
+        vinLast6 ? `From Previous Driver · ${vinLast6}` : "From Previous Driver",
+        "critical",
+        vehicle.previousLegNotes,
+      );
+    }
   }
 
   push("driver", "Driver Notes", "warning", load.driverNotes);
