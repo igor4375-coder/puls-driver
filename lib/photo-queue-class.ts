@@ -169,9 +169,15 @@ async function ensurePhotosDir() {
 async function isOnline(): Promise<boolean> {
   try {
     const state = await Network.getNetworkStateAsync();
-    return !!(state.isConnected && state.isInternetReachable);
+    // `isInternetReachable` is frequently undefined on Android, which made this
+    // report "offline" on a perfectly good LTE connection and gated every
+    // upload behind it. Only an explicit `false` means offline — matching the
+    // network listener below. If the network really is down the upload itself
+    // fails and the entry retries, so a false positive here is cheap.
+    return !!state.isConnected && state.isInternetReachable !== false;
   } catch {
-    return false;
+    // expo-network failing is not evidence of being offline; let the upload try.
+    return true;
   }
 }
 

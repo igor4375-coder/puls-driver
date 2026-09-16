@@ -13,6 +13,7 @@ import { api } from "@/convex/_generated/api";
 import { type Load, type LoadStatus, type VehicleInspection } from "./data";
 import { useSettings } from "./settings-context";
 import { photoQueue } from "./photo-queue";
+import { addBreadcrumb } from "./crash-reporter";
 
 // ─── Debounced AsyncStorage writes (reduces I/O pressure) ───────────────────────
 
@@ -671,6 +672,11 @@ async function geocodeAddress(address: string, city: string, state: string): Pro
 // v2: bumped after fixing AbortSignal.timeout bug — forces re-geocode of all addresses
 // that previously failed silently due to the unsupported API in React Native.
 const GEO_CACHE_KEY = "@autohaul:geocache_v2";
+// Nominatim's usage policy is ~1 request/second. Results are cached and
+// persisted, so a capped number of new lookups per refresh still fills in the
+// whole board over a few passes instead of getting the batch throttled.
+const GEOCODE_CONCURRENCY = 4;
+const MAX_GEOCODES_PER_PASS = 12;
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
@@ -1748,68 +1754,74 @@ export function LoadsProvider({
   // Geocode all platform loads that still have lat=0/lng=0
   const geocodePlatformLoads = React.useCallback(async (loads: Load[]) => {
     let changed = false;
-    const updated = await Promise.all(
-      loads.map(async (load) => {
-        let pickupLat = load.pickup.lat;
-        let pickupLng = load.pickup.lng;
-        let deliveryLat = load.delivery.lat;
-        let deliveryLng = load.delivery.lng;
+    let budget = MAX_GEOCODES_PER_PASS;
 
-        // Geocode pickup if missing
-        if (!pickupLat || !pickupLng) {
-          const c = load.pickup.contact;
-          const key = [c.address, c.city, c.state].filter(Boolean).join("|");
-          if (key && key !== "||") {
-            if (geocacheRef.current[key]) {
-              pickupLat = geocacheRef.current[key].lat;
-              pickupLng = geocacheRef.current[key].lng;
-            } else {
-              const coords = await geocodeAddress(c.address ?? "", c.city ?? "", c.state ?? "");
-              if (coords) {
-                pickupLat = coords.lat;
-                pickupLng = coords.lng;
-                geocacheRef.current[key] = coords;
-                changed = true;
-              }
+    // Never throws. A geocode miss only costs a map pin; it must not be able to
+    // fail the whole refresh, which is what used to surface to the driver as
+    // "Offline — showing cached data" on a perfectly good connection.
+    const resolve = async (c: { address?: string | null; city?: string | null; state?: string | null }) => {
+      const key = [c.address, c.city, c.state].filter(Boolean).join("|");
+      if (!key || key === "||") return null;
+      const cached = geocacheRef.current[key];
+      if (cached) return cached;
+      if (budget <= 0) return null;
+      budget--;
+      try {
+        const coords = await geocodeAddress(c.address ?? "", c.city ?? "", c.state ?? "");
+        if (coords) {
+          geocacheRef.current[key] = coords;
+          changed = true;
+          return coords;
+        }
+      } catch (err) {
+        console.warn("[Geocode] lookup failed:", err);
+      }
+      return null;
+    };
+
+    // Nominatim allows roughly one request a second and throttles bursts. A
+    // driver with 85 loads was firing up to 170 lookups at once, so the batch
+    // got rejected wholesale — hence the budget and the bounded concurrency.
+    const updated: Load[] = [];
+    for (let i = 0; i < loads.length; i += GEOCODE_CONCURRENCY) {
+      const batch = loads.slice(i, i + GEOCODE_CONCURRENCY);
+      const done = await Promise.all(
+        batch.map(async (load) => {
+          let pickupLat = load.pickup.lat;
+          let pickupLng = load.pickup.lng;
+          let deliveryLat = load.delivery.lat;
+          let deliveryLng = load.delivery.lng;
+
+          if (!pickupLat || !pickupLng) {
+            const coords = await resolve(load.pickup.contact);
+            if (coords) {
+              pickupLat = coords.lat;
+              pickupLng = coords.lng;
             }
           }
-        }
 
-        // Geocode delivery if missing
-        if (!deliveryLat || !deliveryLng) {
-          const c = load.delivery.contact;
-          console.log(`[Geocode] Delivery contact for ${load.loadNumber}:`, JSON.stringify({ address: c.address, city: c.city, state: c.state }));
-          const key = [c.address, c.city, c.state].filter(Boolean).join("|");
-          if (key && key !== "||") {
-            if (geocacheRef.current[key]) {
-              console.log(`[Geocode] Delivery cache hit for ${load.loadNumber}: ${key}`);
-              deliveryLat = geocacheRef.current[key].lat;
-              deliveryLng = geocacheRef.current[key].lng;
-            } else {
-              const coords = await geocodeAddress(c.address ?? "", c.city ?? "", c.state ?? "");
-              if (coords) {
-                deliveryLat = coords.lat;
-                deliveryLng = coords.lng;
-                geocacheRef.current[key] = coords;
-                changed = true;
-              }
+          if (!deliveryLat || !deliveryLng) {
+            const coords = await resolve(load.delivery.contact);
+            if (coords) {
+              deliveryLat = coords.lat;
+              deliveryLng = coords.lng;
             }
-          } else {
-            console.warn(`[Geocode] Delivery address empty for ${load.loadNumber} — skipping`);
           }
-        }
 
-        if (pickupLat !== load.pickup.lat || pickupLng !== load.pickup.lng ||
-            deliveryLat !== load.delivery.lat || deliveryLng !== load.delivery.lng) {
-          return {
-            ...load,
-            pickup: { ...load.pickup, lat: pickupLat, lng: pickupLng },
-            delivery: { ...load.delivery, lat: deliveryLat, lng: deliveryLng },
-          };
-        }
-        return load;
-      })
-    );
+          if (pickupLat !== load.pickup.lat || pickupLng !== load.pickup.lng ||
+              deliveryLat !== load.delivery.lat || deliveryLng !== load.delivery.lng) {
+            return {
+              ...load,
+              pickup: { ...load.pickup, lat: pickupLat, lng: pickupLng },
+              delivery: { ...load.delivery, lat: deliveryLat, lng: deliveryLng },
+            };
+          }
+          return load;
+        })
+      );
+      updated.push(...done);
+    }
+
     if (changed) {
       debouncedAsyncWrite(GEO_CACHE_KEY, JSON.stringify(geocacheRef.current));
     }
@@ -1823,8 +1835,21 @@ export function LoadsProvider({
     isFetchingRef.current = true;
     setIsLoadingPlatformLoads(true);
     setPlatformLoadError(null);
+
+    // Only this call reaching dispatch determines whether we're offline.
+    // Everything after it is local processing, and folding both into one
+    // try/catch meant a geocode hiccup told the driver he had no connection.
+    let rawLoads: unknown;
     try {
-      const rawLoads = await fetchAssignedLoads({ driverCode });
+      rawLoads = await fetchAssignedLoads({ driverCode });
+    } catch (err: any) {
+      setPlatformLoadError(err?.message ?? "Failed to fetch platform loads");
+      setIsLoadingPlatformLoads(false);
+      isFetchingRef.current = false;
+      return;
+    }
+
+    try {
       const converted = (rawLoads as PlatformLoad[]).map(platformLoadToLoad);
       const geocoded = await geocodePlatformLoads(converted);
 
@@ -2133,7 +2158,10 @@ export function LoadsProvider({
       // more than it fixed.
       // ──────────────────────────────────────────────────────────────────
     } catch (err: any) {
-      setPlatformLoadError(err?.message ?? "Failed to fetch platform loads");
+      // The loads did arrive — this is a local processing failure, so don't
+      // claim we're offline. Surface it for diagnostics and keep what we have.
+      console.warn("[Loads] post-fetch processing failed:", err);
+      addBreadcrumb(`loads post-fetch failed: ${err?.message ?? String(err)}`);
     } finally {
       setIsLoadingPlatformLoads(false);
       isFetchingRef.current = false;
