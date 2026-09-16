@@ -98,7 +98,12 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
               color="#E65100"
             />
           </TouchableOpacity>
-        ) : null}
+        ) : (
+          <View style={styles.noPhotoChip} accessibilityLabel="No previous drop-off photos">
+            <IconSymbol name="camera.fill" size={13} color="#8D6E63" />
+            <Text style={styles.noPhotoChipText}>No photos</Text>
+          </View>
+        )}
       </View>
 
       {hasPhotos && photosExpanded ? (
@@ -259,6 +264,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     color: "#E65100",
+  },
+  noPhotoChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(141,110,99,0.12)",
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  noPhotoChipText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#8D6E63",
   },
   noteText: {
     marginTop: 6,
