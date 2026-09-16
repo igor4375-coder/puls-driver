@@ -240,7 +240,13 @@ const optStyles = StyleSheet.create({
 
 export default function DeliverySignatureScreen() {
   const colors = useColors();
-  const { loadId } = useLocalSearchParams<{ loadId: string }>();
+  const { loadId, handoffNote: handoffNoteParam } = useLocalSearchParams<{
+    loadId: string;
+    handoffNote?: string;
+  }>();
+  // Note typed on the load screen, handed over because it isn't persisted to
+  // the inspection until the delivery syncs.
+  const pendingHandoffNote = handoffNoteParam ? decodeURIComponent(handoffNoteParam) : "";
   const { loads, updateLoadStatus, queuePlatformSync } = useLoads();
   const { driver } = useAuth();
   const saveSignatureMutation = useMutation(api.signatures.save);
@@ -411,7 +417,9 @@ export default function DeliverySignatureScreen() {
             notes: insp.notes || undefined,
             photoUploadedCount: httpsAlready.length,
             photoExpectedCount: allPhotoUris.length,
-            ...(insp.handoffNote ? { handoffNote: insp.handoffNote } : {}),
+            ...(pendingHandoffNote || insp.handoffNote
+              ? { handoffNote: pendingHandoffNote || insp.handoffNote }
+              : {}),
             ...(insp.additionalInspection
               ? { additionalInspection: insp.additionalInspection }
               : {}),

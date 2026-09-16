@@ -978,7 +978,11 @@ export default function LoadDetailScreen() {
 
   const finalizeDelivery = (handoffNote?: string) => {
     if (requireDeliverySignature) {
-      router.push(`/delivery-signature/${load.id}` as any);
+      // Carry the note across. This screen owns the typed text, and the
+      // signature screen otherwise only sees the already-persisted value,
+      // so a note plus a required signature used to lose the note.
+      const noteParam = handoffNote ? `?handoffNote=${encodeURIComponent(handoffNote)}` : "";
+      router.push(`/delivery-signature/${load.id}${noteParam}` as any);
       return;
     }
 
@@ -1719,25 +1723,27 @@ export default function LoadDetailScreen() {
                 />
               </TouchableOpacity>
 
-              {/* Inline handoff note — always visible on relay/multi-leg drops.
-                  Hidden only on final-customer deliveries where there's no next driver. */}
-              {load.isFinalLeg !== true && (
-                <>
-                  <SectionHeader title="NOTE FOR NEXT DRIVER" />
-                  <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
-                    <TextInput
-                      style={[styles.handoffInlineInput, { color: colors.foreground }]}
-                      placeholder='e.g. "Key underneath driver side mat" (optional)'
-                      placeholderTextColor={colors.muted}
-                      value={pendingHandoffNote}
-                      onChangeText={setPendingHandoffNote}
-                      multiline
-                      numberOfLines={2}
-                      onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 300)}
-                    />
-                  </View>
-                </>
-              )}
+              {/* Drop-off note — available on every delivery. Dispatch always
+                  sees it; on relay legs the next driver does too. */}
+              <SectionHeader
+                title={load.isFinalLeg === true ? "DROP-OFF NOTES" : "NOTE FOR NEXT DRIVER"}
+              />
+              <View style={[styles.notesCard, { backgroundColor: colors.surface, borderColor: colors.border, marginBottom: 12 }]}>
+                <TextInput
+                  style={[styles.handoffInlineInput, { color: colors.foreground }]}
+                  placeholder={
+                    load.isFinalLeg === true
+                      ? 'e.g. "Left with Mike at the front desk" (optional)'
+                      : 'e.g. "Key underneath driver side mat" (optional)'
+                  }
+                  placeholderTextColor={colors.muted}
+                  value={pendingHandoffNote}
+                  onChangeText={setPendingHandoffNote}
+                  multiline
+                  numberOfLines={2}
+                  onFocus={() => setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 300)}
+                />
+              </View>
 
               <TouchableOpacity
                 style={[styles.ctaBtn, { backgroundColor: colors.success }]}
@@ -2227,6 +2233,13 @@ const styles = StyleSheet.create({
   notesText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  handoffInlineInput: {
+    fontSize: 14,
+    lineHeight: 20,
+    padding: 0,
+    minHeight: 44,
+    textAlignVertical: "top",
   },
   ctaBtn: {
     flexDirection: "row",
