@@ -816,7 +816,8 @@ const s = StyleSheet.create({
     paddingTop: 12,
     alignItems: "center",
     gap: 10,
-    zIndex: 10,
+    zIndex: 30,
+    elevation: 30,
   },
   hint: { color: "rgba(255,255,255,0.6)", fontSize: 13, textAlign: "center", paddingHorizontal: 20 },
   shutterRow: {

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v103-no-photos-chip";
+export const BUILD_TAG = "v104-fixed-photo-button";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();

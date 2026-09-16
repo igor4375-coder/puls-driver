@@ -1,8 +1,11 @@
 /**
  * SyncStatusBanner
  *
- * A slim banner that appears at the top of the screen when there are
- * inspection photos pending upload or failed uploads that need attention.
+ * Overlay banner for inspection photo uploads. Positioned absolutely so it
+ * never steals layout height — otherwise the camera shutter jumps when the
+ * first photo starts uploading (especially on Android).
+ *
+ * Hidden on the camera session so the shutter stays fixed while shooting.
  *
  * - Uploading: blue banner with spinner and count
  * - Failed: red banner with retry button
@@ -18,13 +21,13 @@ import {
   StyleSheet,
   Animated,
   ActivityIndicator,
-  Platform,
   Modal,
   FlatList,
   SafeAreaView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/use-colors";
+import { usePathname } from "expo-router";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { photoQueue, type PhotoQueueEntry } from "@/lib/photo-queue";
@@ -90,12 +93,14 @@ function EntryRow({ entry, now }: { entry: PhotoQueueEntry; now: number }) {
 export function SyncStatusBanner() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const onCamera = typeof pathname === "string" && pathname.includes("camera-session");
   const { entries, stats, hasPending, hasFailed, retryFailed, sync } = usePhotoQueue();
   const opacity = useRef(new Animated.Value(0)).current;
   const [detailVisible, setDetailVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
 
-  const visible = hasPending || hasFailed;
+  const visible = (hasPending || hasFailed) && !onCamera;
 
   useEffect(() => {
     Animated.timing(opacity, {
@@ -126,7 +131,7 @@ export function SyncStatusBanner() {
     retryFailed();
   }, [retryFailed]);
 
-  if (!visible && !hasFailed) return null;
+  if (!visible) return null;
 
   const isUploading = stats.uploading > 0;
   const pendingCount = stats.pending + stats.uploading;
@@ -149,7 +154,17 @@ export function SyncStatusBanner() {
 
   return (
     <>
-      <Animated.View style={[s.banner, { backgroundColor: bgColor, opacity, paddingBottom: Math.max(insets.bottom, 10) }]}>
+      <Animated.View
+        pointerEvents="box-none"
+        style={[
+          s.banner,
+          {
+            backgroundColor: bgColor,
+            opacity,
+            paddingBottom: Math.max(insets.bottom, 10),
+          },
+        ]}
+      >
         <TouchableOpacity
           style={s.left}
           onPress={() => { setNow(Date.now()); setDetailVisible(true); }}
@@ -232,12 +247,17 @@ function StatPill({ label, count, color }: { label: string; count: number; color
 
 const s = StyleSheet.create({
   banner: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 2000,
+    elevation: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 14,
     paddingVertical: 8,
-    paddingTop: Platform.OS === "ios" ? 8 : 8,
   },
   left: {
     flexDirection: "row",

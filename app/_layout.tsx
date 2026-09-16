@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
-import { AppState, Platform } from "react-native";
+import { AppState, Platform, View } from "react-native";
 import "@/lib/_core/nativewind-pressable";
 import { ThemeProvider } from "@/lib/theme-provider";
 import {
@@ -189,6 +189,7 @@ function AppContent() {
         <AuthProvider>
           <SettingsProvider>
             <LoadsProviderWithAuth>
+          <View style={{ flex: 1 }}>
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(auth)" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="(tabs)" />
@@ -206,6 +207,7 @@ function AppContent() {
           <SyncStatusBanner />
           <UpdateVersionBanner />
           <StatusBar style="auto" />
+          </View>
             </LoadsProviderWithAuth>
           </SettingsProvider>
         </AuthProvider>
