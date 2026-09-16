@@ -41,8 +41,6 @@ import {
   type Vehicle,
   getStatusLabel,
   formatCurrency,
-  formatDate,
-  getPaymentLabel,
 } from "@/lib/data";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
 import { photoQueue } from "@/lib/photo-queue";
@@ -1356,7 +1354,6 @@ export default function LoadDetailScreen() {
                 {load.pickup.contact.address ? (
                   <InfoRow label="Scanned at" value={load.pickup.contact.address} navigable copyable />
                 ) : null}
-                <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
               </View>
               <SectionHeader title="DELIVERY INFORMATION" />
               <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border, paddingVertical: 16, paddingHorizontal: 16 }]}>
@@ -1391,7 +1388,6 @@ export default function LoadDetailScreen() {
                   navigable
                   copyable
                 />
-                <InfoRow label="Pickup Date" value={formatDate(load.pickup.date)} />
               </View>
               {load.pickupInstructions ? (
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4, backgroundColor: "#E8F5E9", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#A5D6A7" }}>
@@ -1427,7 +1423,6 @@ export default function LoadDetailScreen() {
                   navigable
                   copyable
                 />
-                <InfoRow label="Delivery Date" value={formatDate(load.delivery.date)} />
               </View>
               {load.dropoffInstructions ? (
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: 4, backgroundColor: "#FBE9E7", borderRadius: 10, padding: 10, borderWidth: 1, borderColor: "#FFAB91" }}>
@@ -1471,7 +1466,6 @@ export default function LoadDetailScreen() {
               <SectionHeader title="PAYMENT" />
               <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <InfoRow label="Driver Pay" value={formatCurrency(load.driverPay)} />
-                <InfoRow label="Payment Type" value={getPaymentLabel(load.paymentType)} />
               </View>
             </>
           )}
