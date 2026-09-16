@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v98-previous-dropoff";
+export const BUILD_TAG = "v99-collapse-dropoff-photos";
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();

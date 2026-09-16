@@ -43,11 +43,21 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
   const where = previousDropOff?.locationName?.trim() || null;
   const hasDetails = !!(previousDropOff || note);
 
+  const [photosExpanded, setPhotosExpanded] = useState(false);
   const [lightboxVisible, setLightboxVisible] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
-  const openLightbox = (index: number) => {
+  const tap = () => {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const togglePhotos = () => {
+    tap();
+    setPhotosExpanded((open) => !open);
+  };
+
+  const openLightbox = (index: number) => {
+    tap();
     setLightboxIndex(index);
     setLightboxVisible(true);
   };
@@ -60,7 +70,20 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
         compact && styles.cardCompact,
       ]}
     >
-      <View style={styles.headerRow}>
+      <TouchableOpacity
+        style={styles.headerRow}
+        onPress={hasPhotos ? togglePhotos : undefined}
+        activeOpacity={hasPhotos ? 0.75 : 1}
+        disabled={!hasPhotos}
+        accessibilityRole={hasPhotos ? "button" : undefined}
+        accessibilityLabel={
+          hasPhotos
+            ? photosExpanded
+              ? "Hide previous drop-off photos"
+              : `Show ${photos.length} previous drop-off photo${photos.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      >
         <View style={[styles.iconWrap, hasPhotos ? styles.iconWrapPhotos : styles.iconWrapMuted]}>
           <IconSymbol
             name={hasPhotos ? "photo.on.rectangle" : "camera.fill"}
@@ -79,10 +102,20 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
                 ? "No previous drop-off photos"
                 : "No previous drop-off photos or notes"}
           </Text>
+          {hasPhotos && !photosExpanded ? (
+            <Text style={styles.tapHint}>Tap to view photos</Text>
+          ) : null}
         </View>
-      </View>
+        {hasPhotos ? (
+          <IconSymbol
+            name={photosExpanded ? "chevron.up" : "chevron.down"}
+            size={16}
+            color="#E65100"
+          />
+        ) : null}
+      </TouchableOpacity>
 
-      {hasPhotos ? (
+      {hasPhotos && photosExpanded ? (
         <>
           <ScrollView
             horizontal
@@ -111,15 +144,7 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
             <Text style={styles.viewBtnText}>View drop-off photos</Text>
           </TouchableOpacity>
         </>
-      ) : (
-        <View style={styles.emptyPhotos}>
-          <Text style={styles.emptyPhotosText}>
-            {hasDetails
-              ? "The previous drop-off did not include photos. Use the note below to find the unit."
-              : "Nobody has left drop-off photos or notes for this pickup yet."}
-          </Text>
-        </View>
-      )}
+      ) : null}
 
       {(who || when || where) && (
         <Text style={styles.meta}>
@@ -223,7 +248,7 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: 10,
   },
   iconWrap: {
@@ -232,7 +257,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 1,
   },
   iconWrapPhotos: {
     backgroundColor: "#FFE082",
@@ -262,6 +286,12 @@ const styles = StyleSheet.create({
   },
   titleMuted: {
     color: "#5D4037",
+  },
+  tapHint: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#E65100",
   },
   thumbStrip: {
     paddingTop: 12,
@@ -293,18 +323,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#E65100",
-  },
-  emptyPhotos: {
-    marginTop: 10,
-    backgroundColor: "rgba(0,0,0,0.04)",
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-  },
-  emptyPhotosText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: "#6D4C41",
   },
   meta: {
     marginTop: 10,
