@@ -41,7 +41,12 @@ import {
 import { setupNotificationResponseListener } from "@/lib/push-notifications";
 import { photoQueue } from "@/lib/photo-queue";
 import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-runtime";
-import { startLocationTracking, stopLocationTracking, flushLocationQueue } from "@/lib/location-tracker";
+import {
+  startLocationTracking,
+  stopLocationTracking,
+  flushLocationQueue,
+  loadTrackingStatus,
+} from "@/lib/location-tracker";
 import { useSettings } from "@/lib/settings-context";
 import { getApiBaseUrl } from "@/constants/oauth";
 
@@ -75,16 +80,17 @@ function LocationTrackingManager() {
         console.warn("[LocationTracker] start failed:", err),
       );
     } else {
-      stopLocationTracking();
+      void stopLocationTracking();
     }
 
-    return () => {
-      stopLocationTracking();
-    };
+    // Deliberately no teardown on unmount. The background service is supposed
+    // to outlive this component, and stopping it on every dep change tore down
+    // Android's foreground service and reset its location request.
   }, [driverCode, settings.locationTrackingEnabled]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
+    void loadTrackingStatus();
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active") flushLocationQueue().catch(() => {});
     });

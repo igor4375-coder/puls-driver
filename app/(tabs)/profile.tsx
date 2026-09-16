@@ -10,12 +10,38 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { registerForPushNotificationsAsync } from "@/lib/push-notifications";
+import {
+  subscribeTrackingStatus,
+  promptForAlwaysAllow,
+  type TrackingStatus,
+} from "@/lib/location-tracker";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSettings } from "@/lib/settings-context";
 import { useLoads } from "@/lib/loads-context";
 import { usePermissions } from "@/lib/permissions-context";
 import { LinkedAccountsSection } from "@/components/linked-accounts-section";
 import { useFocusEffect } from "expo-router";
+
+function relAge(t: number): string {
+  const ms = Date.now() - t;
+  if (ms < 90_000) return "just now";
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
+  return `${Math.round(ms / 86_400_000)}d ago`;
+}
+
+function trackingSubLabel(enabled: boolean, s: TrackingStatus | null): string {
+  if (!enabled) return "Location sharing is off";
+  if (!s || s.mode === "off") return "Starting up…";
+  if (!s.servicesEnabled) return "Turn on device location";
+
+  const parts = [s.mode === "background-service" ? "Background tracking on" : "Only while app is open"];
+  if (s.lastPlatformOkAt) parts.push(`sent ${relAge(s.lastPlatformOkAt)}`);
+  else if (s.lastError) parts.push("not reaching dispatch");
+  else parts.push("no report yet");
+  if (s.pendingCount > 0) parts.push(`${s.pendingCount} queued`);
+  return parts.join(" · ");
+}
 
 // ─── Equipment type helpers ────────────────────────────────────────────────────
 const EQUIPMENT_TYPES = [
@@ -287,6 +313,11 @@ export default function ProfileScreen() {
   // for every driver who adopted a platform code. An unknown code costs one
   // empty indexed lookup, which is cheaper than guessing the shape wrong.
   const hasInviteCode = !!inviteCode;
+
+  // Live location-tracking health, so a driver whose pings aren't reaching
+  // dispatch can see it instead of everyone assuming tracking is fine.
+  const [trackingStatus, setTrackingStatus] = useState<TrackingStatus | null>(null);
+  useEffect(() => subscribeTrackingStatus(setTrackingStatus), []);
 
   // Register push token once profile is loaded
   const tokenRegistered = useRef(false);
@@ -981,7 +1012,7 @@ export default function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[styles.settingLabel, { color: colors.foreground }]}>Share Location</Text>
               <Text style={[styles.settingSubLabel, { color: colors.muted }]}>
-                {settings.locationTrackingEnabled ? "Dispatch can see your position" : "Location sharing is off"}
+                {trackingSubLabel(settings.locationTrackingEnabled, trackingStatus)}
               </Text>
             </View>
             <Switch
@@ -994,6 +1025,32 @@ export default function ProfileScreen() {
               thumbColor={settings.locationTrackingEnabled ? colors.primary : colors.muted}
             />
           </View>
+
+          {/* Android never shows a dialog for "Allow all the time", so offer a
+              deep link when the driver hasn't granted it. */}
+          {settings.locationTrackingEnabled &&
+            Platform.OS === "android" &&
+            trackingStatus &&
+            trackingStatus.mode !== "off" &&
+            !trackingStatus.backgroundGranted && (
+              <TouchableOpacity
+                onPress={promptForAlwaysAllow}
+                style={[styles.settingRow, { borderBottomWidth: 0, paddingTop: 0 }]}
+              >
+                <View style={[styles.settingIcon, { backgroundColor: "#F59E0B18" }]}>
+                  <IconSymbol name="exclamationmark.triangle.fill" size={18} color="#F59E0B" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.settingLabel, { color: colors.foreground }]}>
+                    Improve Tracking Reliability
+                  </Text>
+                  <Text style={[styles.settingSubLabel, { color: colors.muted }]}>
+                    Set location access to &quot;Allow all the time&quot; so dispatch keeps seeing you
+                  </Text>
+                </View>
+                <IconSymbol name="chevron.right" size={16} color={colors.muted} />
+              </TouchableOpacity>
+            )}
         </View>
 
         {/* ── MY SIGNATURE ── */}

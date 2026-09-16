@@ -8,8 +8,12 @@
 import { Alert, Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
+import Constants from "expo-constants";
 import { router } from "expo-router";
 import { sendImmediateLocationPing } from "@/lib/location-tracker";
+import { addBreadcrumb } from "@/lib/crash-reporter";
+
+let _lastPushError: string | null = null;
 
 // Show notifications even when app is in foreground
 Notifications.setNotificationHandler({
@@ -87,13 +91,32 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    // Release builds don't always resolve the project from the manifest, and
+    // getExpoPushTokenAsync throws rather than guessing. Pass it explicitly.
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId ?? undefined;
+
+    const tokenData = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+    _lastPushError = null;
     console.log("[Push] Token registered:", tokenData.data);
     return tokenData.data;
   } catch (err) {
+    // On Android this is where a missing FCM config surfaces: without
+    // google-services.json the Firebase SDK can't hand out a device token, so
+    // the driver silently never registers. Record it so it's diagnosable
+    // instead of looking like the driver just didn't grant permission.
+    _lastPushError = err instanceof Error ? err.message : String(err);
+    addBreadcrumb(`push token failed: ${_lastPushError}`);
     console.error("[Push] Failed to get token:", err);
     return null;
   }
+}
+
+/** Why push registration last failed, for diagnostics/support. */
+export function getLastPushError(): string | null {
+  return _lastPushError;
 }
 
 /**
