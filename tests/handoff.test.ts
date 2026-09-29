@@ -131,7 +131,8 @@ describe("detectHandoffReadyTransitions", () => {
 
   it("does not mention previous-driver names in the alert copy", () => {
     const copy = handoffReadyNotificationCopy(ready);
-    expect(copy.title).toBe("Ready for Pickup");
+    expect(copy.title).toBe("✅ Ready for Pickup");
+    expect(copy.subtitle).toBe("At the terminal");
     expect(copy.body).not.toMatch(/Nicki|Dave|Mackenzie/i);
   });
 });

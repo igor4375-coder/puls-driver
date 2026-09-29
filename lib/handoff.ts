@@ -132,11 +132,16 @@ export function detectHandoffReadyTransitions(
   return ready;
 }
 
-export function handoffReadyNotificationCopy(s: HandoffWatchSnapshot): { title: string; body: string } {
+export function handoffReadyNotificationCopy(s: HandoffWatchSnapshot): {
+  title: string;
+  subtitle: string;
+  body: string;
+} {
   const who = s.vehicleLabel || `Load ${s.loadNumber}`;
   const loc = s.pickupLocationName;
   return {
-    title: "Ready for Pickup",
+    title: "✅ Ready for Pickup",
+    subtitle: "At the terminal",
     body: loc
       ? `${who} is at ${loc} now.`
       : `${who} is at the terminal and ready to pick up.`,

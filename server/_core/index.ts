@@ -269,7 +269,7 @@ async function startServer() {
       const isHandoffReady =
         changeType === "handoff_ready" || handoffState === "ready_for_pickup";
       const vehicle = vehicleDescription ?? `Load ${loadNumber ?? ""}`;
-      const title = isHandoffReady ? "Ready for Pickup" : "Load Updated";
+      const title = isHandoffReady ? "✅ Ready for Pickup" : "Load Updated";
       const body = isHandoffReady
         ? (pickupLocation ? `${vehicle} is at ${pickupLocation} now.` : `${vehicle} is at the terminal and ready to pick up.`)
         : changeDescription
@@ -285,7 +285,8 @@ async function startServer() {
           loadNumber,
           driverCode,
         },
-        "loads"
+        "loads",
+        isHandoffReady ? { subtitle: "At the terminal", color: "#2E7D32" } : undefined,
       );
 
       console.log(`[Webhook] load-updated push sent to driver ${driverCode} for load ${loadNumber}`);
@@ -341,10 +342,11 @@ async function startServer() {
 
       await sendPushNotification(
         profile.pushToken,
-        "Ready for Pickup",
+        "✅ Ready for Pickup",
         body,
         { type: "handoff_ready", loadNumber, loadId, driverCode },
-        "loads"
+        "loads",
+        { subtitle: "At the terminal", color: "#2E7D32" },
       );
 
       console.log(`[Webhook] handoff-ready push sent to driver ${driverCode} for load ${loadNumber}`);

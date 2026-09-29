@@ -51,13 +51,14 @@ export async function maybeNotifyHandoffReady(
   await writeStoredSnapshots(driverCode, next);
 
   for (const snap of ready) {
-    const { title, body } = handoffReadyNotificationCopy(snap);
+    const { title, subtitle, body } = handoffReadyNotificationCopy(snap);
     try {
       await sendLocalNotification(
         title,
         body,
         { type: "handoff_ready", loadId: snap.id, loadNumber: snap.loadNumber },
         `handoff-ready-${snap.id}`,
+        { subtitle, color: "#2E7D32" },
       );
     } catch (err) {
       console.warn("[Handoff] ready notification failed:", err);

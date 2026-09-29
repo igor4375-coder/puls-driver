@@ -7,12 +7,14 @@
 interface ExpoPushMessage {
   to: string | string[];
   title: string;
+  subtitle?: string;
   body: string;
   data?: Record<string, unknown>;
   sound?: "default" | null;
   badge?: number;
   channelId?: string;
   priority?: "default" | "normal" | "high";
+  color?: string;
 }
 
 interface ExpoPushTicket {
@@ -33,7 +35,8 @@ export async function sendPushNotification(
   title: string,
   body: string,
   data?: Record<string, unknown>,
-  channelId?: string
+  channelId?: string,
+  extras?: { subtitle?: string; color?: string },
 ): Promise<void> {
   const tokenList = Array.isArray(tokens) ? tokens : [tokens];
 
@@ -50,11 +53,13 @@ export async function sendPushNotification(
   const messages: ExpoPushMessage[] = validTokens.map((token) => ({
     to: token,
     title,
+    subtitle: extras?.subtitle,
     body,
     data: data ?? {},
     sound: "default",
     priority: "high",
     channelId: channelId ?? "default",
+    color: extras?.color,
   }));
 
   try {

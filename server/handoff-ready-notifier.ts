@@ -53,7 +53,7 @@ function copyFor(s: Snapshot): { title: string; body: string } {
   const who = s.vehicleLabel || `Load ${s.loadNumber}`;
   const loc = s.pickupLocationName;
   return {
-    title: "Ready for Pickup",
+    title: "✅ Ready for Pickup",
     body: loc
       ? `${who} is at ${loc} now.`
       : `${who} is at the terminal and ready to pick up.`,
@@ -102,6 +102,7 @@ async function checkDriver(driver: EligibleDriver): Promise<void> {
       body,
       { type: "handoff_ready", loadId: snap.id, loadNumber: snap.loadNumber },
       "loads",
+      { subtitle: "At the terminal", color: "#2E7D32" },
     );
     console.log(`[HandoffReady] Notified ${driver.code} — ${snap.loadNumber} (${snap.id})`);
   }

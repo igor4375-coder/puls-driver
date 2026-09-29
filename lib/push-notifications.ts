@@ -160,15 +160,19 @@ export async function sendLocalNotification(
   body: string,
   data?: Record<string, unknown>,
   identifier?: string,
+  extras?: { subtitle?: string; color?: string },
 ) {
   await Notifications.scheduleNotificationAsync({
     identifier,
     content: {
       title,
       body,
+      subtitle: extras?.subtitle,
       data: data ?? {},
       sound: "default",
-      ...(Platform.OS === "android" ? { channelId: "loads" } : {}),
+      ...(Platform.OS === "android"
+        ? { channelId: "loads", color: extras?.color ?? "#2E7D32" }
+        : {}),
     },
     trigger: null, // immediate
   });
