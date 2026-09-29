@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { normalizeHandoff, isPickupBlockedByHandoff, handoffDisplayLabel, handoffAnonymousExplanation } from "../lib/handoff";
+import {
+  normalizeHandoff,
+  isPickupBlockedByHandoff,
+  handoffDisplayLabel,
+  handoffAnonymousExplanation,
+  detectHandoffReadyTransitions,
+  handoffReadyNotificationCopy,
+} from "../lib/handoff";
 
 describe("normalizeHandoff", () => {
   it("returns null for missing or invalid payloads", () => {
@@ -92,5 +99,39 @@ describe("normalizeHandoff", () => {
       "The vehicle is still with the previous driver. It has not been dropped at Winnipeg Terminal yet.",
     );
     expect(handoffAnonymousExplanation(r!)).not.toMatch(/Dave|Mackenzie|leg/i);
+  });
+});
+
+describe("detectHandoffReadyTransitions", () => {
+  const awaiting = {
+    id: "platform-9",
+    loadNumber: "154122",
+    vehicleLabel: "2022 Hyundai Kona",
+    handoffState: "awaiting_handoff" as const,
+    pickupLocationName: "Prairie Winkler Terminal",
+  };
+  const ready = { ...awaiting, handoffState: "ready_for_pickup" as const };
+
+  it("notifies only on awaiting_handoff → ready_for_pickup", () => {
+    const found = detectHandoffReadyTransitions([awaiting], [ready]);
+    expect(found).toHaveLength(1);
+    expect(found[0].id).toBe("platform-9");
+    expect(handoffReadyNotificationCopy(found[0]).body).toBe(
+      "2022 Hyundai Kona is at Prairie Winkler Terminal now.",
+    );
+  });
+
+  it("does not notify on first sight of a ready load", () => {
+    expect(detectHandoffReadyTransitions([], [ready])).toHaveLength(0);
+  });
+
+  it("does not notify when the load stays awaiting", () => {
+    expect(detectHandoffReadyTransitions([awaiting], [awaiting])).toHaveLength(0);
+  });
+
+  it("does not mention previous-driver names in the alert copy", () => {
+    const copy = handoffReadyNotificationCopy(ready);
+    expect(copy.title).toBe("Ready for Pickup");
+    expect(copy.body).not.toMatch(/Nicki|Dave|Mackenzie/i);
   });
 });

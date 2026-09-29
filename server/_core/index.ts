@@ -10,6 +10,7 @@ import * as db from "../db";
 import { sendPushNotification } from "../push";
 import { createPresignedUploadUrl, storageDownload, storagePut } from "../storage";
 import { scheduleGatePassExpiryNotifier } from "../gate-pass-notifier";
+import { scheduleHandoffReadyNotifier } from "../handoff-ready-notifier";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -235,11 +236,14 @@ async function startServer() {
         }
       }
 
-      const { driverCode, loadNumber, vehicleDescription, changeDescription } = req.body as {
+      const { driverCode, loadNumber, vehicleDescription, changeDescription, changeType, handoffState, pickupLocation } = req.body as {
         driverCode?: string;
         loadNumber?: string;
         vehicleDescription?: string;
         changeDescription?: string;
+        changeType?: string;
+        handoffState?: string;
+        pickupLocation?: string;
       };
 
       if (!driverCode) {
@@ -262,16 +266,25 @@ async function startServer() {
         return;
       }
 
+      const isHandoffReady =
+        changeType === "handoff_ready" || handoffState === "ready_for_pickup";
       const vehicle = vehicleDescription ?? `Load ${loadNumber ?? ""}`;
-      const body = changeDescription
-        ? `${vehicle}: ${changeDescription}`
-        : `${vehicle} has been updated by dispatch`;
+      const title = isHandoffReady ? "Ready for Pickup" : "Load Updated";
+      const body = isHandoffReady
+        ? (pickupLocation ? `${vehicle} is at ${pickupLocation} now.` : `${vehicle} is at the terminal and ready to pick up.`)
+        : changeDescription
+          ? `${vehicle}: ${changeDescription}`
+          : `${vehicle} has been updated by dispatch`;
 
       await sendPushNotification(
         profile.pushToken,
-        "Load Updated",
+        title,
         body,
-        { type: "load_updated", loadNumber, driverCode },
+        {
+          type: isHandoffReady ? "handoff_ready" : "load_updated",
+          loadNumber,
+          driverCode,
+        },
         "loads"
       );
 
@@ -279,6 +292,65 @@ async function startServer() {
       res.json({ success: true, notified: true });
     } catch (err) {
       console.error("[Webhook] load-updated error:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /**
+   * Webhook: previous carrier dropped the unit; this driver's pickup is ready.
+   * POST { driverCode, loadNumber, vehicleDescription, pickupLocation, loadId }
+   */
+  app.post("/api/webhooks/handoff-ready", async (req, res) => {
+    try {
+      const secret = process.env.WEBHOOK_SECRET;
+      if (secret) {
+        const provided = req.headers["x-webhook-secret"];
+        if (provided !== secret) {
+          res.status(401).json({ error: "Invalid webhook secret" });
+          return;
+        }
+      }
+
+      const { driverCode, loadNumber, vehicleDescription, pickupLocation, loadId } = req.body as {
+        driverCode?: string;
+        loadNumber?: string;
+        vehicleDescription?: string;
+        pickupLocation?: string;
+        loadId?: string;
+      };
+
+      if (!driverCode) {
+        res.status(400).json({ error: "driverCode is required" });
+        return;
+      }
+
+      let profile = await db.getDriverProfileByCode(driverCode);
+      if (!profile) {
+        profile = await db.getDriverProfileByPlatformCode(driverCode);
+      }
+      if (!profile?.pushToken) {
+        console.log(`[Webhook] No push token for driver ${driverCode} — skipping handoff-ready notification`);
+        res.json({ success: true, notified: false, reason: "no_push_token" });
+        return;
+      }
+
+      const vehicle = vehicleDescription ?? `Load ${loadNumber ?? ""}`;
+      const body = pickupLocation
+        ? `${vehicle} is at ${pickupLocation} now.`
+        : `${vehicle} is at the terminal and ready to pick up.`;
+
+      await sendPushNotification(
+        profile.pushToken,
+        "Ready for Pickup",
+        body,
+        { type: "handoff_ready", loadNumber, loadId, driverCode },
+        "loads"
+      );
+
+      console.log(`[Webhook] handoff-ready push sent to driver ${driverCode} for load ${loadNumber}`);
+      res.json({ success: true, notified: true });
+    } catch (err) {
+      console.error("[Webhook] handoff-ready error:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -416,6 +488,7 @@ async function startServer() {
     console.log(`[api] server listening on port ${port}`);
     // Start the gate pass expiry notification scheduler
     scheduleGatePassExpiryNotifier();
+    scheduleHandoffReadyNotifier();
   });
 }
 

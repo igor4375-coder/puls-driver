@@ -28,6 +28,8 @@ function typeToIcon(type: string): { name: string; color: string } {
   switch (type) {
     case "load_assigned":
       return { name: "truck.box.fill", color: "#2196F3" };
+    case "handoff_ready":
+      return { name: "checkmark.circle.fill", color: "#2E7D32" };
     case "invite":
       return { name: "building.2.fill", color: "#9C27B0" };
     case "gate_pass_expiry":

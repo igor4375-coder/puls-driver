@@ -88,3 +88,57 @@ export function handoffAnonymousExplanation(handoff: LoadHandoff): string {
   }
   return `The previous driver has not been assigned yet, so the vehicle has not reached ${loc}.`;
 }
+
+export type HandoffWatchSnapshot = {
+  id: string;
+  loadNumber: string;
+  vehicleLabel: string;
+  handoffState: HandoffState | null;
+  pickupLocationName: string | null;
+};
+
+export function snapshotHandoffWatch(load: {
+  id: string;
+  loadNumber: string;
+  vehicles?: Array<{ year?: string | null; make?: string | null; model?: string | null }>;
+  handoff?: { state: HandoffState; pickupLocationName: string | null } | null;
+  pickup?: { contact?: { company?: string | null } };
+}): HandoffWatchSnapshot {
+  const v = load.vehicles?.[0];
+  const parts = [v?.year, v?.make, v?.model].filter(Boolean);
+  return {
+    id: load.id,
+    loadNumber: load.loadNumber,
+    vehicleLabel: parts.length > 0 ? parts.join(" ") : `Load ${load.loadNumber}`,
+    handoffState: load.handoff?.state ?? null,
+    pickupLocationName: load.handoff?.pickupLocationName || load.pickup?.contact?.company || null,
+  };
+}
+
+/** Loads that just flipped from awaiting handoff to ready at the yard. */
+export function detectHandoffReadyTransitions(
+  previous: HandoffWatchSnapshot[],
+  next: HandoffWatchSnapshot[],
+): HandoffWatchSnapshot[] {
+  const prevById = new Map(previous.map((s) => [s.id, s]));
+  const ready: HandoffWatchSnapshot[] = [];
+  for (const n of next) {
+    const p = prevById.get(n.id);
+    if (!p) continue;
+    if (p.handoffState === "awaiting_handoff" && n.handoffState === "ready_for_pickup") {
+      ready.push(n);
+    }
+  }
+  return ready;
+}
+
+export function handoffReadyNotificationCopy(s: HandoffWatchSnapshot): { title: string; body: string } {
+  const who = s.vehicleLabel || `Load ${s.loadNumber}`;
+  const loc = s.pickupLocationName;
+  return {
+    title: "Ready for Pickup",
+    body: loc
+      ? `${who} is at ${loc} now.`
+      : `${who} is at the terminal and ready to pick up.`,
+  };
+}

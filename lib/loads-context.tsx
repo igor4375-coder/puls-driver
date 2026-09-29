@@ -13,6 +13,7 @@ import { api } from "@/convex/_generated/api";
 import { type Load, type LoadStatus, type LoadHandoff, type PreviousDropOff, type VehicleInspection } from "./data";
 import { normalizePreviousDropOff } from "./previous-drop-off";
 import { normalizeHandoff, normalizeLegNumber } from "./handoff";
+import { maybeNotifyHandoffReady } from "./handoff-watch";
 import { useSettings } from "./settings-context";
 import { photoQueue } from "./photo-queue";
 import { addBreadcrumb } from "./crash-reporter";
@@ -1910,6 +1911,7 @@ export function LoadsProvider({
       type DowngradeReason = "delivery_reversed" | "pickup_reverted";
       const downgradeMap = new Map<string, { reason: DowngradeReason; freshStatus: LoadStatus }>();
       const previousPlatformLoads = platformLoadsRef.current;
+      void maybeNotifyHandoffReady(driverCode, previousPlatformLoads, geocoded);
       for (const fresh of geocoded) {
         const existing = previousPlatformLoads.find((p) => p.id === fresh.id);
         if (!existing) continue;

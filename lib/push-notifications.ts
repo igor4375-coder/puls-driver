@@ -132,7 +132,9 @@ export function setupNotificationResponseListener(): () => void {
     setTimeout(() => {
       if (type === "invite") {
         router.push("/(tabs)/profile");
-      } else if (type === "load_assigned" || type === "load_updated" || type === "load_removed") {
+      } else if (type === "handoff_ready" && typeof data.loadId === "string") {
+        router.push(`/load/${data.loadId}` as any);
+      } else if (type === "load_assigned" || type === "load_updated" || type === "load_removed" || type === "handoff_ready") {
         router.push("/(tabs)");
       } else if (type === "location_request") {
         sendImmediateLocationPing()
@@ -153,9 +155,21 @@ export function setupNotificationResponseListener(): () => void {
  * Send a local notification (for testing or in-app alerts).
  * Works in Expo Go on iOS.
  */
-export async function sendLocalNotification(title: string, body: string, data?: Record<string, unknown>) {
+export async function sendLocalNotification(
+  title: string,
+  body: string,
+  data?: Record<string, unknown>,
+  identifier?: string,
+) {
   await Notifications.scheduleNotificationAsync({
-    content: { title, body, data: data ?? {} },
+    identifier,
+    content: {
+      title,
+      body,
+      data: data ?? {},
+      sound: "default",
+      ...(Platform.OS === "android" ? { channelId: "loads" } : {}),
+    },
     trigger: null, // immediate
   });
 }
