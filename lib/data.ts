@@ -122,6 +122,19 @@ export interface PreviousDropOff {
   photos: string[];
 }
 
+/** Yard-readiness from the previous leg. Null once this driver has picked up. */
+export type HandoffState = "awaiting_handoff" | "ready_for_pickup";
+
+export interface LoadHandoff {
+  state: HandoffState;
+  blockingLegNumber: number | null;
+  blockingCarrierName: string | null;
+  blockingCarrierAssigned: boolean;
+  pickupLocationName: string | null;
+  label: string;
+  message: string;
+}
+
 export interface ContactInfo {
   name: string;
   company: string;
@@ -168,6 +181,13 @@ export interface Load {
    * Null when nobody has dropped the unit yet, or there are no photos and no note.
    */
   previousDropOff?: PreviousDropOff | null;
+  /**
+   * Whether the unit is still out with a previous carrier, or at the yard.
+   * Null after pickup (or when the platform omits it). Render nothing when null.
+   */
+  handoff?: LoadHandoff | null;
+  /** This load's leg number on the order (e.g. 2 → "Leg 2"). */
+  legNumber?: number | null;
   assignedAt: string;
   /**
    * The legId from the company platform, set fresh on every platform fetch.

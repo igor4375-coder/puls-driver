@@ -78,6 +78,18 @@ export interface CompanyPlatformLoad {
     keysLocation: string | null;
     photos: string[];
   } | null;
+  /** Yard-readiness vs previous carrier. Null after pickup. */
+  handoff?: {
+    state: "awaiting_handoff" | "ready_for_pickup";
+    blockingLegNumber: number | null;
+    blockingCarrierName: string | null;
+    blockingCarrierAssigned: boolean;
+    pickupLocationName: string | null;
+    label: string;
+    message: string;
+  } | null;
+  /** This load's leg number on the order. */
+  legNumber?: number | null;
 }
 
 export interface SyncInspectionDamage {

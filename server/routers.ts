@@ -516,6 +516,8 @@ export const appRouter = router({
             dropoffInstructions: (pl as any).dropoffInstructions ?? null,
             previousLegNotes: pl.previousLegNotes ?? null,
             previousDropOff: (pl as any).previousDropOff ?? null,
+            handoff: (pl as any).handoff ?? null,
+            legNumber: (pl as any).legNumber ?? null,
           }));
         } catch (err) {
           console.error("[loads.getAssigned] Company platform error:", err);

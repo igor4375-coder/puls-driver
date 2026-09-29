@@ -10,8 +10,9 @@ import { AppState, type AppStateStatus } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { type Load, type LoadStatus, type PreviousDropOff, type VehicleInspection } from "./data";
+import { type Load, type LoadStatus, type LoadHandoff, type PreviousDropOff, type VehicleInspection } from "./data";
 import { normalizePreviousDropOff } from "./previous-drop-off";
+import { normalizeHandoff, normalizeLegNumber } from "./handoff";
 import { useSettings } from "./settings-context";
 import { photoQueue } from "./photo-queue";
 import { addBreadcrumb } from "./crash-reporter";
@@ -200,6 +201,10 @@ export interface PlatformLoad {
    * Separate from pickupPhotos / deliveryPhotos (this driver's inspections).
    */
   previousDropOff?: PreviousDropOff | null;
+  /** Yard-readiness vs previous carrier. Null after pickup. */
+  handoff?: LoadHandoff | null;
+  /** This load's leg number on the order. */
+  legNumber?: number | null;
 }
 
 /**
@@ -392,6 +397,8 @@ function platformLoadToLoad(pl: PlatformLoad): Load {
     pickupInstructions: pl.pickupInstructions || null,
     dropoffInstructions: pl.dropoffInstructions || null,
     previousDropOff: normalizePreviousDropOff((pl as any).previousDropOff),
+    handoff: normalizeHandoff((pl as any).handoff),
+    legNumber: normalizeLegNumber((pl as any).legNumber),
     assignedAt: parsePlatformDate(pl.pickupDate),
     // Server-side delivery timestamp (v3.5.0+). Drives the Delivered-tab
     // sort order and the 30-day auto-archive. Falls back to deliveryDate

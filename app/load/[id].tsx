@@ -49,7 +49,9 @@ import * as Location from "expo-location";
 import { haversineDistanceMiles, DELIVERY_PROXIMITY_THRESHOLD_MILES } from "@/lib/geo-utils";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
+import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
+import { isPickupBlockedByHandoff } from "@/lib/handoff";
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -718,6 +720,13 @@ export default function LoadDetailScreen() {
 
   const handleMarkPickedUp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isPickupBlockedByHandoff(load.handoff)) {
+      Alert.alert(
+        load.handoff?.label ?? "Awaiting Handoff",
+        load.handoff?.message || "The vehicle is not at the pickup location yet. Check with dispatch before you drive out.",
+      );
+      return;
+    }
     if (load.vehicles.length === 0) {
       Alert.alert("No Vehicles", "This load has no vehicles to inspect.");
       return;
@@ -1267,6 +1276,12 @@ export default function LoadDetailScreen() {
               }]}>{getStatusLabel(load.status)}</Text>
             </View>
           </View>
+          {load.legNumber ? (
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.muted, marginBottom: 8 }}>
+              Leg {load.legNumber}
+            </Text>
+          ) : null}
+          {load.handoff ? <HandoffStatusCard handoff={load.handoff} /> : null}
           {/* Field Pickup banner */}
           {load.isFieldPickup && (
             <View style={[styles.fieldPickupBanner, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "40" }]}>
@@ -1682,12 +1697,28 @@ export default function LoadDetailScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.ctaBtn, { backgroundColor: colors.primary }]}
+                style={[
+                  styles.ctaBtn,
+                  {
+                    backgroundColor: isPickupBlockedByHandoff(load.handoff)
+                      ? colors.warning
+                      : colors.primary,
+                    opacity: isPickupBlockedByHandoff(load.handoff) ? 0.85 : 1,
+                  },
+                ]}
                 onPress={handleMarkPickedUp}
                 activeOpacity={0.85}
               >
-                <IconSymbol name="checkmark.circle.fill" size={22} color="#FFFFFF" />
-                <Text style={styles.ctaBtnText}>Mark as Picked Up</Text>
+                <IconSymbol
+                  name={isPickupBlockedByHandoff(load.handoff) ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"}
+                  size={22}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.ctaBtnText}>
+                  {isPickupBlockedByHandoff(load.handoff)
+                    ? (load.handoff?.label ?? "Awaiting Handoff")
+                    : "Mark as Picked Up"}
+                </Text>
               </TouchableOpacity>
             </>
           )}
