@@ -51,7 +51,7 @@ import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
-import { isPickupBlockedByHandoff, handoffDisplayLabel, handoffDisplayMessage } from "@/lib/handoff";
+import { isPickupBlockedByHandoff } from "@/lib/handoff";
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -721,10 +721,7 @@ export default function LoadDetailScreen() {
   const handleMarkPickedUp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isPickupBlockedByHandoff(load.handoff)) {
-      Alert.alert(
-        load.handoff ? handoffDisplayLabel(load.handoff) : "Awaiting Handoff",
-        (load.handoff && handoffDisplayMessage(load.handoff)) || "The vehicle is not at the pickup location yet. Check with dispatch before you drive out.",
-      );
+      Alert.alert("Awaiting Handoff", "The vehicle is not at the pickup location yet.");
       return;
     }
     if (load.vehicles.length === 0) {
@@ -1710,9 +1707,7 @@ export default function LoadDetailScreen() {
                   color="#FFFFFF"
                 />
                 <Text style={styles.ctaBtnText}>
-                  {isPickupBlockedByHandoff(load.handoff) && load.handoff
-                    ? handoffDisplayLabel(load.handoff)
-                    : "Mark as Picked Up"}
+                  {isPickupBlockedByHandoff(load.handoff) ? "Awaiting Handoff" : "Mark as Picked Up"}
                 </Text>
               </TouchableOpacity>
             </>

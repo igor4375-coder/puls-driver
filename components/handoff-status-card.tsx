@@ -1,92 +1,50 @@
 import { View, Text, StyleSheet } from "react-native";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import type { LoadHandoff } from "@/lib/data";
-import { handoffDisplayLabel, handoffDisplayMessage } from "@/lib/handoff";
 
 type Props = {
   handoff: LoadHandoff;
-  compact?: boolean;
 };
 
-/**
- * Read-only yard-readiness card. Shows platform copy with "Leg N" stripped.
- */
-export function HandoffStatusCard({ handoff, compact }: Props) {
+/** Compact caution / ready chip. No explanation copy. */
+export function HandoffStatusCard({ handoff }: Props) {
   const awaiting = handoff.state === "awaiting_handoff";
-  const label = handoffDisplayLabel(handoff);
-  const message = handoffDisplayMessage(handoff);
 
   return (
-    <View
-      style={[
-        styles.card,
-        awaiting ? styles.cardAwaiting : styles.cardReady,
-        compact && styles.cardCompact,
-      ]}
-    >
-      <View style={styles.headerRow}>
-        <IconSymbol
-          name={awaiting ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"}
-          size={compact ? 15 : 16}
-          color={awaiting ? "#E65100" : "#2E7D32"}
-        />
-        <Text style={[styles.label, awaiting ? styles.labelAwaiting : styles.labelReady]} numberOfLines={1}>
-          {label}
-        </Text>
-      </View>
-      {message ? (
-        <Text
-          style={[styles.message, awaiting ? styles.messageAwaiting : styles.messageReady]}
-          numberOfLines={compact ? 2 : 6}
-        >
-          {message}
-        </Text>
-      ) : null}
+    <View style={[styles.chip, awaiting ? styles.chipAwaiting : styles.chipReady]}>
+      <IconSymbol
+        name={awaiting ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"}
+        size={11}
+        color={awaiting ? "#E65100" : "#2E7D32"}
+      />
+      <Text style={[styles.label, awaiting ? styles.labelAwaiting : styles.labelReady]} numberOfLines={1}>
+        {awaiting ? "Awaiting Handoff" : "Ready for Pickup"}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1.5,
-    marginBottom: 12,
-  },
-  cardCompact: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginBottom: 8,
-    borderRadius: 10,
-  },
-  cardAwaiting: {
-    backgroundColor: "#FFF8E1",
-    borderColor: "#FFB300",
-  },
-  cardReady: {
-    backgroundColor: "#E8F5E9",
-    borderColor: "#A5D6A7",
-  },
-  headerRow: {
+  chip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    alignSelf: "flex-start",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginBottom: 6,
+  },
+  chipAwaiting: {
+    backgroundColor: "#FFF8E1",
+  },
+  chipReady: {
+    backgroundColor: "#E8F5E9",
   },
   label: {
-    flex: 1,
     fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.2,
+    fontWeight: "700",
   },
   labelAwaiting: { color: "#E65100" },
   labelReady: { color: "#1B5E20" },
-  message: {
-    marginTop: 4,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "600",
-  },
-  messageAwaiting: { color: "#5D4037" },
-  messageReady: { color: "#33691E" },
 });

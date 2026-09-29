@@ -36,7 +36,6 @@ import {
 } from "@/lib/data";
 import { collectLoadNotes, noteToPreview, NOTE_TONE_STYLES } from "@/lib/load-notes";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
-import { handoffDisplayLabel } from "@/lib/handoff";
 import { addBreadcrumb } from "@/lib/crash-reporter";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
@@ -165,6 +164,7 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
             <Text style={[styles.orgBadgeText, { color: colors.warning }]} numberOfLines={1}>Field Pickup</Text>
           </View>
         )}
+        {load.handoff ? <HandoffStatusCard handoff={load.handoff} /> : null}
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>
@@ -205,16 +205,6 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
             </View>
           </View>
         )}
-        {load.handoff?.state === "awaiting_handoff" ? (
-          <HandoffStatusCard handoff={load.handoff} compact />
-        ) : load.handoff?.state === "ready_for_pickup" ? (
-          <View style={[styles.orgBadge, { backgroundColor: "#E8F5E9", marginBottom: 8 }]}>
-            <IconSymbol name="checkmark.circle.fill" size={11} color="#2E7D32" />
-            <Text style={[styles.orgBadgeText, { color: "#1B5E20" }]} numberOfLines={1}>
-              {handoffDisplayLabel(load.handoff)}
-            </Text>
-          </View>
-        ) : null}
         {showDates && (
           <View style={styles.datesRow}>
             <Text style={[styles.dateText, { color: colors.muted }]}>
