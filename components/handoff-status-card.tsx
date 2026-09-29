@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from "react-native";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import type { LoadHandoff } from "@/lib/data";
+import { handoffDisplayLabel, handoffDisplayMessage } from "@/lib/handoff";
 
 type Props = {
   handoff: LoadHandoff;
@@ -8,10 +9,12 @@ type Props = {
 };
 
 /**
- * Read-only yard-readiness card. Uses platform `label` + `message` as-is.
+ * Read-only yard-readiness card. Shows platform copy with "Leg N" stripped.
  */
 export function HandoffStatusCard({ handoff, compact }: Props) {
   const awaiting = handoff.state === "awaiting_handoff";
+  const label = handoffDisplayLabel(handoff);
+  const message = handoffDisplayMessage(handoff);
 
   return (
     <View
@@ -28,15 +31,15 @@ export function HandoffStatusCard({ handoff, compact }: Props) {
           color={awaiting ? "#E65100" : "#2E7D32"}
         />
         <Text style={[styles.label, awaiting ? styles.labelAwaiting : styles.labelReady]} numberOfLines={1}>
-          {handoff.label}
+          {label}
         </Text>
       </View>
-      {handoff.message ? (
+      {message ? (
         <Text
           style={[styles.message, awaiting ? styles.messageAwaiting : styles.messageReady]}
           numberOfLines={compact ? 2 : 6}
         >
-          {handoff.message}
+          {message}
         </Text>
       ) : null}
     </View>

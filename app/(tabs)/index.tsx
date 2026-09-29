@@ -36,6 +36,7 @@ import {
 } from "@/lib/data";
 import { collectLoadNotes, noteToPreview, NOTE_TONE_STYLES } from "@/lib/load-notes";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
+import { handoffDisplayLabel } from "@/lib/handoff";
 import { addBreadcrumb } from "@/lib/crash-reporter";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
@@ -158,9 +159,6 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
           </Text>
           <StatusBadge status={load.status} />
         </View>
-        {load.legNumber ? (
-          <Text style={[styles.legNumberText, { color: colors.muted }]}>Leg {load.legNumber}</Text>
-        ) : null}
         {load.isFieldPickup && (
           <View style={[styles.orgBadge, { backgroundColor: colors.warning + "14" }]}>
             <IconSymbol name="exclamationmark.triangle.fill" size={11} color={colors.warning} />
@@ -213,7 +211,7 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
           <View style={[styles.orgBadge, { backgroundColor: "#E8F5E9", marginBottom: 8 }]}>
             <IconSymbol name="checkmark.circle.fill" size={11} color="#2E7D32" />
             <Text style={[styles.orgBadgeText, { color: "#1B5E20" }]} numberOfLines={1}>
-              {load.handoff.label}
+              {handoffDisplayLabel(load.handoff)}
             </Text>
           </View>
         ) : null}
@@ -1648,7 +1646,6 @@ const styles = StyleSheet.create({
   vinLast6: { fontSize: 24, fontWeight: "800", letterSpacing: 1.5 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   badgeText: { fontSize: 11, fontWeight: "700" },
-  legNumberText: { fontSize: 11, fontWeight: "700", marginBottom: 6, letterSpacing: 0.3 },
   orgBadge: {
     flexDirection: "row",
     alignItems: "center",

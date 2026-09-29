@@ -51,7 +51,7 @@ import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
-import { isPickupBlockedByHandoff } from "@/lib/handoff";
+import { isPickupBlockedByHandoff, handoffDisplayLabel, handoffDisplayMessage } from "@/lib/handoff";
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -722,8 +722,8 @@ export default function LoadDetailScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isPickupBlockedByHandoff(load.handoff)) {
       Alert.alert(
-        load.handoff?.label ?? "Awaiting Handoff",
-        load.handoff?.message || "The vehicle is not at the pickup location yet. Check with dispatch before you drive out.",
+        load.handoff ? handoffDisplayLabel(load.handoff) : "Awaiting Handoff",
+        (load.handoff && handoffDisplayMessage(load.handoff)) || "The vehicle is not at the pickup location yet. Check with dispatch before you drive out.",
       );
       return;
     }
@@ -1276,11 +1276,6 @@ export default function LoadDetailScreen() {
               }]}>{getStatusLabel(load.status)}</Text>
             </View>
           </View>
-          {load.legNumber ? (
-            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.muted, marginBottom: 8 }}>
-              Leg {load.legNumber}
-            </Text>
-          ) : null}
           {load.handoff ? <HandoffStatusCard handoff={load.handoff} /> : null}
           {/* Field Pickup banner */}
           {load.isFieldPickup && (
@@ -1715,8 +1710,8 @@ export default function LoadDetailScreen() {
                   color="#FFFFFF"
                 />
                 <Text style={styles.ctaBtnText}>
-                  {isPickupBlockedByHandoff(load.handoff)
-                    ? (load.handoff?.label ?? "Awaiting Handoff")
+                  {isPickupBlockedByHandoff(load.handoff) && load.handoff
+                    ? handoffDisplayLabel(load.handoff)
                     : "Mark as Picked Up"}
                 </Text>
               </TouchableOpacity>

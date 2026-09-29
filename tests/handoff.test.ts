@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeHandoff, isPickupBlockedByHandoff } from "../lib/handoff";
+import { normalizeHandoff, isPickupBlockedByHandoff, handoffDisplayLabel, handoffDisplayMessage } from "../lib/handoff";
 
 describe("normalizeHandoff", () => {
   it("returns null for missing or invalid payloads", () => {
@@ -55,6 +55,8 @@ describe("normalizeHandoff", () => {
     expect(r?.blockingCarrierAssigned).toBe(false);
     expect(r?.blockingCarrierName).toBeNull();
     expect(r?.label).toBe("Waiting on Leg 1");
+    expect(handoffDisplayLabel(r!)).toBe("Waiting on dispatch");
+    expect(handoffDisplayMessage(r!)).not.toMatch(/leg/i);
     expect(isPickupBlockedByHandoff(r)).toBe(true);
   });
 
@@ -70,5 +72,22 @@ describe("normalizeHandoff", () => {
     });
     expect(r?.state).toBe("awaiting_handoff");
     expect(r?.blockingCarrierName).toBeNull();
+  });
+
+  it("strips leg numbering from driver-facing copy", () => {
+    const r = normalizeHandoff({
+      state: "awaiting_handoff",
+      blockingLegNumber: 1,
+      blockingCarrierName: "Dave Mackenzie",
+      blockingCarrierAssigned: true,
+      pickupLocationName: "Winnipeg Terminal",
+      label: "Awaiting Handoff",
+      message: "The vehicle is still with Dave Mackenzie on Leg 1. It has not been dropped at Winnipeg Terminal yet — check with dispatch before you drive out.",
+    });
+    expect(handoffDisplayLabel(r!)).toBe("Awaiting Handoff");
+    expect(handoffDisplayMessage(r!)).toBe(
+      "The vehicle is still with Dave Mackenzie. It has not been dropped at Winnipeg Terminal yet — check with dispatch before you drive out.",
+    );
+    expect(handoffDisplayMessage(r!)).not.toMatch(/leg/i);
   });
 });

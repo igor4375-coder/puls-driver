@@ -55,3 +55,23 @@ export function normalizeLegNumber(raw: unknown): number | null {
 export function isPickupBlockedByHandoff(handoff: LoadHandoff | null | undefined): boolean {
   return handoff?.state === "awaiting_handoff";
 }
+
+/** Driver-facing copy: drop "Leg N" wording. Drivers don't need the relay numbering. */
+export function stripLegMentions(text: string): string {
+  return text
+    .replace(/\bWaiting on Leg \d+\b/gi, "Waiting on dispatch")
+    .replace(/\bLeg \d+ has no carrier yet/gi, "The previous carrier has not been assigned yet")
+    .replace(/\s+on Leg \d+\b/gi, "")
+    .replace(/\bLeg \d+\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+\./g, ".")
+    .trim();
+}
+
+export function handoffDisplayLabel(handoff: LoadHandoff): string {
+  return stripLegMentions(handoff.label) || (handoff.state === "ready_for_pickup" ? "Ready for Pickup" : "Awaiting Handoff");
+}
+
+export function handoffDisplayMessage(handoff: LoadHandoff): string {
+  return stripLegMentions(handoff.message);
+}
