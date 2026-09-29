@@ -35,7 +35,6 @@ import {
   getPaymentLabel,
 } from "@/lib/data";
 import { collectLoadNotes, noteToPreview, NOTE_TONE_STYLES } from "@/lib/load-notes";
-import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { addBreadcrumb } from "@/lib/crash-reporter";
 import { setVINLaunchContext, setPendingLoadVINs, setIsExclusiveDriver } from "@/lib/vin-store";
 import { usePermissions } from "@/lib/permissions-context";
@@ -60,13 +59,27 @@ const TAB_ORDER: TabFilter[] = ["new", "picked_up", "delivered", "archived"];
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status, awaitingHandoff }: { status: LoadStatus; awaitingHandoff?: boolean }) {
+function StatusBadge({
+  status,
+  handoffState,
+}: {
+  status: LoadStatus;
+  handoffState?: "awaiting_handoff" | "ready_for_pickup" | null;
+}) {
   const colors = useColors();
-  if (awaitingHandoff) {
+  if (handoffState === "awaiting_handoff") {
     return (
       <View style={[styles.badge, styles.badgeHandoff, { backgroundColor: "#FFF8E1" }]}>
         <IconSymbol name="exclamationmark.triangle.fill" size={11} color="#E65100" />
         <Text style={[styles.badgeText, { color: "#E65100" }]}>Awaiting Handoff</Text>
+      </View>
+    );
+  }
+  if (handoffState === "ready_for_pickup") {
+    return (
+      <View style={[styles.badge, styles.badgeHandoff, { backgroundColor: "#E8F5E9" }]}>
+        <IconSymbol name="checkmark.circle.fill" size={11} color="#2E7D32" />
+        <Text style={[styles.badgeText, { color: "#1B5E20" }]}>Ready for Pickup</Text>
       </View>
     );
   }
@@ -164,10 +177,7 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
           >
             {vinLast6 ?? `#${load.loadNumber}`}
           </Text>
-          <StatusBadge
-            status={load.status}
-            awaitingHandoff={load.handoff?.state === "awaiting_handoff"}
-          />
+          <StatusBadge status={load.status} handoffState={load.handoff?.state} />
         </View>
         {load.isFieldPickup && (
           <View style={[styles.orgBadge, { backgroundColor: colors.warning + "14" }]}>
@@ -175,9 +185,6 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
             <Text style={[styles.orgBadgeText, { color: colors.warning }]} numberOfLines={1}>Field Pickup</Text>
           </View>
         )}
-        {load.handoff?.state === "ready_for_pickup" ? (
-          <HandoffStatusCard handoff={load.handoff} />
-        ) : null}
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>

@@ -1258,6 +1258,7 @@ export default function LoadDetailScreen() {
             <View style={[styles.statusPillInline, {
               backgroundColor:
                 load.handoff?.state === "awaiting_handoff" ? "#FFF8E1" :
+                load.handoff?.state === "ready_for_pickup" ? "#E8F5E9" :
                 load.status === "delivered" ? colors.success + "18" :
                 load.status === "picked_up" ? colors.primary + "18" :
                 load.status === "new" ? colors.warning + "18" :
@@ -1266,6 +1267,7 @@ export default function LoadDetailScreen() {
               <View style={[styles.statusDotInline, {
                 backgroundColor:
                   load.handoff?.state === "awaiting_handoff" ? "#E65100" :
+                  load.handoff?.state === "ready_for_pickup" ? "#2E7D32" :
                   load.status === "delivered" ? colors.success :
                   load.status === "picked_up" ? colors.primary :
                   load.status === "new" ? colors.warning :
@@ -1274,14 +1276,23 @@ export default function LoadDetailScreen() {
               <Text style={[styles.statusPillInlineText, {
                 color:
                   load.handoff?.state === "awaiting_handoff" ? "#E65100" :
+                  load.handoff?.state === "ready_for_pickup" ? "#1B5E20" :
                   load.status === "delivered" ? colors.success :
                   load.status === "picked_up" ? colors.primary :
                   load.status === "new" ? colors.warning :
                   colors.muted,
-              }]}>{load.handoff?.state === "awaiting_handoff" ? "Awaiting Handoff" : getStatusLabel(load.status)}</Text>
+              }]}>
+                {load.handoff?.state === "awaiting_handoff"
+                  ? "Awaiting Handoff"
+                  : load.handoff?.state === "ready_for_pickup"
+                    ? "Ready for Pickup"
+                    : getStatusLabel(load.status)}
+              </Text>
             </View>
           </View>
-          {load.handoff ? <HandoffStatusCard handoff={load.handoff} explain /> : null}
+          {load.handoff?.state === "awaiting_handoff" ? (
+            <HandoffStatusCard handoff={load.handoff} explain />
+          ) : null}
           {/* Field Pickup banner */}
           {load.isFieldPickup && (
             <View style={[styles.fieldPickupBanner, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "40" }]}>
