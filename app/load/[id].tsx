@@ -51,7 +51,7 @@ import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
-import { isPickupBlockedByHandoff } from "@/lib/handoff";
+import { isPickupBlockedByHandoff, handoffAnonymousExplanation } from "@/lib/handoff";
 
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
@@ -721,7 +721,12 @@ export default function LoadDetailScreen() {
   const handleMarkPickedUp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isPickupBlockedByHandoff(load.handoff)) {
-      Alert.alert("Awaiting Handoff", "The vehicle is not at the pickup location yet.");
+      Alert.alert(
+        "Awaiting Handoff",
+        load.handoff
+          ? handoffAnonymousExplanation(load.handoff)
+          : "The vehicle is not at the pickup location yet.",
+      );
       return;
     }
     if (load.vehicles.length === 0) {
@@ -1252,6 +1257,7 @@ export default function LoadDetailScreen() {
             ) : null}
             <View style={[styles.statusPillInline, {
               backgroundColor:
+                load.handoff?.state === "awaiting_handoff" ? "#FFF8E1" :
                 load.status === "delivered" ? colors.success + "18" :
                 load.status === "picked_up" ? colors.primary + "18" :
                 load.status === "new" ? colors.warning + "18" :
@@ -1259,6 +1265,7 @@ export default function LoadDetailScreen() {
             }]}>
               <View style={[styles.statusDotInline, {
                 backgroundColor:
+                  load.handoff?.state === "awaiting_handoff" ? "#E65100" :
                   load.status === "delivered" ? colors.success :
                   load.status === "picked_up" ? colors.primary :
                   load.status === "new" ? colors.warning :
@@ -1266,14 +1273,15 @@ export default function LoadDetailScreen() {
               }]} />
               <Text style={[styles.statusPillInlineText, {
                 color:
+                  load.handoff?.state === "awaiting_handoff" ? "#E65100" :
                   load.status === "delivered" ? colors.success :
                   load.status === "picked_up" ? colors.primary :
                   load.status === "new" ? colors.warning :
                   colors.muted,
-              }]}>{getStatusLabel(load.status)}</Text>
+              }]}>{load.handoff?.state === "awaiting_handoff" ? "Awaiting Handoff" : getStatusLabel(load.status)}</Text>
             </View>
           </View>
-          {load.handoff ? <HandoffStatusCard handoff={load.handoff} /> : null}
+          {load.handoff ? <HandoffStatusCard handoff={load.handoff} explain /> : null}
           {/* Field Pickup banner */}
           {load.isFieldPickup && (
             <View style={[styles.fieldPickupBanner, { backgroundColor: colors.warning + "14", borderColor: colors.warning + "40" }]}>

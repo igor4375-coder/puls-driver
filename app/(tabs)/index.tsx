@@ -60,8 +60,16 @@ const TAB_ORDER: TabFilter[] = ["new", "picked_up", "delivered", "archived"];
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: LoadStatus }) {
+function StatusBadge({ status, awaitingHandoff }: { status: LoadStatus; awaitingHandoff?: boolean }) {
   const colors = useColors();
+  if (awaitingHandoff) {
+    return (
+      <View style={[styles.badge, styles.badgeHandoff, { backgroundColor: "#FFF8E1" }]}>
+        <IconSymbol name="exclamationmark.triangle.fill" size={11} color="#E65100" />
+        <Text style={[styles.badgeText, { color: "#E65100" }]}>Awaiting Handoff</Text>
+      </View>
+    );
+  }
   const config: Record<LoadStatus, { bg: string; text: string; label: string }> = {
     new: { bg: colors.warning + "22", text: colors.warning, label: "Pending Pickup" },
     picked_up: { bg: colors.primary + "22", text: colors.primary, label: "Picked Up" },
@@ -156,7 +164,10 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
           >
             {vinLast6 ?? `#${load.loadNumber}`}
           </Text>
-          <StatusBadge status={load.status} />
+          <StatusBadge
+            status={load.status}
+            awaitingHandoff={load.handoff?.state === "awaiting_handoff"}
+          />
         </View>
         {load.isFieldPickup && (
           <View style={[styles.orgBadge, { backgroundColor: colors.warning + "14" }]}>
@@ -164,7 +175,9 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
             <Text style={[styles.orgBadgeText, { color: colors.warning }]} numberOfLines={1}>Field Pickup</Text>
           </View>
         )}
-        {load.handoff ? <HandoffStatusCard handoff={load.handoff} /> : null}
+        {load.handoff?.state === "ready_for_pickup" ? (
+          <HandoffStatusCard handoff={load.handoff} />
+        ) : null}
         <Text style={[styles.vehicleCount, { color: colors.foreground }]} numberOfLines={1}>
           {vehicleLabel}
         </Text>
@@ -1635,6 +1648,7 @@ const styles = StyleSheet.create({
   loadNumber: { fontSize: 15, fontWeight: "700", letterSpacing: 0.4 },
   vinLast6: { fontSize: 24, fontWeight: "800", letterSpacing: 1.5 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  badgeHandoff: { flexDirection: "row", alignItems: "center", gap: 4 },
   badgeText: { fontSize: 11, fontWeight: "700" },
   orgBadge: {
     flexDirection: "row",

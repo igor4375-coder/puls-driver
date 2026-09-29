@@ -69,9 +69,22 @@ export function stripLegMentions(text: string): string {
 }
 
 export function handoffDisplayLabel(handoff: LoadHandoff): string {
-  return stripLegMentions(handoff.label) || (handoff.state === "ready_for_pickup" ? "Ready for Pickup" : "Awaiting Handoff");
+  if (handoff.state === "ready_for_pickup") return "Ready for Pickup";
+  return "Awaiting Handoff";
 }
 
 export function handoffDisplayMessage(handoff: LoadHandoff): string {
   return stripLegMentions(handoff.message);
+}
+
+/** Driver-facing explanation with no previous-driver names and no leg numbers. */
+export function handoffAnonymousExplanation(handoff: LoadHandoff): string {
+  const loc = handoff.pickupLocationName || "the pickup location";
+  if (handoff.state === "ready_for_pickup") {
+    return `The vehicle is at ${loc} and ready to be picked up.`;
+  }
+  if (handoff.blockingCarrierAssigned) {
+    return `The vehicle is still with the previous driver. It has not been dropped at ${loc} yet.`;
+  }
+  return `The previous driver has not been assigned yet, so the vehicle has not reached ${loc}.`;
 }
