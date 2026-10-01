@@ -55,3 +55,30 @@ export function clerkErrorMessage(err: any, fallback: string): string {
     fallback
   );
 }
+
+export function clerkErrorCodes(err: any): string[] {
+  const codes: string[] = [];
+  if (typeof err?.code === "string") codes.push(err.code);
+  const nested = err?.errors;
+  if (Array.isArray(nested)) {
+    for (const e of nested) {
+      if (typeof e?.code === "string") codes.push(e.code);
+    }
+  }
+  return codes;
+}
+
+export function isIdentifierNotFound(err: any): boolean {
+  return clerkErrorCodes(err).some(
+    (c) => c === "form_identifier_not_found" || c === "form_param_nil",
+  );
+}
+
+/** Clerk rejects email as a sign-in identifier when email OTP is not a first factor. */
+export function isIdentifierInvalid(err: any): boolean {
+  if (clerkErrorCodes(err).includes("form_identifier_invalid")) return true;
+  return clerkErrorMessage(err, "").toLowerCase().includes("identifier is invalid");
+}
+
+export const EMAIL_USE_GOOGLE_MESSAGE =
+  'This account signs in with Google. Go back and tap "Continue with Google".';

@@ -12,16 +12,22 @@ import {
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
+import * as WebBrowser from "expo-web-browser";
+import { useSignUp, useSignIn, useClerk, useAuth, useSSO } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
 import {
   liveSignIn,
   liveSignUp,
   oauthOnlyMessage,
   clerkErrorMessage,
+  isIdentifierNotFound,
+  isIdentifierInvalid,
+  EMAIL_USE_GOOGLE_MESSAGE,
 } from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function EmailEntryScreen() {
   const colors = useColors();
@@ -39,6 +45,8 @@ export default function EmailEntryScreen() {
   const { signUp } = useSignUp();
   const { signIn } = useSignIn();
   const clerk = useClerk();
+  const { startSSOFlow } = useSSO();
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   useEffect(() => {
     if (isAddMode) return;
@@ -76,23 +84,13 @@ export default function EmailEntryScreen() {
       const { error: createErr } = await si.create({ identifier: trimmedEmail });
 
       if (createErr) {
-        const isNotFound =
-          createErr.code === "form_identifier_not_found" ||
-          createErr.code === "form_param_nil" ||
-          (createErr as any).errors?.some(
-            (e: any) =>
-              e.code === "form_identifier_not_found" ||
-              e.code === "form_param_nil",
-          );
+        if (isIdentifierInvalid(createErr)) {
+          setError(EMAIL_USE_GOOGLE_MESSAGE);
+          return;
+        }
 
-        if (!isNotFound) {
-          const msg =
-            (createErr as any).errors?.[0]?.longMessage ??
-            (createErr as any).errors?.[0]?.message ??
-            createErr.longMessage ??
-            createErr.message ??
-            "Sign-in failed";
-          setError(msg);
+        if (!isIdentifierNotFound(createErr)) {
+          setError(clerkErrorMessage(createErr, "Sign-in failed"));
           return;
         }
       } else {
@@ -143,6 +141,10 @@ export default function EmailEntryScreen() {
       });
 
       if (suCreateErr) {
+        if (isIdentifierInvalid(suCreateErr)) {
+          setError(EMAIL_USE_GOOGLE_MESSAGE);
+          return;
+        }
         setError(clerkErrorMessage(suCreateErr, "Sign-up failed"));
         return;
       }
@@ -173,6 +175,14 @@ export default function EmailEntryScreen() {
         },
       });
     } catch (err: any) {
+      if (isIdentifierInvalid(err)) {
+        setError(EMAIL_USE_GOOGLE_MESSAGE);
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+        return;
+      }
+
       const isStaleSession =
         err?.errors?.some(
           (e: any) =>
@@ -201,6 +211,31 @@ export default function EmailEntryScreen() {
       }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    if (googleLoading || isLoading) return;
+    setError("");
+    setGoogleLoading(true);
+    try {
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      const { createdSessionId, setActive } = await startSSOFlow({ strategy: "oauth_google" });
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        if (Platform.OS !== "web") {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        while (router.canGoBack()) router.back();
+        setTimeout(() => router.replace(isAddMode ? "/(tabs)/profile" : "/(tabs)"), 100);
+      }
+    } catch (err: any) {
+      const msg = clerkErrorMessage(err, "Google sign-in failed. Please try again.");
+      if (!msg.toLowerCase().includes("cancel")) setError(msg);
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -255,7 +290,7 @@ export default function EmailEntryScreen() {
               { backgroundColor: isValidEmail() && !isLoading ? colors.primary : colors.border },
             ]}
             onPress={handleSend}
-            disabled={!isValidEmail() || isLoading}
+            disabled={!isValidEmail() || isLoading || googleLoading}
           >
             {isLoading ? (
               <ActivityIndicator color="#fff" />
@@ -264,8 +299,21 @@ export default function EmailEntryScreen() {
             )}
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={styles.googleBtn}
+            onPress={handleGoogle}
+            activeOpacity={0.85}
+            disabled={isLoading || googleLoading}
+          >
+            {googleLoading ? (
+              <ActivityIndicator color="#333" />
+            ) : (
+              <Text style={styles.googleBtnText}>Continue with Google</Text>
+            )}
+          </TouchableOpacity>
+
           <Text style={[styles.disclaimer, { color: colors.muted }]}>
-            We'll send a one-time code to verify your email address.
+            If you signed up with Google, tap Continue with Google instead of sending a code.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -297,5 +345,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   sendBtnText: { color: "#fff", fontSize: 17, fontWeight: "700" },
+  googleBtn: {
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: 16,
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#dadce0",
+  },
+  googleBtnText: { fontSize: 17, fontWeight: "600", color: "#333" },
   disclaimer: { fontSize: 12, lineHeight: 17, textAlign: "center" },
 });
