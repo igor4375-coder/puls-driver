@@ -3,7 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "rea
 import * as Updates from "expo-updates";
 import { useAuth } from "@clerk/expo";
 
-import { addBreadcrumb } from "@/lib/crash-reporter";
+import { addBreadcrumb, noteIntentionalRestart } from "@/lib/crash-reporter";
 import { resetClerkStorage } from "@/lib/clerk-token-cache";
 
 /**
@@ -39,15 +39,16 @@ export function StartupGate({ children }: { children: React.ReactNode }) {
   if (isLoaded) return <>{children}</>;
 
   const handleRetry = () => {
-    addBreadcrumb("startup retry");
-    Updates.reloadAsync().catch(() => setIsStuck(true));
+    noteIntentionalRestart("startup retry")
+      .then(() => Updates.reloadAsync())
+      .catch(() => setIsStuck(true));
   };
 
   const handleReset = () => {
     setIsResetting(true);
-    addBreadcrumb("startup reset");
     resetClerkStorage()
       .catch(() => {})
+      .then(() => noteIntentionalRestart("startup reset"))
       .then(() => Updates.reloadAsync())
       .catch(() => setIsResetting(false));
   };

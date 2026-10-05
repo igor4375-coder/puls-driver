@@ -3,14 +3,22 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v113-photo-upload-memory";
+export const BUILD_TAG = "v114-no-forced-reload";
+
+// The provider tree above this banner mounts twice on roughly half of all
+// launches, so without a module-level guard the update check ran twice per
+// launch and could race itself into a second reload.
+let updateCheckStarted = false;
 
 export function UpdateVersionBanner() {
   const insets = useSafeAreaInsets();
   const [checking, setChecking] = useState(false);
+  const [updateReady, setUpdateReady] = useState(false);
 
   useEffect(() => {
     if (Platform.OS === "web" || !Updates.isEnabled) return;
+    if (updateCheckStarted) return;
+    updateCheckStarted = true;
 
     (async () => {
       try {
@@ -18,9 +26,13 @@ export function UpdateVersionBanner() {
         const result = await Updates.checkForUpdateAsync();
         if (result.isAvailable) {
           const fetched = await Updates.fetchUpdateAsync();
-          if (fetched.isNew) {
-            await Updates.reloadAsync();
-          }
+          // Deliberately NOT reloadAsync(). Drivers reported the app
+          // "crashing" a few seconds after opening or pulling to refresh: it
+          // was this banner restarting the JS context the moment an update
+          // landed, mid-task and with no warning. expo-updates applies a
+          // downloaded update on the next cold start, so the driver gets it
+          // one launch later instead of losing the screen he is looking at.
+          if (fetched.isNew) setUpdateReady(true);
         }
       } catch {
         // silent — network may be unavailable
@@ -35,7 +47,8 @@ export function UpdateVersionBanner() {
   return (
     <View style={[styles.banner, { top: insets.top + 2 }]} pointerEvents="none">
       <Text style={styles.text}>
-        {BUILD_TAG}{checking ? " · checking…" : ""}
+        {BUILD_TAG}
+        {checking ? " · checking…" : updateReady ? " · update ready, reopen app" : ""}
       </Text>
     </View>
   );

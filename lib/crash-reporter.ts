@@ -428,6 +428,30 @@ export async function initCrashReporter(): Promise<void> {
   }
 }
 
+/**
+ * Call immediately before deliberately restarting the JS context, e.g. an OTA
+ * update being applied. A reload tears the session down without any chance to
+ * shut down, so the heartbeat record survived and the next launch reported it
+ * as an abnormal termination — which is why "crashes" used to cluster around
+ * every publish. Dropping the record is what distinguishes a restart we chose
+ * from one the OS forced on us.
+ */
+export async function noteIntentionalRestart(reason: string): Promise<void> {
+  addBreadcrumb(`intentional restart: ${reason}`);
+  try {
+    await flushDiagnostics();
+  } catch {
+    // The restart matters more than the flush; the outbox survives either way.
+  }
+  try {
+    await AsyncStorage.removeItem(SESSION_KEY);
+  } catch {
+    // ignore
+  }
+  session = null;
+  stopCrashReporter();
+}
+
 export function stopCrashReporter(): void {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
