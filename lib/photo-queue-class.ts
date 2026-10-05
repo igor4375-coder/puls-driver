@@ -219,6 +219,11 @@ export class PhotoQueue {
   // relaunch this set is empty, so genuinely orphaned entries are still
   // rescued on the first sync tick.
   private inFlight: Set<string> = new Set();
+  // enqueue() starts an upload per shutter tap and does no batching of its
+  // own, so only sync() ever respected UPLOAD_CONCURRENCY. A burst of taps put
+  // every photo on the network — and its decoded bytes in memory — at once.
+  private activeUploads = 0;
+  private uploadWaiters: Array<() => void> = [];
   private loaded = false;
   private backgroundTimer: ReturnType<typeof setInterval> | null = null;
   private appStateSub: { remove: () => void } | null = null;
@@ -786,7 +791,7 @@ export class PhotoQueue {
       await Promise.all(batch.map((snapshot) => {
         const live = this.entries.find((e) => e.clientId === snapshot.clientId);
         if (!live || live.status === "done") return Promise.resolve();
-        if (live.status === "uploading") {
+        if (live.status === "uploading" || this.inFlight.has(live.clientId)) {
           return this.waitForUpload(live.clientId);
         }
         return this.uploadEntry(live);
@@ -884,6 +889,9 @@ export class PhotoQueue {
     // the driver manually deletes it.
     const ready = this.entries.filter((e) => {
       if (e.status !== "pending" && e.status !== "failed") return false;
+      // Still "pending" on paper but already being sent by enqueue(): claiming
+      // it here would duplicate the upload, not rescue it.
+      if (this.inFlight.has(e.clientId)) return false;
       if (!e.lastAttemptAt) return true;
       const delayIndex = Math.min(e.attempts - 1, RETRY_DELAYS_MS.length - 1);
       const delay = delayIndex >= 0
@@ -917,12 +925,43 @@ export class PhotoQueue {
   }
 
   private async uploadEntry(entry: PhotoQueueEntry): Promise<void> {
+    // enqueue(), sync() and flushForVehicle() all start uploads independently,
+    // so the same entry could be sent several times at once. Every attempt
+    // re-runs compressImage() on the full-size photo, so the duplicates — not
+    // the backlog itself — are what pushed inFlight to 20+ against a limit of
+    // 2–4 and exhausted memory during long photo sessions.
+    if (this.inFlight.has(entry.clientId)) return;
     this.inFlight.add(entry.clientId);
     try {
-      await this.uploadEntryInner(entry);
+      await this.acquireUploadSlot();
+      try {
+        await this.uploadEntryInner(entry);
+      } finally {
+        this.releaseUploadSlot();
+      }
     } finally {
       this.inFlight.delete(entry.clientId);
     }
+  }
+
+  private async acquireUploadSlot(): Promise<void> {
+    const limit = await getCurrentConcurrency();
+    if (this.activeUploads < limit) {
+      this.activeUploads += 1;
+      return;
+    }
+    // releaseUploadSlot() keeps the counter raised when it wakes a waiter, so
+    // the slot transfers directly rather than briefly reading as free.
+    await new Promise<void>((resolve) => this.uploadWaiters.push(resolve));
+  }
+
+  private releaseUploadSlot(): void {
+    const next = this.uploadWaiters.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.activeUploads -= 1;
   }
 
   private async uploadEntryInner(entry: PhotoQueueEntry): Promise<void> {
