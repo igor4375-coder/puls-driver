@@ -244,13 +244,9 @@ export default function CameraSessionScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.8,
-        // Skip in-camera post-processing (rotation, JPEG re-encode) on both
-        // platforms — saves ~200–400 ms per shot on Android. The downstream
-        // compressImage() step (manipulateAsync) handles orientation via the
-        // EXIF tag we now preserve below.
-        skipProcessing: true,
-        // Keep EXIF so manipulateAsync can read the orientation tag. Without
-        // this, `skipProcessing: true` on Android would return sideways photos.
+        // No skipProcessing: on Android it hands back the raw sensor JPEG and
+        // leaves rotation to an EXIF tag that compression may not honour, so
+        // landscape shots arrived sideways. Processing bakes it into pixels.
         exif: true,
         base64: false,
         shutterSound: false,
@@ -446,6 +442,10 @@ export default function CameraSessionScreen() {
         mode={mode as any}
         videoQuality="720p"
         videoStabilizationMode="auto"
+        // The app is portrait-locked and most drivers keep Rotation Lock on, so
+        // iOS reports "portrait" for a phone held sideways. This reads the
+        // accelerometer instead, so landscape shots are saved landscape.
+        responsiveOrientationWhenOrientationLocked
         onAvailableLensesChanged={handleAvailableLensesChanged}
         selectedLens={activeLens as any}
       />

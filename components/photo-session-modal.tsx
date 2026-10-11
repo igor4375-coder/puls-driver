@@ -129,7 +129,6 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
     try {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 1,           // No compression — preserve full camera sensor quality
-        skipProcessing: true, // faster capture; orientation handled by viewer
         exif: true,           // Keep EXIF so GPS/timestamp metadata is retained
         base64: false,
         shutterSound: false,
@@ -283,6 +282,9 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
         mode={mode as any}
         videoQuality="720p" // eslint-disable-line @typescript-eslint/no-explicit-any
         videoStabilizationMode="auto"
+        // See camera-session.tsx: portrait lock + Rotation Lock otherwise saves
+        // sideways landscape shots on iOS.
+        responsiveOrientationWhenOrientationLocked
       />
 
       {/* Shutter flash overlay */}
