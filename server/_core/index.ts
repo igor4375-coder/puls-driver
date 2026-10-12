@@ -11,6 +11,7 @@ import { sendPushNotification } from "../push";
 import { createPresignedUploadUrl, storageDownload, storagePut } from "../storage";
 import { scheduleGatePassExpiryNotifier } from "../gate-pass-notifier";
 import { scheduleHandoffReadyNotifier } from "../handoff-ready-notifier";
+import { scheduleInviteNotifier } from "../invite-notifier";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -491,6 +492,7 @@ async function startServer() {
     // Start the gate pass expiry notification scheduler
     scheduleGatePassExpiryNotifier();
     scheduleHandoffReadyNotifier();
+    scheduleInviteNotifier();
   });
 }
 

@@ -19,6 +19,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useSettings } from "@/lib/settings-context";
 import { useLoads } from "@/lib/loads-context";
 import { usePermissions } from "@/lib/permissions-context";
+import { usePendingInvites } from "@/lib/pending-invites-context";
 import { LinkedAccountsSection } from "@/components/linked-accounts-section";
 import { useFocusEffect } from "expo-router";
 import { useUser } from "@clerk/expo";
@@ -367,32 +368,14 @@ export default function ProfileScreen() {
     updateProfileMutation(mapped as any);
   }
 
-  // ── Pending invites from company platform (via Convex action) ──────────────
-  const getPendingInvitesAction = useAction(api.platform.getPendingInvites);
-  const [pendingInvites, setPendingInvites] = useState<any[]>([]);
-  const [invitesLoading, setInvitesLoading] = useState(false);
-  const hasFetchedInvites = useRef(false);
-
-  const fetchInvites = useCallback(async () => {
-    if (!hasInviteCode || !inviteCode) return;
-    if (!hasFetchedInvites.current) setInvitesLoading(true);
-    try {
-      const result = await getPendingInvitesAction({ driverCode: inviteCode });
-      setPendingInvites(Array.isArray(result) ? result : []);
-    } catch (err) {
-      console.warn("[Profile] Failed to fetch invites:", err);
-      setPendingInvites([]);
-    } finally {
-      setInvitesLoading(false);
-      hasFetchedInvites.current = true;
-    }
-  }, [hasInviteCode, inviteCode, getPendingInvitesAction]);
-
-  useEffect(() => {
-    fetchInvites();
-    const interval = setInterval(fetchInvites, 15_000);
-    return () => clearInterval(interval);
-  }, [fetchInvites]);
+  // ── Pending invites from company platform ──────────────────────────────────
+  // Polled app-wide by PendingInvitesProvider, so this card and the banner
+  // that points at it can never disagree about what is still unanswered.
+  const {
+    invites: pendingInvites,
+    loading: invitesLoading,
+    refresh: fetchInvites,
+  } = usePendingInvites();
 
   // ── My Companies (from Convex, reactive) ───────────────────────────────────
   const myConnections = useQuery(
