@@ -565,6 +565,15 @@ export default function InspectionReviewScreen() {
   // Editable additional inspection fields
   const [odometer, setOdometer] = useState(existingAdditional?.odometer ?? "");
   const [notes, setNotes] = useState(inspection?.notes ?? "");
+  const mainScrollRef = useRef<ScrollView>(null);
+  const notesFocusedRef = useRef(false);
+
+  useEffect(() => {
+    const sub = Keyboard.addListener("keyboardDidShow", () => {
+      if (notesFocusedRef.current) mainScrollRef.current?.scrollToEnd({ animated: true });
+    });
+    return () => sub.remove();
+  }, []);
   const [drivable, setDrivable] = useState<boolean | null>(existingAdditional?.drivable ?? null);
   const [windscreen, setWindscreen] = useState<boolean | null>(existingAdditional?.windscreen ?? null);
   const [glassesIntact, setGlassesIntact] = useState<boolean | null>(existingAdditional?.glassesIntact ?? null);
@@ -895,6 +904,7 @@ export default function InspectionReviewScreen() {
       </View>
 
       <ScrollView
+        ref={mainScrollRef}
         style={s.scrollView}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -1187,6 +1197,11 @@ export default function InspectionReviewScreen() {
               placeholderTextColor={colors.muted}
               value={notes}
               onChangeText={setNotes}
+              onFocus={() => {
+                notesFocusedRef.current = true;
+                setTimeout(() => mainScrollRef.current?.scrollToEnd({ animated: true }), 350);
+              }}
+              onBlur={() => { notesFocusedRef.current = false; }}
               multiline
               textAlignVertical="top"
             />
