@@ -1108,8 +1108,8 @@ export default function InspectionReviewScreen() {
             { label: "Remotes", value: remotes, setter: setRemotes },
             { label: "Headrests", value: headrests, setter: setHeadrests },
           ] as { label: string; value: number | null; setter: (v: number | null) => void }[]).map((item) => (
-            <View key={item.label} style={[s.toggleRow, { borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
-              <Text style={[s.toggleLabel, { color: colors.foreground }]}>{item.label}</Text>
+            <View key={item.label} style={[isLocked ? s.toggleRow : s.countRow, { borderBottomColor: colors.border, borderBottomWidth: 1 }]}>
+              <Text style={[isLocked ? s.toggleLabel : s.countLabel, { color: colors.foreground }]}>{item.label}</Text>
               {isLocked ? (
                 <Text style={[s.toggleLockedVal, { color: item.value !== null ? colors.foreground : colors.muted }]}>
                   {item.value !== null ? String(item.value) : "—"}
@@ -1358,8 +1358,10 @@ const s = StyleSheet.create({
   toggleBtn: { paddingHorizontal: 18, alignItems: "center", justifyContent: "center", paddingVertical: 8 },
   toggleBtnText: { fontSize: 13, fontWeight: "700" },
   toggleDivider: { width: 1 },
+  countRow: { paddingVertical: 12, paddingHorizontal: 4 },
+  countLabel: { fontSize: 15, fontWeight: "500", marginBottom: 8 },
   countPickerRow: { flexDirection: "row", gap: 6 },
-  countChip: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  countChip: { flex: 1, height: 36, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   countChipText: { fontSize: 13, fontWeight: "600" },
   notesInput: { borderRadius: 12, borderWidth: 1, padding: 12, fontSize: 14, minHeight: 80, textAlignVertical: "top" },
   saveSection: { paddingHorizontal: 16, paddingTop: 20 },
