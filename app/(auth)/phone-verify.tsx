@@ -13,12 +13,15 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
-import { clerkErrorMessage, isAlreadyVerified } from "@/lib/clerk-live";
+import * as Updates from "expo-updates";
+import { clerkErrorMessage, isAlreadyVerified, liveSignIn, liveSignUp } from "@/lib/clerk-live";
+import { addBreadcrumb, noteIntentionalRestart } from "@/lib/crash-reporter";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
 const CODE_LENGTH = 6;
 const VERIFY_TIMEOUT_MS = 15000;
+const FINALIZE_GRACE_MS = 6000;
 
 export default function VerifyScreen() {
   const colors = useColors();
@@ -54,6 +57,41 @@ export default function VerifyScreen() {
 
   const navigatedRef = useRef(false);
   const sessionAtStartRef = useRef<string | null>(clerk.session?.id ?? null);
+  const stepRef = useRef<"verify" | "finalize">("verify");
+
+  // Clerk has created a session for this attempt, whether or not the app's
+  // in-memory auth state has caught up with it yet.
+  const hasNewSession = () => {
+    const live = isSignIn ? liveSignIn(clerk) : liveSignUp(clerk);
+    if (live?.createdSessionId) return true;
+    const sessions: any[] = (clerk as any).client?.sessions ?? [];
+    return sessions.some((s) => s?.id !== sessionAtStartRef.current && s?.status === "active");
+  };
+
+  // On device, finalize() can create the session server-side and persist it
+  // yet never resolve, so the screen spins on a signed-in user until the app
+  // is relaunched. Relaunching is exactly what recovers it, so do it for them.
+  const restartIntoSession = async (reason: string) => {
+    addBreadcrumb(`verify: ${reason}, restarting`);
+    await noteIntentionalRestart(`verify ${reason}`).catch(() => {});
+    await Updates.reloadAsync();
+  };
+
+  const finalizeOrRestart = async (
+    finalize: () => Promise<{ error?: unknown }>,
+  ): Promise<{ error?: unknown }> => {
+    stepRef.current = "finalize";
+    const stalled = Symbol("stalled");
+    const result = await Promise.race([
+      finalize(),
+      new Promise<typeof stalled>((resolve) => setTimeout(() => resolve(stalled), FINALIZE_GRACE_MS)),
+    ]);
+    if (result !== stalled) return result;
+    if (hasNewSession()) {
+      await restartIntoSession("finalize stalled");
+    }
+    return { error: new Error("Sign-in is taking longer than expected. Please try again.") };
+  };
 
   const navigateToApp = () => {
     if (navigatedRef.current) return;
@@ -91,8 +129,18 @@ export default function VerifyScreen() {
         navigateToApp();
         return;
       }
+      if (hasNewSession()) {
+        restartIntoSession(`${stepRef.current} stalled`).catch(() => {
+          setIsVerifying(false);
+          setError("You're signed in. Please close and reopen the app to continue.");
+        });
+        return;
+      }
+      addBreadcrumb(`verify: timed out at ${stepRef.current}`);
       setIsVerifying(false);
-      setError("This is taking longer than expected. Check your connection and tap the button to try again.");
+      setError(
+        `This is taking longer than expected (${stepRef.current}). Check your connection and tap the button to try again.`,
+      );
     }, VERIFY_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [isVerifying]);
@@ -140,6 +188,7 @@ export default function VerifyScreen() {
     if (!isCodeComplete) return;
     setError("");
     setIsVerifying(true);
+    stepRef.current = "verify";
 
     try {
       if (Platform.OS !== "web") {
@@ -166,7 +215,7 @@ export default function VerifyScreen() {
         // still reads "needs_first_factor" on a code that just succeeded.
         // finalize() is the authoritative check — it fails if the sign-in
         // genuinely isn't complete.
-        const { error: finalizeErr } = await si.finalize();
+        const { error: finalizeErr } = await finalizeOrRestart(() => si.finalize());
 
         if (finalizeErr) {
           setError(clerkErrorMessage(finalizeErr, "Verification incomplete. Please try again."));
@@ -199,7 +248,7 @@ export default function VerifyScreen() {
         // Same stale-snapshot reason as the sign-in branch: let finalize()
         // decide, and report what it says when the sign-up really is missing
         // something rather than inventing a status string.
-        const { error: finalizeErr } = await su.finalize();
+        const { error: finalizeErr } = await finalizeOrRestart(() => su.finalize());
 
         if (finalizeErr) {
           setError(clerkErrorMessage(finalizeErr, "Sign-up incomplete. Please try again."));
