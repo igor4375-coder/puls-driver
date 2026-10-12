@@ -13,7 +13,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk } from "@clerk/expo";
-import { clerkErrorMessage } from "@/lib/clerk-live";
+import { clerkErrorMessage, isAlreadyVerified } from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -127,7 +127,7 @@ export default function VerifyScreen() {
           ? si.emailCode.verifyCode({ code: enteredCode })
           : si.phoneCode.verifyCode({ code: enteredCode }));
 
-        if (verifyErr) {
+        if (verifyErr && !isAlreadyVerified(verifyErr)) {
           setError(clerkErrorMessage(verifyErr, "Invalid code. Please try again."));
           setDigits(Array(CODE_LENGTH).fill(""));
           setTimeout(() => inputRefs.current[0]?.focus(), 100);
@@ -161,7 +161,7 @@ export default function VerifyScreen() {
           ? su.verifications.verifyEmailCode({ code: enteredCode })
           : su.verifications.verifyPhoneCode({ code: enteredCode }));
 
-        if (verifyErr) {
+        if (verifyErr && !isAlreadyVerified(verifyErr)) {
           setError(clerkErrorMessage(verifyErr, "Invalid code. Please try again."));
           setDigits(Array(CODE_LENGTH).fill(""));
           setTimeout(() => inputRefs.current[0]?.focus(), 100);

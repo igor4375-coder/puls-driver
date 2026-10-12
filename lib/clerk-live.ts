@@ -74,6 +74,15 @@ export function isIdentifierNotFound(err: any): boolean {
   );
 }
 
+/**
+ * A retried code on an attempt whose code already succeeded (e.g. the earlier
+ * finalize failed). The verification is done, so the caller should finalize.
+ */
+export function isAlreadyVerified(err: any): boolean {
+  if (clerkErrorCodes(err).includes("verification_already_verified")) return true;
+  return clerkErrorMessage(err, "").toLowerCase().includes("already been verified");
+}
+
 /** Clerk rejects email as a sign-in identifier when email OTP is not a first factor. */
 export function isIdentifierInvalid(err: any): boolean {
   if (clerkErrorCodes(err).includes("form_identifier_invalid")) return true;

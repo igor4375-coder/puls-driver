@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v124-notes-show-save";
+export const BUILD_TAG = "v125-email-verify-retry";
 
 // The provider tree above this banner mounts twice on roughly half of all
 // launches, so without a module-level guard the update check ran twice per
