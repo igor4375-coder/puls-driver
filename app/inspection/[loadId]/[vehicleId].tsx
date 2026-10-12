@@ -1143,7 +1143,13 @@ export default function InspectionScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
         {!isDelivery && (
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
             <PreviousDropOffCard

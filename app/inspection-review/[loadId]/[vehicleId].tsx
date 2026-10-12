@@ -894,7 +894,14 @@ export default function InspectionReviewScreen() {
         )}
       </View>
 
-      <ScrollView style={s.scrollView} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.scrollView}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
         {/* ── Vehicle Info ───────────────────────────────────────────────────── */}
         <View style={s.vehicleInfoSection}>
           <Text style={[s.vehicleTitle, { color: colors.foreground }]}>{vehicleTitle}</Text>
