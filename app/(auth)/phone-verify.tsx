@@ -12,12 +12,13 @@ import {
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useSignUp, useSignIn, useClerk } from "@clerk/expo";
+import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
 import { clerkErrorMessage, isAlreadyVerified } from "@/lib/clerk-live";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
 const CODE_LENGTH = 6;
+const VERIFY_TIMEOUT_MS = 15000;
 
 export default function VerifyScreen() {
   const colors = useColors();
@@ -42,6 +43,7 @@ export default function VerifyScreen() {
   const { signUp } = useSignUp();
   const { signIn } = useSignIn();
   const clerk = useClerk();
+  const { isSignedIn } = useAuth();
 
   const isSignIn = params.flow === "signIn";
   const isEmail = params.method === "email";
@@ -50,7 +52,12 @@ export default function VerifyScreen() {
   const si = signIn as any;
   const su = signUp as any;
 
+  const navigatedRef = useRef(false);
+  const sessionAtStartRef = useRef<string | null>(clerk.session?.id ?? null);
+
   const navigateToApp = () => {
+    if (navigatedRef.current) return;
+    navigatedRef.current = true;
     while (router.canGoBack()) router.back();
     if (isAddMode) {
       // Linked-accounts flow — drop the user back on the profile screen so they
@@ -68,6 +75,27 @@ export default function VerifyScreen() {
   useEffect(() => {
     setTimeout(() => inputRefs.current[0]?.focus(), 300);
   }, []);
+
+  // Clerk can activate the session while verify/finalize never resolves,
+  // leaving the button spinning on a user who is already signed in. Follow the
+  // session itself rather than waiting on those promises.
+  useEffect(() => {
+    if (!isAddMode && isSignedIn) navigateToApp();
+  }, [isSignedIn, isAddMode]);
+
+  useEffect(() => {
+    if (!isVerifying) return;
+    const timer = setTimeout(() => {
+      const sessionId = clerk.session?.id ?? null;
+      if (sessionId && sessionId !== sessionAtStartRef.current) {
+        navigateToApp();
+        return;
+      }
+      setIsVerifying(false);
+      setError("This is taking longer than expected. Check your connection and tap the button to try again.");
+    }, VERIFY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [isVerifying]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
