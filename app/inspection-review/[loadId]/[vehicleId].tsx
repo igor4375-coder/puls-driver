@@ -13,6 +13,7 @@ import {
   Alert,
   Modal,
   Platform,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
@@ -347,9 +348,14 @@ function DamageModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
-      <View style={ms.overlay}>
+      <KeyboardAvoidingView style={ms.overlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={[ms.sheet, { backgroundColor: colors.surface }]}>
           <View style={[ms.handle, { backgroundColor: colors.border }]} />
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+          >
           <Text style={[ms.title, { color: colors.foreground }]}>Mark Damage — {zoneLabel}</Text>
 
           {existingDamages.length > 0 && (
@@ -438,15 +444,16 @@ function DamageModal({
               <Text style={ms.saveText}>Add Damage</Text>
             </TouchableOpacity>
           </View>
+          </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const ms = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, maxHeight: "90%" },
   handle: { width: 36, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 16 },
   title: { fontSize: 18, fontWeight: "700", marginBottom: 16 },
   existingBox: { borderRadius: 10, borderWidth: 1, padding: 10, marginBottom: 14 },
