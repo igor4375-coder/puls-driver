@@ -13,7 +13,7 @@ import {
   Alert,
   Modal,
   Platform,
-  KeyboardAvoidingView,
+  Keyboard,
 } from "react-native";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
@@ -305,8 +305,24 @@ function DamageModal({
   const [description, setDescription] = useState("");
   const [damagePhotos, setDamagePhotos] = useState<string[]>([]);
   const [pickingPhoto, setPickingPhoto] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
 
   const zoneLabel = ZONE_LABELS[zone ?? ""] ?? zone ?? "Vehicle";
+
+  useEffect(() => {
+    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (!visible) {
@@ -348,10 +364,11 @@ function DamageModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen">
-      <KeyboardAvoidingView style={ms.overlay} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={[ms.sheet, { backgroundColor: colors.surface }]}>
+      <View style={[ms.overlay, Platform.OS === "ios" && { paddingBottom: keyboardHeight }]}>
+        <View style={[ms.sheet, { backgroundColor: colors.surface }, keyboardHeight > 0 && { paddingBottom: 12 }]}>
           <View style={[ms.handle, { backgroundColor: colors.border }]} />
           <ScrollView
+            ref={scrollRef}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             showsVerticalScrollIndicator={false}
@@ -446,7 +463,7 @@ function DamageModal({
           </View>
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
