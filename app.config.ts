@@ -102,20 +102,21 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        "cameraPermission": "Allow Puls Driver to access your camera to scan VIN barcodes and capture inspection photos."
+        "cameraPermission": "Allow Puls Driver to access your camera to scan VIN barcodes and capture inspection photos.",
+        "microphonePermission": "Allow Puls Driver to use your microphone to record audio with walk-around inspection videos, so you can narrate vehicle damage at pickup and delivery."
       }
     ],
     [
       "expo-image-picker",
       {
-        photosPermission: "Allow $(PRODUCT_NAME) to access your photos for vehicle inspection.",
+        photosPermission: "Allow $(PRODUCT_NAME) to access your photos so you can attach existing pictures of a vehicle's condition to its pickup or delivery inspection report.",
         cameraPermission: "Allow $(PRODUCT_NAME) to use your camera to take inspection photos.",
       },
     ],
     [
       "expo-audio",
       {
-        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
+        microphonePermission: "Allow $(PRODUCT_NAME) to use your microphone to record audio with walk-around inspection videos, so you can narrate vehicle damage at pickup and delivery.",
       },
     ],
     [

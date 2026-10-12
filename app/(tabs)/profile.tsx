@@ -21,6 +21,7 @@ import { useLoads } from "@/lib/loads-context";
 import { usePermissions } from "@/lib/permissions-context";
 import { LinkedAccountsSection } from "@/components/linked-accounts-section";
 import { useFocusEffect } from "expo-router";
+import { useUser } from "@clerk/expo";
 
 function relAge(t: number): string {
   const ms = Date.now() - t;
@@ -523,6 +524,7 @@ export default function ProfileScreen() {
     );
   };
 
+  const { user: clerkUser } = useUser();
   const deleteProfileMutation = useMutation(api.driverProfiles.deleteProfile);
   const [deletingAccount, setDeletingAccount] = useState(false);
 
@@ -549,6 +551,12 @@ export default function ProfileScreen() {
                     try {
                       if (clerkUserId) {
                         await deleteProfileMutation({ clerkUserId });
+                      }
+                      // App Store Guideline 5.1.1(v) requires removing the sign-in
+                      // itself, not just app data; otherwise the same login silently
+                      // re-creates the account.
+                      if (clerkUser) {
+                        await clerkUser.delete();
                       }
                       await logout();
                       router.replace("/(auth)/welcome" as any);
