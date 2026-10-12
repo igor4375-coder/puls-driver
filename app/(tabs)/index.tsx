@@ -108,11 +108,14 @@ const LoadCard = React.memo(function LoadCard({ load, onPress, onOpenNotes, onDe
   const vehicleCount = load.vehicles.length;
   const isPlatformLoad = load.id.startsWith("platform-");
 
-  // Build vehicle label: year/make/model only — last-6 VIN lives in the header
+  // Build vehicle label: year/make/model only — last-6 VIN lives in the header.
+  // Dispatch sometimes sends a placeholder shorter than six characters, and
+  // requiring six meant the header showed none of the VIN at all and fell back
+  // to the load number. Show whatever VIN came through; slice handles shorter
+  // strings on its own.
   const firstVehicle = load.vehicles[0];
-  const vinLast6 = firstVehicle?.vin && firstVehicle.vin.length >= 6
-    ? firstVehicle.vin.slice(-6).toUpperCase()
-    : null;
+  const vinTrimmed = firstVehicle?.vin?.trim();
+  const vinLast6 = vinTrimmed ? vinTrimmed.slice(-6).toUpperCase() : null;
   const vehicleLabel = (() => {
     if (vehicleCount === 0) return "No Vehicles";
     const v = firstVehicle;
