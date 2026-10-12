@@ -1210,12 +1210,12 @@ export default function LoadDetailScreen() {
               const badgeColor = isExpired ? colors.error : isExpiringSoon ? colors.warning : null;
               return (
                 <TouchableOpacity
-                  style={styles.bolBtn}
+                  style={styles.headerActionBtn}
                   onPress={() => load.gatePassUrl && WebBrowser.openBrowserAsync(load.gatePassUrl)}
                   activeOpacity={0.7}
                 >
                   <IconSymbol name="key.fill" size={16} color="#FFFFFF" />
-                  <Text style={styles.bolBtnText}>Gate Pass</Text>
+                  <Text style={styles.headerActionBtnText}>Gate Pass</Text>
                   {badgeColor && (
                     <View style={{
                       position: "absolute",
@@ -1232,14 +1232,6 @@ export default function LoadDetailScreen() {
                 </TouchableOpacity>
               );
             })()}
-            <TouchableOpacity
-              style={styles.bolBtn}
-              onPress={() => router.push(`/bol/${load.id}` as any)}
-              activeOpacity={0.7}
-            >
-              <IconSymbol name="doc.text.fill" size={16} color="#FFFFFF" />
-              <Text style={styles.bolBtnText}>BOL</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -1526,7 +1518,7 @@ export default function LoadDetailScreen() {
           ) : null}
 
           {/* Plain notes — manually added loads only ever populate `notes`, so
-              without this their notes never surface anywhere but the BOL. */}
+              without this their notes would not surface anywhere at all. */}
           {!load.dispatchNotes?.trim() && !load.driverNotes?.trim() && load.notes?.trim() ? (
             <>
               <SectionHeader title="NOTES" />
@@ -2018,7 +2010,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
   },
-  bolBtn: {
+  headerActionBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
@@ -2027,7 +2019,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
   },
-  bolBtnText: {
+  headerActionBtnText: {
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",

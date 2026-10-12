@@ -200,7 +200,6 @@ function AppContent() {
             <Stack.Screen name="load/[id]" />
             <Stack.Screen name="inspection/[loadId]/[vehicleId]" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="inspection/[loadId]/additional/[vehicleId]" options={{ presentation: "fullScreenModal" }} />
-            <Stack.Screen name="bol/[loadId]" options={{ presentation: "modal" }} />
             <Stack.Screen name="vin-scanner" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="add-load" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="camera-session" options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }} />
