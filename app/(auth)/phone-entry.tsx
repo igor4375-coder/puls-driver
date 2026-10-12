@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from "react-native";
 import { router } from "expo-router";
+import { resetTo } from "@/lib/navigation";
 import * as Haptics from "expo-haptics";
 import { useSignUp, useSignIn, useClerk } from "@clerk/expo";
 import { liveSignIn, oauthOnlyMessage, clerkErrorMessage } from "@/lib/clerk-live";
@@ -127,8 +128,7 @@ export default function PhoneEntryScreen() {
 
           if (live?.status === "complete") {
             await si.finalize();
-            while (router.canGoBack()) router.back();
-            setTimeout(() => router.replace("/(tabs)"), 100);
+            resetTo("/(tabs)");
             return;
           }
 

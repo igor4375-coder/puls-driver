@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
+import { resetTo } from "@/lib/navigation";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
 
@@ -1101,10 +1102,9 @@ export default function InspectionScreen() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Dismiss all modals (camera-session + inspection) and return to loads list.
-      // Use while-loop to pop everything, then navigate fresh to the tabs screen
-      // so the useFocusEffect reliably fires and switches to the Picked Up tab.
-      while (router.canGoBack()) router.back();
-      setTimeout(() => router.replace("/(tabs)/" as any), 100);
+      // Pop everything, then navigate fresh to the tabs screen so the
+      // useFocusEffect reliably fires and switches to the Picked Up tab.
+      resetTo("/(tabs)/" as any);
     } catch (err) {
       console.error("[CompletePickup] Unexpected error:", err);
       Alert.alert("Error", "Something went wrong. Please try again.");

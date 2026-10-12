@@ -6,6 +6,7 @@ import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSSO, useAuth } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
+import { resetTo } from "@/lib/navigation";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -51,8 +52,7 @@ export default function WelcomeScreen() {
         if (Platform.OS !== "web") {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-        while (router.canGoBack()) router.back();
-        setTimeout(() => router.replace("/(tabs)"), 100);
+        resetTo("/(tabs)");
       }
     } catch (err: any) {
       const code = err?.errors?.[0]?.code ?? "";

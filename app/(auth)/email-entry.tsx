@@ -15,6 +15,7 @@ import * as Haptics from "expo-haptics";
 import * as WebBrowser from "expo-web-browser";
 import { useSignUp, useSignIn, useClerk, useAuth, useSSO } from "@clerk/expo";
 import { nukeAllClerkTokens } from "@/lib/clerk-token-cache";
+import { resetTo } from "@/lib/navigation";
 import {
   liveSignIn,
   liveSignUp,
@@ -51,8 +52,7 @@ export default function EmailEntryScreen() {
   useEffect(() => {
     if (isAddMode) return;
     if (isSignedIn) {
-      while (router.canGoBack()) router.back();
-      setTimeout(() => router.replace("/(tabs)"), 100);
+      resetTo("/(tabs)");
     }
   }, [isSignedIn, isAddMode]);
 
@@ -118,8 +118,7 @@ export default function EmailEntryScreen() {
 
         if (live?.status === "complete") {
           await si.finalize();
-          while (router.canGoBack()) router.back();
-          setTimeout(() => router.replace("/(tabs)"), 100);
+          resetTo("/(tabs)");
           return;
         }
 
@@ -155,8 +154,7 @@ export default function EmailEntryScreen() {
         // A sign-up that completed outright has nothing left to verify.
         if (liveSignUp(clerk)?.status === "complete") {
           await su.finalize();
-          while (router.canGoBack()) router.back();
-          setTimeout(() => router.replace("/(tabs)"), 100);
+          resetTo("/(tabs)");
           return;
         }
         setError(clerkErrorMessage(sendErr, "Failed to send verification code"));
@@ -228,8 +226,7 @@ export default function EmailEntryScreen() {
         if (Platform.OS !== "web") {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-        while (router.canGoBack()) router.back();
-        setTimeout(() => router.replace(isAddMode ? "/(tabs)/profile" : "/(tabs)"), 100);
+        resetTo(isAddMode ? "/(tabs)/profile" : "/(tabs)");
       }
     } catch (err: any) {
       const msg = clerkErrorMessage(err, "Google sign-in failed. Please try again.");

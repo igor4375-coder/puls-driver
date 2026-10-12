@@ -16,6 +16,7 @@ import { useSignUp, useSignIn, useClerk, useAuth } from "@clerk/expo";
 import * as Updates from "expo-updates";
 import { clerkErrorMessage, isAlreadyVerified, liveSignIn, liveSignUp } from "@/lib/clerk-live";
 import { addBreadcrumb, noteIntentionalRestart } from "@/lib/crash-reporter";
+import { resetTo } from "@/lib/navigation";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 
@@ -96,14 +97,9 @@ export default function VerifyScreen() {
   const navigateToApp = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    while (router.canGoBack()) router.back();
-    if (isAddMode) {
-      // Linked-accounts flow — drop the user back on the profile screen so they
-      // see the freshly-added account in the list.
-      setTimeout(() => router.replace("/(tabs)/profile" as any), 100);
-    } else {
-      setTimeout(() => router.replace("/(tabs)"), 100);
-    }
+    // Linked-accounts flow — drop the user back on the profile screen so they
+    // see the freshly-added account in the list.
+    resetTo(isAddMode ? ("/(tabs)/profile" as any) : "/(tabs)");
   };
 
   const displayValue = params.displayIdentifier ?? params.displayPhone ?? "";
