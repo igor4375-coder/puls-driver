@@ -31,7 +31,6 @@ import { LoadsProvider } from "@/lib/loads-context";
 import { PermissionsProvider } from "@/lib/permissions-context";
 import { SyncStatusBanner } from "@/components/sync-status-banner";
 import { UpdateVersionBanner } from "@/components/update-version-banner";
-import { PendingInviteBanner } from "@/components/pending-invite-banner";
 import { PendingInvitesProvider } from "@/lib/pending-invites-context";
 import { ErrorBoundary } from "@/components/error-boundary";
 import {
@@ -209,7 +208,6 @@ function AppContent() {
           </Stack>
           <SyncStatusBanner />
           <UpdateVersionBanner />
-          <PendingInviteBanner />
           <StatusBar style="auto" />
           </View>
             </LoadsProviderWithAuth>

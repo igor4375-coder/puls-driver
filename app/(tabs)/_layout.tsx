@@ -1,6 +1,7 @@
 import { Tabs, router, useSegments } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Platform } from "react-native";
+import { Platform, View } from "react-native";
+import { PendingInviteBanner } from "@/components/pending-invite-banner";
 import { useColors } from "@/hooks/use-colors";
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -23,6 +24,7 @@ export default function TabLayout() {
   }, [isAuthenticated, isLoading, inAuthGroup]);
 
   return (
+    <View style={{ flex: 1 }}>
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: colors.primary,
@@ -72,5 +74,7 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    <PendingInviteBanner />
+    </View>
   );
 }

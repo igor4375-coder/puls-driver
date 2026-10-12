@@ -7,46 +7,25 @@
  * long as an invite is unanswered and takes one tap to get to those buttons.
  *
  * Positioned absolutely so it never changes layout height, and offset below
- * the build-tag pill so the two overlays do not collide. Hidden on the
- * capture and detail screens, where an overlay at the top would sit on the
- * header's back button.
+ * the build-tag pill so the two overlays do not collide. Rendered by the tab
+ * layout, so it shows on every tab and is covered by any screen pushed on top
+ * (load detail, inspection, camera) without having to list those routes.
  */
 
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { usePathname, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { usePendingInvites } from "@/lib/pending-invites-context";
 
-/** Routes whose own header owns the top of the screen. */
-const SUPPRESSED_ROUTES = [
-  "camera-session",
-  "inspection",
-  "vin-scanner",
-  "bol",
-  "add-load",
-  "alternate-delivery",
-  "field-pickup-report",
-  "load/",
-  "oauth",
-  "sign-in",
-  "sign-up",
-  "email-entry",
-  "invite",
-];
-
 export function PendingInviteBanner() {
   const { invites } = usePendingInvites();
   const insets = useSafeAreaInsets();
-  const pathname = usePathname();
   const router = useRouter();
 
   if (invites.length === 0) return null;
-
-  const route = typeof pathname === "string" ? pathname : "";
-  if (SUPPRESSED_ROUTES.some((r) => route.includes(r))) return null;
 
   const [first] = invites;
   const extra = invites.length - 1;
@@ -63,7 +42,7 @@ export function PendingInviteBanner() {
   return (
     <TouchableOpacity
       style={[styles.banner, { top: insets.top + 26 }]}
-      onPress={() => router.push("/(tabs)/profile")}
+      onPress={() => router.navigate("/(tabs)/profile")}
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityLabel={`${title}. ${detail}. Tap to accept or decline.`}
