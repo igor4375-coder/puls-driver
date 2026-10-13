@@ -51,8 +51,6 @@ import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
 import { HandoffStatusCard } from "@/components/handoff-status-card";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
-import { isPickupBlockedByHandoff, handoffAnonymousExplanation } from "@/lib/handoff";
-
 function SectionHeader({ title }: { title: string }) {
   const colors = useColors();
   return (
@@ -718,25 +716,10 @@ export default function LoadDetailScreen() {
     ? (load.platformTripId ?? load.id.replace("platform-", ""))
     : null;
 
-  // Previous carriers often never mark their leg delivered, so the handoff state
-  // only warns. Picking up closes out the earlier legs on the platform.
+  // Never gated on handoff state: previous carriers often don't mark their leg
+  // delivered, and picking up closes out the earlier legs on the platform.
   const handleMarkPickedUp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (isPickupBlockedByHandoff(load.handoff)) {
-      Alert.alert(
-        "Previous Carrier Not Delivered",
-        `${load.handoff ? handoffAnonymousExplanation(load.handoff) : "The previous carrier hasn't marked this vehicle delivered."}\n\nIf you have the vehicle, you can still pick it up. The previous trip will be marked delivered automatically.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Pick Up Anyway", onPress: startPickup },
-        ],
-      );
-      return;
-    }
-    startPickup();
-  };
-
-  const startPickup = () => {
     if (load.vehicles.length === 0) {
       Alert.alert("No Vehicles", "This load has no vehicles to inspect.");
       return;
