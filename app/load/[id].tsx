@@ -718,17 +718,25 @@ export default function LoadDetailScreen() {
     ? (load.platformTripId ?? load.id.replace("platform-", ""))
     : null;
 
+  // Previous carriers often never mark their leg delivered, so the handoff state
+  // only warns. Picking up closes out the earlier legs on the platform.
   const handleMarkPickedUp = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (isPickupBlockedByHandoff(load.handoff)) {
       Alert.alert(
-        "Awaiting Handoff",
-        load.handoff
-          ? handoffAnonymousExplanation(load.handoff)
-          : "The vehicle is not at the pickup location yet.",
+        "Previous Carrier Not Delivered",
+        `${load.handoff ? handoffAnonymousExplanation(load.handoff) : "The previous carrier hasn't marked this vehicle delivered."}\n\nIf you have the vehicle, you can still pick it up. The previous trip will be marked delivered automatically.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Pick Up Anyway", onPress: startPickup },
+        ],
       );
       return;
     }
+    startPickup();
+  };
+
+  const startPickup = () => {
     if (load.vehicles.length === 0) {
       Alert.alert("No Vehicles", "This load has no vehicles to inspect.");
       return;
@@ -1702,24 +1710,13 @@ export default function LoadDetailScreen() {
               <TouchableOpacity
                 style={[
                   styles.ctaBtn,
-                  {
-                    backgroundColor: isPickupBlockedByHandoff(load.handoff)
-                      ? colors.warning
-                      : colors.primary,
-                    opacity: isPickupBlockedByHandoff(load.handoff) ? 0.85 : 1,
-                  },
+                  { backgroundColor: colors.primary },
                 ]}
                 onPress={handleMarkPickedUp}
                 activeOpacity={0.85}
               >
-                <IconSymbol
-                  name={isPickupBlockedByHandoff(load.handoff) ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"}
-                  size={22}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.ctaBtnText}>
-                  {isPickupBlockedByHandoff(load.handoff) ? "Awaiting Handoff" : "Mark as Picked Up"}
-                </Text>
+                <IconSymbol name="checkmark.circle.fill" size={22} color="#FFFFFF" />
+                <Text style={styles.ctaBtnText}>Mark as Picked Up</Text>
               </TouchableOpacity>
             </>
           )}
