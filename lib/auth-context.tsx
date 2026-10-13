@@ -20,6 +20,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 const PUSH_TOKEN_KEY = "autohaul_push_token_sent";
 const WAS_AUTHENTICATED_KEY = "@autohaul:was_authenticated";
 const CACHED_PROFILE_KEY = "@autohaul:cached_profile";
+const PUSH_REGISTRATION_KEY = "@autohaul:push_registration";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn, isLoaded: clerkLoaded, signOut } = useClerkAuth();
@@ -215,6 +216,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [driver?.driverCode, clerkUser?.id, pushSyncOpts, needsPlatformReg]);
 
   const logout = async () => {
+    await unregisterPushToken().catch((err) => {
+      console.warn("[Auth] Push unregister failed:", err);
+    });
     setHadSession(false);
     setCachedProfile(null);
     setCachedClerkId(null);
@@ -261,10 +265,41 @@ async function refreshPushTokenIfNeeded(
   try {
     const token = await registerForPushNotificationsAsync();
     if (!token) return;
+    AsyncStorage.setItem(
+      PUSH_REGISTRATION_KEY,
+      JSON.stringify({ driverCode, pushToken: token, platformDriverCode: opts?.platformDriverCode }),
+    ).catch(() => {});
     await updateProfile({ clerkUserId, pushToken: token });
     registerPlatformToken({ driverCode, pushToken: token }).catch(() => {});
     syncPushTokenToRailway(driverCode, token, opts).catch(() => {});
   } catch {}
+}
+
+/**
+ * Detach this device from the driver it last registered for, so the server
+ * stops sending load notifications once nobody is signed in. Bounded so a
+ * dead connection cannot hold up sign-out.
+ */
+async function unregisterPushToken(): Promise<void> {
+  const raw = await AsyncStorage.getItem(PUSH_REGISTRATION_KEY);
+  if (!raw) return;
+  const reg = JSON.parse(raw) as { driverCode?: string; pushToken?: string; platformDriverCode?: string };
+  if (!reg.driverCode || !reg.pushToken) return;
+
+  const { getApiBaseUrl } = await import("@/constants/oauth");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/api/trpc/push.clearToken`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json: reg }),
+      signal: controller.signal,
+    });
+    if (res.ok) await AsyncStorage.removeItem(PUSH_REGISTRATION_KEY);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function syncPushTokenToRailway(

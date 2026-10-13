@@ -477,6 +477,30 @@ export const appRouter = router({
         companyPlatform.registerPushToken(input.driverCode, input.pushToken).catch(() => {});
         return { success: true };
       }),
+
+    /**
+     * Called on sign-out so a signed-out phone stops receiving load pushes.
+     * Only clears when the stored token is this device's, which both stops a
+     * caller from silencing another driver and leaves a newer device alone.
+     */
+    clearToken: publicProcedure
+      .input(z.object({
+        driverCode: z.string().min(5).max(10),
+        pushToken: z.string().min(10),
+        platformDriverCode: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        let profile = await db.getDriverProfileByCode(input.driverCode.toUpperCase());
+        if (!profile && input.platformDriverCode) {
+          profile = await db.getDriverProfileByPlatformCode(input.platformDriverCode);
+        }
+        if (!profile || profile.pushToken !== input.pushToken) {
+          return { success: true, cleared: false };
+        }
+        await db.updateDriverProfile(profile.id, { pushToken: null });
+        companyPlatform.registerPushToken(input.driverCode, "").catch(() => {});
+        return { success: true, cleared: true };
+      }),
   }),
 
   // ─── Loads: company platform integration ────────────────────────────────────
