@@ -38,6 +38,7 @@ import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo
 import * as Haptics from "expo-haptics";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { photoQueue, type PhotoQueueEntry, type StampMeta } from "@/lib/photo-queue";
+import { normalizeOrientation } from "@/lib/image-compress";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { getCurrentGPS, reverseGeocodeCoords, type GPSCoords } from "@/lib/photo-stamp";
 import { finalizePhotoProgress } from "@/lib/inspection-photo-progress";
@@ -257,6 +258,14 @@ export default function CameraSessionScreen() {
       if (photo?.uri) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
+        // Most shots come back with rotation already baked in, but a few keep
+        // it as an EXIF tag instead. Dispatch's viewer ignores EXIF, so those
+        // land sideways and get rotated by hand. Bake it now, before the photo
+        // enters the queue, so every later step works on upright pixels — the
+        // server only fixes this as a side effect of stamping, and stamping
+        // isn't guaranteed to run.
+        const uprightUri = await normalizeOrientation(photo.uri, photo.exif?.Orientation);
+
         // Prefer explicit meta.inspectionType; fall back to ?type= on nextRoute
         // so delivery stamps never default to "Pickup Condition" by accident.
         const resolvedType =
@@ -280,7 +289,7 @@ export default function CameraSessionScreen() {
           capturedAt: new Date().toISOString(),
         };
 
-        const entry = await photoQueue.enqueue(photo.uri, {
+        const entry = await photoQueue.enqueue(uprightUri, {
           loadId: meta?.loadId,
           vehicleId: meta?.vehicleId,
           loadNumber: sessionLoad?.loadNumber ?? undefined,
