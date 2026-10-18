@@ -21,6 +21,7 @@ import { useLoads } from "@/lib/loads-context";
 import { usePermissions } from "@/lib/permissions-context";
 import { usePendingInvites } from "@/lib/pending-invites-context";
 import { LinkedAccountsSection } from "@/components/linked-accounts-section";
+import { photoQueue } from "@/lib/photo-queue";
 import { useFocusEffect } from "expo-router";
 import { useUser } from "@clerk/expo";
 
@@ -293,6 +294,52 @@ export default function ProfileScreen() {
       ]
     );
   };
+  // ── Photo storage ─────────────────────────────────────────────────────────
+  // Photos used to pile up in app storage forever; one driver's install reached
+  // 102 GB. Cleanup now runs on its own in the background, but the count and
+  // the manual button let a driver who is already out of space fix it now.
+  const [storedPhotoCount, setStoredPhotoCount] = useState<number | null>(null);
+  const [freeingSpace, setFreeingSpace] = useState(false);
+
+  useEffect(() => {
+    photoQueue.countStoredFiles().then(setStoredPhotoCount).catch(() => {});
+  }, []);
+
+  const handleFreeUpSpace = async () => {
+    if (freeingSpace) return;
+    setFreeingSpace(true);
+    try {
+      let bytesFreed = 0;
+      let filesRemoved = 0;
+      // Each pass is deliberately capped, so loop until one comes back empty.
+      for (let i = 0; i < 100; i++) {
+        const pass = await photoQueue.reclaimStorage();
+        bytesFreed += pass.bytesFreed;
+        filesRemoved += pass.reclaimed + pass.deleted;
+        if (pass.reclaimed === 0 && pass.deleted === 0) break;
+      }
+      setStoredPhotoCount(await photoQueue.countStoredFiles());
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (filesRemoved === 0) {
+        Alert.alert(
+          "Nothing to Clean Up",
+          "Every photo on this phone is either still waiting to upload or was taken too recently to remove."
+        );
+      } else {
+        const mb = bytesFreed / 1024 / 1024;
+        const size = mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+        Alert.alert(
+          "Space Freed",
+          `Removed ${filesRemoved} photo${filesRemoved === 1 ? "" : "s"} already saved to the cloud — about ${size}. Nothing was lost; they're all still on your loads.`
+        );
+      }
+    } catch {
+      Alert.alert("Could Not Free Space", "Something went wrong. Please try again.");
+    } finally {
+      setFreeingSpace(false);
+    }
+  };
+
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [sigPaths, setSigPaths] = useState<{ d: string }[]>([]);
   const [sigSaved, setSigSaved] = useState(false);
@@ -1110,6 +1157,28 @@ export default function ProfileScreen() {
           <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
             <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 17 }}>
               Delivered loads older than 30 days are automatically moved to the Archived tab. You can also move them manually at any time.
+            </Text>
+          </View>
+        </View>
+
+        {/* ── PHOTO STORAGE ── */}
+        <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, { color: colors.muted }]}>PHOTO STORAGE</Text>
+          </View>
+          <SettingRow
+            icon="trash.fill"
+            label={freeingSpace ? "Freeing Up Space…" : "Free Up Space"}
+            value={
+              storedPhotoCount == null
+                ? ""
+                : `${storedPhotoCount} photo${storedPhotoCount === 1 ? "" : "s"} on phone`
+            }
+            onPress={handleFreeUpSpace}
+          />
+          <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+            <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 17 }}>
+              Photos are removed from your phone automatically once they finish uploading — they stay on your loads and in the cloud. Tap above if you need the space back right now.
             </Text>
           </View>
         </View>

@@ -73,6 +73,13 @@ export interface PhotoQueueEntry {
   stamped?: boolean;
   /** R2 key for async stamping after upload */
   r2Key?: string;
+  /**
+   * v133+: the local file has been reclaimed after a successful upload. The
+   * entry is kept because history and dedup still resolve through it, but the
+   * bytes are gone — readers must use remoteUrl, which resolvedUri() and
+   * bestUriFor() already prefer.
+   */
+  localDeleted?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -121,6 +128,23 @@ const MAX_DONE_ENTRIES = 200;
 // to swap local→HTTPS into inspection.photos before we drop the
 // queue's pointer to the local file.
 const SAFE_PRUNE_MIN_AGE_MS = 60 * 60_000;
+// v133+: storage reclamation.
+//
+// Nothing ever deleted a photo after it uploaded. Originals were copied into
+// documentDirectory (which iOS never reclaims and which is also backed up to
+// iCloud), compression wrote a fresh file per attempt, and videos went through
+// the same path uncompressed. One driver reached 102 GB.
+//
+// A file is only ever deleted when the queue still holds the entry pointing at
+// it, so anything orphaned — by an account switch, a failed queue parse, or an
+// emergency trim — used to stay forever. sweepOrphanFiles collects those.
+/** Grace period before an unreferenced file is considered an orphan. Long
+ *  enough that a capture mid-flight is never swept out from under itself. */
+const ORPHAN_GRACE_MS = 24 * 60 * 60_000;
+/** Deletions per pass, so reclaiming 30k files can't monopolise the JS thread. */
+const MAX_DELETIONS_PER_SWEEP = 400;
+/** Run reclamation every Nth background tick (15s each) rather than adding a timer. */
+const RECLAIM_EVERY_N_TICKS = 40;
 // v85+: how many entries a single sync() pass may touch.
 //
 // sync() used to walk the *entire* ready list in one call. Each uploadEntry
@@ -156,6 +180,12 @@ function getUploadApiBase(): string {
 
 function uuid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+/** expo-file-system reports modificationTime in seconds; callers want ms. */
+function normalizeMtimeMs(modificationTime: number | undefined): number | null {
+  if (!modificationTime) return null;
+  return modificationTime < 1e12 ? modificationTime * 1000 : modificationTime;
 }
 
 async function ensurePhotosDir() {
@@ -247,6 +277,12 @@ export class PhotoQueue {
   /** Set when emergencyTrim had to bound the queue. Surfaced in diagnostics
    *  so a runaway queue is visible before it becomes a crash. */
   lastTrim: { at: number; from: number; to: number; quarantined: number } | null = null;
+  /** Result of the most recent storage reclamation, surfaced in Settings. */
+  lastReclaim:
+    | { at: number; reclaimed: number; deleted: number; bytesFreed: number; filesOnDisk: number }
+    | null = null;
+  /** Files left in PHOTOS_DIR as of the last sweep. Cheap proxy for disk use. */
+  filesOnDisk = 0;
 
   // v60+ multi-account isolation: each driverCode gets its own scoped storage
   // key. `null` means "no driver signed in" — entries persist under the base
@@ -323,6 +359,17 @@ export class PhotoQueue {
       await this.emergencyTrim();
       this.emit();
     } catch {
+      // Losing the queue is survivable; losing the photos is not. Stash the
+      // unparseable payload under a quarantine key so the files it names stay
+      // in sweepOrphanFiles' referenced set instead of being collected.
+      try {
+        const raw = await AsyncStorage.getItem(this.currentStorageKey());
+        if (raw) {
+          await AsyncStorage.setItem(`${this.currentStorageKey()}:corrupt`, raw);
+        }
+      } catch {
+        // Nothing left to try.
+      }
       this.entries = [];
       this.loaded = true;
     }
@@ -345,8 +392,19 @@ export class PhotoQueue {
     const oldestDone = this.entries
       .filter((e) => e.status === "done")
       .sort((a, b) => a.createdAt - b.createdAt);
-    const dropIds = new Set(oldestDone.slice(0, overBy).map((e) => e.clientId));
+    const dropped = oldestDone.slice(0, overBy);
+    const dropIds = new Set(dropped.map((e) => e.clientId));
     let survivors = this.entries.filter((e) => !dropIds.has(e.clientId));
+
+    // These are uploaded, so their bytes are redundant — but dropping the entry
+    // is also the last reference to the file, so delete it here rather than
+    // leaving it for the sweep to find a day later.
+    if (Platform.OS !== "web") {
+      for (const e of dropped) {
+        if (e.localDeleted || !e.localUri.startsWith(PHOTOS_DIR)) continue;
+        await this.deleteFile(e.localUri);
+      }
+    }
 
     let quarantined: PhotoQueueEntry[] = [];
     if (survivors.length > HARD_MAX_ENTRIES) {
@@ -601,8 +659,16 @@ export class PhotoQueue {
   startBackgroundRetry(): void {
     if (this.backgroundTimer) return;
     this.load().then(() => this.sync()).catch((err) => console.warn("[PhotoQueue]", err));
+    let tick = 0;
     this.backgroundTimer = setInterval(() => {
       this.sync().catch((err) => console.warn("[PhotoQueue]", err));
+      // Piggyback on the existing timer instead of adding another. Each pass is
+      // capped at MAX_DELETIONS_PER_SWEEP, so a phone with 30k stranded files
+      // works through them over a few hours rather than in one blocking burst.
+      tick += 1;
+      if (tick % RECLAIM_EVERY_N_TICKS === 0) {
+        this.reclaimStorage().catch((err) => console.warn("[PhotoQueue]", err));
+      }
     }, BACKGROUND_INTERVAL_MS);
 
     // Resume uploads on foreground; flush pending persist when backgrounding
@@ -985,11 +1051,17 @@ export class PhotoQueue {
     }
     const isWifi = networkType === Network.NetworkStateType.WIFI;
 
+    // Tracked outside the try so the finally below can delete it. Compression
+    // writes a brand new file on every attempt, and since the queue retries
+    // forever a single wedged photo would otherwise leave one copy behind
+    // roughly every five minutes, indefinitely.
+    let compressedUri: string | null = null;
+
     try {
       // v66+: compress with network-aware quality. Cellular gets smaller
       // photos (~120–280 KB) so each PUT fits inside a stable TCP window
       // on weak LTE. Wi-Fi keeps the higher-quality target (~400–800 KB).
-      const compressedUri = await compressImage(entry.localUri, isWifi ? "wifi" : "cellular");
+      compressedUri = await compressImage(entry.localUri, isWifi ? "wifi" : "cellular");
       const vin = entry.stampMeta?.vin;
       const groupKey = entry.loadNumber && vin
         ? `${entry.loadNumber}/${vin}`
@@ -1110,6 +1182,20 @@ export class PhotoQueue {
         lastAttemptAt: Date.now(),
         attempts,
       });
+    } finally {
+      // The compressed copy has served its purpose either way. Never touch the
+      // original here — a failed attempt still needs it to retry from.
+      if (
+        Platform.OS !== "web" &&
+        compressedUri &&
+        compressedUri !== entry.localUri
+      ) {
+        try {
+          await FileSystem.deleteAsync(compressedUri, { idempotent: true });
+        } catch {
+          // Best effort; sweepOrphanFiles is the backstop.
+        }
+      }
     }
   }
 
@@ -1159,6 +1245,182 @@ export class PhotoQueue {
     this.entries = this.entries.filter((e) => e.clientId !== clientId);
     await this.persist();
     this.emit();
+  }
+
+  /** Deletes a file and reports how many bytes that recovered. */
+  private async deleteFile(uri: string): Promise<number> {
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      if (!info.exists) return 0;
+      const size = (info as { size?: number }).size ?? 0;
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+      return size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Every local path any driver scope still points at.
+   *
+   * Reads all scopes rather than just the active one: on a shared phone the
+   * other account's pending photo is still un-uploaded evidence, and sweeping
+   * it would destroy an inspection. Returns null if any scope can't be read,
+   * which the caller must treat as "do not delete anything".
+   */
+  private async allReferencedLocalUris(): Promise<Set<string> | null> {
+    const referenced = new Set<string>();
+    for (const e of this.entries) referenced.add(e.localUri);
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      for (const key of keys) {
+        if (!key.startsWith(QUEUE_STORAGE_BASE)) continue;
+        const raw = await AsyncStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (!Array.isArray(parsed)) continue;
+          for (const e of parsed as PhotoQueueEntry[]) {
+            if (e?.localUri) referenced.add(e.localUri);
+          }
+        } catch {
+          // A payload we can't parse — the `:corrupt` stash, most likely. Pull
+          // the paths out textually rather than giving up on sweeping forever.
+          for (const m of raw.matchAll(/file:\/\/[^"\\]+/g)) referenced.add(m[0]);
+        }
+      }
+    } catch {
+      return null;
+    }
+    return referenced;
+  }
+
+  /**
+   * Drops the local bytes for photos that already reached R2.
+   *
+   * The entry itself stays, because history, dedup and the backfill safety net
+   * all resolve through it — but once it has an HTTPS remoteUrl the local file
+   * is dead weight, since resolvedUri() and bestUriFor() both prefer remoteUrl
+   * already. Waits out SAFE_PRUNE_MIN_AGE_MS so the local→HTTPS swap inside
+   * inspection records has had time to land first.
+   */
+  async reclaimUploadedFiles(): Promise<{ reclaimed: number; bytesFreed: number }> {
+    if (Platform.OS === "web") return { reclaimed: 0, bytesFreed: 0 };
+    await this.load();
+    const now = Date.now();
+
+    const toReclaim: PhotoQueueEntry[] = [];
+    for (const entry of this.entries) {
+      if (toReclaim.length >= MAX_DELETIONS_PER_SWEEP) break;
+      if (entry.status !== "done" || entry.localDeleted) continue;
+      if (!entry.remoteUrl?.startsWith("http")) continue;
+      if (!entry.localUri.startsWith(PHOTOS_DIR)) continue;
+      if (now - entry.createdAt < SAFE_PRUNE_MIN_AGE_MS) continue;
+      toReclaim.push(entry);
+    }
+    if (toReclaim.length === 0) return { reclaimed: 0, bytesFreed: 0 };
+
+    let bytesFreed = 0;
+    for (const entry of toReclaim) {
+      bytesFreed += await this.deleteFile(entry.localUri);
+    }
+
+    const ids = new Set(toReclaim.map((e) => e.clientId));
+    this.entries = this.entries.map((e) =>
+      ids.has(e.clientId) ? { ...e, localDeleted: true } : e,
+    );
+    await this.persist();
+    this.emit();
+    return { reclaimed: toReclaim.length, bytesFreed };
+  }
+
+  /**
+   * Collects files in PHOTOS_DIR that no queue entry points at.
+   *
+   * This is the only thing that recovers space already lost. A file was only
+   * ever deleted while the queue still held its entry, so an account switch, a
+   * failed queue parse (load() resets entries to []) or an emergency trim
+   * stranded its files permanently.
+   */
+  async sweepOrphanFiles(): Promise<{ scanned: number; deleted: number; bytesFreed: number }> {
+    const nothing = { scanned: 0, deleted: 0, bytesFreed: 0 };
+    if (Platform.OS === "web") return nothing;
+    await this.load();
+
+    const referenced = await this.allReferencedLocalUris();
+    if (!referenced) return nothing;
+
+    let names: string[];
+    try {
+      const dir = await FileSystem.getInfoAsync(PHOTOS_DIR);
+      if (!dir.exists) return nothing;
+      names = await FileSystem.readDirectoryAsync(PHOTOS_DIR);
+    } catch {
+      return nothing;
+    }
+
+    const now = Date.now();
+    let deleted = 0;
+    let bytesFreed = 0;
+
+    for (const name of names) {
+      if (deleted >= MAX_DELETIONS_PER_SWEEP) break;
+      const uri = `${PHOTOS_DIR}${name}`;
+      if (referenced.has(uri)) continue;
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        if (!info.exists || (info as { isDirectory?: boolean }).isDirectory) continue;
+        const modified = normalizeMtimeMs((info as { modificationTime?: number }).modificationTime);
+        if (modified && now - modified < ORPHAN_GRACE_MS) continue;
+        bytesFreed += (info as { size?: number }).size ?? 0;
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+        deleted += 1;
+      } catch {
+        // A file we can't stat or delete is skipped, not retried into a loop.
+      }
+    }
+
+    this.filesOnDisk = names.length - deleted;
+    return { scanned: names.length, deleted, bytesFreed };
+  }
+
+  /**
+   * How many photo files are on disk. One directory read, no per-file stat —
+   * sizing 30k files would block the JS thread, and the count is enough to
+   * show the driver something meaningful.
+   */
+  async countStoredFiles(): Promise<number> {
+    if (Platform.OS === "web") return 0;
+    try {
+      const dir = await FileSystem.getInfoAsync(PHOTOS_DIR);
+      if (!dir.exists) return 0;
+      this.filesOnDisk = (await FileSystem.readDirectoryAsync(PHOTOS_DIR)).length;
+      return this.filesOnDisk;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * One reclamation pass: drop uploaded originals, then collect orphans.
+   * Both halves are capped, so this is safe to call on a timer.
+   */
+  async reclaimStorage(): Promise<{ reclaimed: number; deleted: number; bytesFreed: number }> {
+    const uploaded = await this.reclaimUploadedFiles();
+    const orphans = await this.sweepOrphanFiles();
+    const result = {
+      reclaimed: uploaded.reclaimed,
+      deleted: orphans.deleted,
+      bytesFreed: uploaded.bytesFreed + orphans.bytesFreed,
+    };
+    if (result.reclaimed > 0 || result.deleted > 0) {
+      this.lastReclaim = { at: Date.now(), ...result, filesOnDisk: this.filesOnDisk };
+      console.log(
+        `[PhotoQueue] reclaimed ${result.reclaimed} uploaded + ${result.deleted} orphans, ` +
+          `${(result.bytesFreed / 1024 / 1024).toFixed(1)} MB freed`,
+      );
+    }
+    return result;
   }
 
   async retryFailed(): Promise<void> {

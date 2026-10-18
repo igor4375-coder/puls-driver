@@ -72,6 +72,12 @@ vi.mock("../lib/inspection-photo-progress", () => ({
   reportPhotoUploaded: vi.fn(),
 }));
 
+// The queue's debug breadcrumbs reach into crash-reporter, which pulls
+// expo-modules-core's native bindings into a plain node environment.
+vi.mock("../lib/crash-reporter", () => ({
+  addBreadcrumb: vi.fn(),
+}));
+
 import { PhotoQueue, type PhotoQueueEntry } from "../lib/photo-queue-class";
 
 const MAX_ENTRIES_PER_SYNC = 12;
