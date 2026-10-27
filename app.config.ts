@@ -122,8 +122,12 @@ const config: ExpoConfig = {
     [
       "expo-video",
       {
-        supportsBackgroundPlayback: true,
-        supportsPictureInPicture: true,
+        // Must stay false: either flag injects UIBackgroundModes=audio into
+        // Info.plist, and Apple rejected build 20 under Guideline 2.5.4
+        // because we never play audible content in the background. Inspection
+        // videos are recorded in the foreground via expo-camera only.
+        supportsBackgroundPlayback: false,
+        supportsPictureInPicture: false,
       },
     ],
     [
