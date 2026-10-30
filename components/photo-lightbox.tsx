@@ -1,10 +1,19 @@
 /**
  * Full-screen photo lightbox with pinch / double-tap zoom.
  *
- * Drivers were screenshotting inspection photos into the gallery just to zoom
- * in on damage. This viewer opens the same photos full-screen and lets them
- * pinch or double-tap without leaving the app. Horizontal swipe still pages
- * between photos when not zoomed.
+ * Zoom used to feel broken: nothing for a beat, then a sudden jump. Two causes
+ * from the Gesture Handler docs / known FlatList+pinch issues:
+ *
+ * 1. Gesture.Exclusive(doubleTap, pinch) made the pinch wait for the double-tap
+ *    recognizer to fail (it holds for a second tap). Race lets whichever
+ *    gesture activates first win — pinch activates as soon as the fingers move.
+ * 2. The paging FlatList treated a two-finger drag as a scroll and cancelled
+ *    the pinch. We freeze paging on pinch begin (not after zoom settles).
+ *
+ * Scale uses the documented pattern: onStart stash the current scale, onUpdate
+ * set scale = saved * event.scale (event.scale starts at 1.0 each gesture).
+ * Translation pivots around the pinch focal point so the area under the fingers
+ * stays put — same idea as Apple Photos.
  */
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -39,25 +48,41 @@ type Props = {
   uris: string[];
   initialIndex?: number;
   onClose: () => void;
-  /** Optional label shown in the header, e.g. "Pickup photos". */
   title?: string;
 };
 
 type ZoomableProps = {
   uri: string;
-  /** When true, pan is allowed; parent disables paging while zoomed. */
-  onZoomChange: (zoomed: boolean) => void;
+  onPinchActiveChange: (active: boolean) => void;
+  onZoomedChange: (zoomed: boolean) => void;
 };
 
-function ZoomableImage({ uri, onZoomChange }: ZoomableProps) {
+function ZoomableImage({ uri, onPinchActiveChange, onZoomedChange }: ZoomableProps) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
+  // Focal point at pinch start, relative to the view center.
+  const originX = useSharedValue(0);
+  const originY = useSharedValue(0);
 
-  const resetZoom = useCallback(() => {
+  const notifyZoomed = useCallback(
+    (zoomed: boolean) => {
+      onZoomedChange(zoomed);
+    },
+    [onZoomedChange],
+  );
+
+  const notifyPinch = useCallback(
+    (active: boolean) => {
+      onPinchActiveChange(active);
+    },
+    [onPinchActiveChange],
+  );
+
+  const resetZoom = () => {
     "worklet";
     scale.value = withTiming(1);
     savedScale.value = 1;
@@ -65,10 +90,9 @@ function ZoomableImage({ uri, onZoomChange }: ZoomableProps) {
     translateY.value = withTiming(0);
     savedTX.value = 0;
     savedTY.value = 0;
-    runOnJS(onZoomChange)(false);
-  }, [onZoomChange, scale, savedScale, translateX, translateY, savedTX, savedTY]);
+    runOnJS(notifyZoomed)(false);
+  };
 
-  // Reset when the URI changes (user swiped to another page).
   useEffect(() => {
     scale.value = 1;
     savedScale.value = 1;
@@ -76,53 +100,104 @@ function ZoomableImage({ uri, onZoomChange }: ZoomableProps) {
     translateY.value = 0;
     savedTX.value = 0;
     savedTY.value = 0;
-    onZoomChange(false);
+    onZoomedChange(false);
+    onPinchActiveChange(false);
   }, [uri]);
 
   const pinch = Gesture.Pinch()
+    // Freeze the pager the instant a pinch is recognized — before scale moves —
+    // so the FlatList can't steal the two-finger gesture.
+    .onBegin(() => {
+      runOnJS(notifyPinch)(true);
+    })
+    .onStart((e) => {
+      savedScale.value = scale.value;
+      savedTX.value = translateX.value;
+      savedTY.value = translateY.value;
+      // Focal is relative to the view; convert to offset from center so scale
+      // pivots under the fingers instead of the view's midpoint.
+      originX.value = e.focalX - SCREEN_W / 2;
+      originY.value = e.focalY - SCREEN_H / 2;
+    })
     .onUpdate((e) => {
-      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, savedScale.value * e.scale));
+      // event.scale is 1.0 at gesture start and grows/shrinks with finger distance.
+      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE * 0.85, savedScale.value * e.scale));
+      const ratio = next / savedScale.value;
       scale.value = next;
+      // Keep the focal point under the fingers while scaling.
+      translateX.value = originX.value + (savedTX.value - originX.value) * ratio;
+      translateY.value = originY.value + (savedTY.value - originY.value) * ratio;
     })
     .onEnd(() => {
-      if (scale.value <= 1.05) {
+      runOnJS(notifyPinch)(false);
+      if (scale.value < 1.05) {
         resetZoom();
         return;
       }
-      savedScale.value = scale.value;
-      runOnJS(onZoomChange)(true);
+      if (scale.value > MAX_SCALE) {
+        scale.value = withTiming(MAX_SCALE);
+        savedScale.value = MAX_SCALE;
+      } else {
+        savedScale.value = scale.value;
+      }
+      savedTX.value = translateX.value;
+      savedTY.value = translateY.value;
+      runOnJS(notifyZoomed)(true);
+    })
+    .onFinalize((_e, success) => {
+      // If the recognizer was cancelled (e.g. by a competing scroll), unfreeze.
+      if (!success) {
+        runOnJS(notifyPinch)(false);
+      }
     });
 
+  // Pan only when already zoomed — otherwise the FlatList owns the swipe.
   const pan = Gesture.Pan()
-    .averageTouches(true)
+    .manualActivation(true)
+    .onTouchesMove((_e, state) => {
+      if (scale.value > 1.05) {
+        state.activate();
+      } else {
+        state.fail();
+      }
+    })
+    .onStart(() => {
+      savedTX.value = translateX.value;
+      savedTY.value = translateY.value;
+    })
     .onUpdate((e) => {
-      if (scale.value <= 1.05) return;
       translateX.value = savedTX.value + e.translationX;
       translateY.value = savedTY.value + e.translationY;
     })
     .onEnd(() => {
-      if (scale.value <= 1.05) return;
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
     });
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
-    .onEnd(() => {
+    .maxDuration(250)
+    .onEnd((e) => {
       if (scale.value > 1.1) {
         resetZoom();
-      } else {
-        scale.value = withTiming(DOUBLE_TAP_SCALE);
-        savedScale.value = DOUBLE_TAP_SCALE;
-        runOnJS(onZoomChange)(true);
+        return;
       }
+      const ox = e.x - SCREEN_W / 2;
+      const oy = e.y - SCREEN_H / 2;
+      const next = DOUBLE_TAP_SCALE;
+      // Zoom toward the tap point.
+      translateX.value = withTiming(ox * (1 - next));
+      translateY.value = withTiming(oy * (1 - next));
+      scale.value = withTiming(next);
+      savedScale.value = next;
+      savedTX.value = ox * (1 - next);
+      savedTY.value = oy * (1 - next);
+      runOnJS(notifyZoomed)(true);
     });
 
-  // Pinch + pan together; double-tap exclusive so it doesn't fight the pinch.
-  const composed = Gesture.Exclusive(
-    doubleTap,
-    Gesture.Simultaneous(pinch, pan),
-  );
+  // Race — NOT Exclusive. Exclusive made pinch wait for the double-tap
+  // recognizer to time out, which felt like "pinch does nothing, then jumps".
+  const composed = Gesture.Race(doubleTap, Gesture.Simultaneous(pinch, pan));
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -134,12 +209,11 @@ function ZoomableImage({ uri, onZoomChange }: ZoomableProps) {
 
   return (
     <GestureDetector gesture={composed}>
-      <Animated.View style={[styles.page, animatedStyle]}>
+      <Animated.View style={[styles.page, animatedStyle]} collapsable={false}>
         <Image
           source={{ uri }}
           style={styles.image}
           contentFit="contain"
-          // Full-res when zoomed; the gallery thumbnail path is separate.
           recyclingKey={uri}
         />
       </Animated.View>
@@ -157,14 +231,14 @@ export function PhotoLightbox({
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(initialIndex);
   const [zoomed, setZoomed] = useState(false);
-  // Bumped only when the modal opens so FlatList re-applies initialScrollIndex
-  // without remounting on every swipe.
+  const [pinching, setPinching] = useState(false);
   const [listKey, setListKey] = useState(0);
 
   useEffect(() => {
     if (visible) {
       setIndex(Math.min(Math.max(0, initialIndex), Math.max(0, uris.length - 1)));
       setZoomed(false);
+      setPinching(false);
       setListKey((k) => k + 1);
     }
   }, [visible, initialIndex, uris.length]);
@@ -174,10 +248,15 @@ export function PhotoLightbox({
     if (next !== index) {
       setIndex(next);
       setZoomed(false);
+      setPinching(false);
     }
   };
 
   if (!uris.length) return null;
+
+  // Freeze paging for the whole pinch, and while zoomed so a one-finger drag
+  // pans the image instead of flipping pages.
+  const allowPaging = !zoomed && !pinching;
 
   return (
     <Modal
@@ -189,7 +268,7 @@ export function PhotoLightbox({
       presentationStyle="overFullScreen"
     >
       <View style={styles.overlay}>
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
           <TouchableOpacity
             style={styles.closeBtn}
             onPress={onClose}
@@ -202,7 +281,7 @@ export function PhotoLightbox({
               <IconSymbol name="xmark" size={16} color="#fff" />
             </View>
           </TouchableOpacity>
-          <View style={styles.headerCenter}>
+          <View style={styles.headerCenter} pointerEvents="none">
             {title ? <Text style={styles.headerTitle}>{title}</Text> : null}
             <Text style={styles.headerSub}>
               {index + 1} / {uris.length}
@@ -217,7 +296,7 @@ export function PhotoLightbox({
           keyExtractor={(uri, i) => `${uri}-${i}`}
           horizontal
           pagingEnabled
-          scrollEnabled={!zoomed}
+          scrollEnabled={allowPaging}
           showsHorizontalScrollIndicator={false}
           initialScrollIndex={Math.min(index, uris.length - 1)}
           getItemLayout={(_, i) => ({
@@ -231,13 +310,19 @@ export function PhotoLightbox({
           windowSize={3}
           renderItem={({ item }) => (
             <View style={{ width: SCREEN_W, height: SCREEN_H }}>
-              <ZoomableImage uri={item} onZoomChange={setZoomed} />
+              <ZoomableImage
+                uri={item}
+                onPinchActiveChange={setPinching}
+                onZoomedChange={setZoomed}
+              />
             </View>
           )}
         />
 
-        <Text style={[styles.hint, { bottom: insets.bottom + 28 }]}>
-          {zoomed ? "Pinch out or double-tap to reset" : "Pinch or double-tap to zoom · swipe for next"}
+        <Text style={[styles.hint, { bottom: insets.bottom + 28 }]} pointerEvents="none">
+          {zoomed || pinching
+            ? "Pinch out or double-tap to reset"
+            : "Pinch or double-tap to zoom · swipe for next"}
         </Text>
       </View>
     </Modal>
