@@ -27,6 +27,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { stampPhotoViaServer } from "@/lib/stamp-photo-client";
 import { photoQueue } from "@/lib/photo-queue";
+import { PhotoLightbox } from "@/components/photo-lightbox";
 import type { Damage, DamageType, DamageSeverity, DamageZone, AdditionalInspection } from "@/lib/data";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
@@ -621,6 +622,7 @@ export default function InspectionReviewScreen() {
 
   // Photo gallery state
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [lightboxVisible, setLightboxVisible] = useState(false);
   const mainListRef = useRef<FlatList>(null);
   const thumbListRef = useRef<FlatList>(null);
 
@@ -955,16 +957,30 @@ export default function InspectionReviewScreen() {
                   showsHorizontalScrollIndicator={false}
                   onMomentumScrollEnd={handleMainScroll}
                   getItemLayout={(_, index) => ({ length: SCREEN_WIDTH, offset: SCREEN_WIDTH * index, index })}
-                  renderItem={({ item }) => (
-                    <View style={{ width: SCREEN_WIDTH, height: MAIN_IMAGE_HEIGHT }}>
+                  renderItem={({ item, index }) => (
+                    <TouchableOpacity
+                      activeOpacity={0.95}
+                      onPress={() => {
+                        setSelectedIndex(index);
+                        setLightboxVisible(true);
+                      }}
+                      style={{ width: SCREEN_WIDTH, height: MAIN_IMAGE_HEIGHT }}
+                      accessibilityRole="imagebutton"
+                      accessibilityLabel={`Open photo ${index + 1} full screen`}
+                    >
                       <Image source={{ uri: item }} style={s.mainImage} contentFit="contain" />
-                    </View>
+                    </TouchableOpacity>
                   )}
                 />
-                <View style={[s.photoCountBadge, { backgroundColor: "rgba(0,0,0,0.6)" }]}>
+                <TouchableOpacity
+                  style={[s.photoCountBadge, { backgroundColor: "rgba(0,0,0,0.6)" }]}
+                  onPress={() => setLightboxVisible(true)}
+                  activeOpacity={0.85}
+                >
                   <IconSymbol name="camera.fill" size={13} color="#FFFFFF" />
                   <Text style={s.photoCountText}>{selectedIndex + 1}/{photos.length}</Text>
-                </View>
+                  <Text style={[s.photoCountText, { marginLeft: 6, opacity: 0.85 }]}>Tap to zoom</Text>
+                </TouchableOpacity>
               </View>
               <FlatList
                 ref={thumbListRef}
@@ -978,9 +994,20 @@ export default function InspectionReviewScreen() {
                 contentContainerStyle={s.thumbStrip}
                 renderItem={({ item, index }) => (
                   <TouchableOpacity
-                    onPress={() => handleSelectPhoto(index)}
+                    onPress={() => {
+                      if (index === selectedIndex) {
+                        setLightboxVisible(true);
+                      } else {
+                        handleSelectPhoto(index);
+                      }
+                    }}
+                    onLongPress={() => {
+                      setSelectedIndex(index);
+                      setLightboxVisible(true);
+                    }}
                     activeOpacity={0.85}
                     style={[s.thumbWrap, index === selectedIndex && { borderColor: colors.primary, borderWidth: 2.5 }]}
+                    accessibilityLabel={`Photo ${index + 1}. Tap again or long-press to open full screen`}
                   >
                     <Image source={{ uri: item }} style={s.thumbImage} contentFit="cover" />
                   </TouchableOpacity>
@@ -1220,6 +1247,14 @@ export default function InspectionReviewScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <PhotoLightbox
+        visible={lightboxVisible}
+        uris={photos}
+        initialIndex={selectedIndex}
+        onClose={() => setLightboxVisible(false)}
+        title={inspectionType === "delivery" ? "Delivery photos" : "Pickup photos"}
+      />
 
       {/* ── Damage Modal ────────────────────────────────────────────────────── */}
       <DamageModal

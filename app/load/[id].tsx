@@ -35,6 +35,7 @@ import { cameraSessionStore } from "@/lib/camera-session-store";
 import { useAction, useMutation, useQuery as useConvexQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { PhotoLightbox } from "@/components/photo-lightbox";
 import {
   type Load,
   type LoadStatus,
@@ -411,55 +412,12 @@ function VehicleCard({
         </TouchableOpacity>
       )}
 
-      {/* Full-screen photo lightbox */}
-      <Modal
+      <PhotoLightbox
         visible={lightboxVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLightboxVisible(false)}
-        statusBarTranslucent
-      >
-        <View style={styles.lightboxOverlay}>
-          <TouchableOpacity
-            style={styles.lightboxClose}
-            onPress={() => setLightboxVisible(false)}
-            activeOpacity={0.8}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <View style={styles.lightboxCloseCircle}>
-              <IconSymbol name="xmark" size={16} color="#fff" />
-            </View>
-          </TouchableOpacity>
-          <FlatList
-            data={lightboxPhotos}
-            keyExtractor={(_, i) => String(i)}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            initialScrollIndex={lightboxIndex}
-            getItemLayout={(_, index) => ({
-              length: Dimensions.get("window").width,
-              offset: Dimensions.get("window").width * index,
-              index,
-            })}
-            renderItem={({ item }) => (
-              <View style={[styles.lightboxPage, { width: Dimensions.get("window").width }]}>
-                <Image
-                  source={{ uri: item }}
-                  style={styles.lightboxImage}
-                  contentFit="contain"
-                />
-              </View>
-            )}
-          />
-          <Text style={styles.lightboxCounter}>
-            {lightboxIndex + 1} / {lightboxPhotos.length}
-          </Text>
-        </View>
-      </Modal>
+        uris={lightboxPhotos}
+        initialIndex={lightboxIndex}
+        onClose={() => setLightboxVisible(false)}
+      />
     </View>
   );
 }

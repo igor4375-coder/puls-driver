@@ -4,15 +4,13 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Modal,
-  FlatList,
-  Dimensions,
   ScrollView,
   Platform,
 } from "react-native";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { PhotoLightbox } from "@/components/photo-lightbox";
 import type { PreviousDropOff } from "@/lib/data";
 import {
   formatDroppedAt,
@@ -156,54 +154,13 @@ export function PreviousDropOffCard({ previousDropOff, fallbackNote, compact }: 
         </Text>
       ) : null}
 
-      <Modal
+      <PhotoLightbox
         visible={lightboxVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLightboxVisible(false)}
-        statusBarTranslucent
-      >
-        <View style={styles.lightboxOverlay}>
-          <TouchableOpacity
-            style={styles.lightboxClose}
-            onPress={() => setLightboxVisible(false)}
-            activeOpacity={0.8}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          >
-            <View style={styles.lightboxCloseCircle}>
-              <IconSymbol name="xmark" size={16} color="#fff" />
-            </View>
-          </TouchableOpacity>
-          <FlatList
-            data={photos}
-            keyExtractor={(_, i) => String(i)}
-            initialNumToRender={10}
-            maxToRenderPerBatch={10}
-            windowSize={5}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            initialScrollIndex={lightboxIndex}
-            getItemLayout={(_, index) => ({
-              length: Dimensions.get("window").width,
-              offset: Dimensions.get("window").width * index,
-              index,
-            })}
-            onMomentumScrollEnd={(e) => {
-              const next = Math.round(e.nativeEvent.contentOffset.x / Dimensions.get("window").width);
-              setLightboxIndex(next);
-            }}
-            renderItem={({ item }) => (
-              <View style={[styles.lightboxPage, { width: Dimensions.get("window").width }]}>
-                <Image source={{ uri: item }} style={styles.lightboxImage} contentFit="contain" />
-              </View>
-            )}
-          />
-          <Text style={styles.lightboxCounter}>
-            {lightboxIndex + 1} / {photos.length}
-          </Text>
-        </View>
-      </Modal>
+        uris={photos}
+        initialIndex={lightboxIndex}
+        onClose={() => setLightboxVisible(false)}
+        title="Previous drop-off"
+      />
     </View>
   );
 }
@@ -342,41 +299,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: "#E65100",
-  },
-  lightboxOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.95)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  lightboxClose: {
-    position: "absolute",
-    top: 56,
-    right: 20,
-    zIndex: 10,
-  },
-  lightboxCloseCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  lightboxPage: {
-    justifyContent: "center",
-    alignItems: "center",
-    height: Dimensions.get("window").height,
-  },
-  lightboxImage: {
-    width: Dimensions.get("window").width,
-    height: Dimensions.get("window").height * 0.75,
-  },
-  lightboxCounter: {
-    position: "absolute",
-    bottom: 60,
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 14,
-    fontWeight: "600",
   },
 });

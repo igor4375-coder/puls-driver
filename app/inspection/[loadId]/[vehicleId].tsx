@@ -33,6 +33,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { cameraSessionStore } from "@/lib/camera-session-store";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
 import { PreviousDropOffCard } from "@/components/previous-drop-off-card";
+import { PhotoLightbox } from "@/components/photo-lightbox";
 import { fallbackPreviousLegNote } from "@/lib/previous-drop-off";
 import { useSettings } from "@/lib/settings-context";
 import {
@@ -600,6 +601,7 @@ export default function InspectionScreen() {
   const [selectedZone, setSelectedZone] = useState<DamageZone | null>(null);
   const [showDamageModal, setShowDamageModal] = useState(false);
   const [pinPhotoViewer, setPinPhotoViewer] = useState<{ damage: Damage; photoIdx: number } | null>(null);
+  const [photoLightboxIndex, setPhotoLightboxIndex] = useState<number | null>(null);
   const [pendingXPct, setPendingXPct] = useState<number | undefined>(undefined);
   const [pendingYPct, setPendingYPct] = useState<number | undefined>(undefined);
   const [pendingDiagramView, setPendingDiagramView] = useState<"top" | "side_driver">("top");
@@ -1226,7 +1228,14 @@ export default function InspectionScreen() {
               columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
               renderItem={({ item: uri, index: idx }) => (
                 <View style={styles.photoThumb}>
-                  <Image source={{ uri }} style={styles.photoImage} contentFit="cover" />
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => setPhotoLightboxIndex(idx)}
+                    accessibilityRole="imagebutton"
+                    accessibilityLabel={`Open photo ${idx + 1} full screen`}
+                  >
+                    <Image source={{ uri }} style={styles.photoImage} contentFit="cover" />
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.photoRemove, { backgroundColor: colors.error }]}
                     onPress={() => setPhotos((prev) => prev.filter((_, i) => i !== idx))}
@@ -1577,87 +1586,27 @@ export default function InspectionScreen() {
         pendingView={pendingDiagramView}
       />
 
-      {/* Pin Photo Viewer Modal */}
-      {pinPhotoViewer && (
-        <Modal
-          visible
-          animationType="fade"
-          transparent
-          presentationStyle="overFullScreen"
-          onRequestClose={() => setPinPhotoViewer(null)}
-        >
-          <View style={pinViewerStyles.overlay}>
-            {/* Header */}
-            <View style={[pinViewerStyles.header, { paddingTop: insets.top + 10 }]}>
-              <TouchableOpacity
-                style={pinViewerStyles.closeBtn}
-                onPress={() => setPinPhotoViewer(null)}
-                activeOpacity={0.8}
-              >
-                <IconSymbol name="xmark" size={18} color="#fff" />
-              </TouchableOpacity>
-              <View style={pinViewerStyles.headerCenter}>
-                <Text style={pinViewerStyles.headerTitle}>
-                  {DAMAGE_TYPES.find((t) => t.key === pinPhotoViewer.damage.type)?.label ?? pinPhotoViewer.damage.type}
-                  {" — "}
-                  {DAMAGE_ZONES.find((z) => z.key === pinPhotoViewer.damage.zone)?.label ?? pinPhotoViewer.damage.zone}
-                </Text>
-                <Text style={pinViewerStyles.headerSub}>
-                  {pinPhotoViewer.photoIdx + 1} / {pinPhotoViewer.damage.photos!.length}
-                </Text>
-              </View>
-              <View style={{ width: 40 }} />
-            </View>
+      <PhotoLightbox
+        visible={photoLightboxIndex != null}
+        uris={photos}
+        initialIndex={photoLightboxIndex ?? 0}
+        onClose={() => setPhotoLightboxIndex(null)}
+        title={isDelivery ? "Delivery photos" : "Pickup photos"}
+      />
 
-            {/* Main photo */}
-            <Image
-              source={{ uri: pinPhotoViewer.damage.photos![pinPhotoViewer.photoIdx] }}
-              style={pinViewerStyles.mainPhoto}
-              contentFit="contain"
-            />
-
-            {/* Thumbnail strip (if multiple photos) */}
-            {pinPhotoViewer.damage.photos!.length > 1 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={pinViewerStyles.thumbStrip}
-              >
-                {pinPhotoViewer.damage.photos!.map((uri, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    onPress={() => setPinPhotoViewer({ ...pinPhotoViewer, photoIdx: idx })}
-                    activeOpacity={0.8}
-                  >
-                    <Image
-                      source={{ uri }}
-                      style={[
-                        pinViewerStyles.thumb,
-                        idx === pinPhotoViewer.photoIdx && pinViewerStyles.thumbActive,
-                      ]}
-                      contentFit="cover"
-                    />
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-
-            {/* Damage info */}
-            <View style={pinViewerStyles.infoBar}>
-              <View style={[pinViewerStyles.sevBadge, { backgroundColor: (SEV_COLORS[pinPhotoViewer.damage.severity] ?? "#F59E0B") + "33" }]}>
-                <Text style={[pinViewerStyles.sevText, { color: SEV_COLORS[pinPhotoViewer.damage.severity] ?? "#F59E0B" }]}>
-                  {pinPhotoViewer.damage.severity.charAt(0).toUpperCase() + pinPhotoViewer.damage.severity.slice(1)}
-                </Text>
-              </View>
-              {pinPhotoViewer.damage.description ? (
-                <Text style={pinViewerStyles.descText} numberOfLines={2}>
-                  {pinPhotoViewer.damage.description}
-                </Text>
-              ) : null}
-            </View>
-          </View>
-        </Modal>
-      )}
+      <PhotoLightbox
+        visible={!!pinPhotoViewer}
+        uris={pinPhotoViewer?.damage.photos ?? []}
+        initialIndex={pinPhotoViewer?.photoIdx ?? 0}
+        onClose={() => setPinPhotoViewer(null)}
+        title={
+          pinPhotoViewer
+            ? `${DAMAGE_TYPES.find((t) => t.key === pinPhotoViewer.damage.type)?.label ?? pinPhotoViewer.damage.type} — ${
+                DAMAGE_ZONES.find((z) => z.key === pinPhotoViewer.damage.zone)?.label ?? pinPhotoViewer.damage.zone
+              }`
+            : undefined
+        }
+      />
     </View>
   );
 }
