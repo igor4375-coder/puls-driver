@@ -64,9 +64,12 @@ function ZoomableImage({ uri, onPinchActiveChange, onZoomedChange }: ZoomablePro
   const translateY = useSharedValue(0);
   const savedTX = useSharedValue(0);
   const savedTY = useSharedValue(0);
-  // Focal point at pinch start, relative to the view center.
-  const originX = useSharedValue(0);
-  const originY = useSharedValue(0);
+  // Pinch start focal (screen coords) + translation at that moment. onUpdate
+  // combines scale-around-that-point with how far the finger midpoint has moved
+  // since then, so sliding fingers while pinching pans to the spot you want —
+  // not only after the zoom has finished.
+  const startFocalX = useSharedValue(0);
+  const startFocalY = useSharedValue(0);
 
   const notifyZoomed = useCallback(
     (zoomed: boolean) => {
@@ -114,19 +117,30 @@ function ZoomableImage({ uri, onPinchActiveChange, onZoomedChange }: ZoomablePro
       savedScale.value = scale.value;
       savedTX.value = translateX.value;
       savedTY.value = translateY.value;
-      // Focal is relative to the view; convert to offset from center so scale
-      // pivots under the fingers instead of the view's midpoint.
-      originX.value = e.focalX - SCREEN_W / 2;
-      originY.value = e.focalY - SCREEN_H / 2;
+      startFocalX.value = e.focalX;
+      startFocalY.value = e.focalY;
     })
     .onUpdate((e) => {
       // event.scale is 1.0 at gesture start and grows/shrinks with finger distance.
-      const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE * 0.85, savedScale.value * e.scale));
+      const next = Math.min(
+        MAX_SCALE * 1.15,
+        Math.max(MIN_SCALE * 0.85, savedScale.value * e.scale),
+      );
       const ratio = next / savedScale.value;
+
+      // Offset of the *starting* focal from the view center — scale pivots here.
+      const originX = startFocalX.value - SCREEN_W / 2;
+      const originY = startFocalY.value - SCREEN_H / 2;
+
+      // How far the finger midpoint has drifted since pinch began. Adding this
+      // is what lets you steer into a scratch while still pinching, instead of
+      // zooming the start spot and only panning afterward.
+      const focalDX = e.focalX - startFocalX.value;
+      const focalDY = e.focalY - startFocalY.value;
+
       scale.value = next;
-      // Keep the focal point under the fingers while scaling.
-      translateX.value = originX.value + (savedTX.value - originX.value) * ratio;
-      translateY.value = originY.value + (savedTY.value - originY.value) * ratio;
+      translateX.value = savedTX.value + originX * (1 - ratio) + focalDX;
+      translateY.value = savedTY.value + originY * (1 - ratio) + focalDY;
     })
     .onEnd(() => {
       runOnJS(notifyPinch)(false);
