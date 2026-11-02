@@ -30,6 +30,10 @@
         "appleId": "rico@prairieautotransport.com",
         "appleTeamId": "4Z7TYAR6MB",
         "ascAppId": "6761962456"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
       }
     },
     "production": {
@@ -37,6 +41,10 @@
         "appleId": "rico@prairieautotransport.com",
         "appleTeamId": "4Z7TYAR6MB",
         "ascAppId": "6761962456"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
       }
     }
   }

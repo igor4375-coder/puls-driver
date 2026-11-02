@@ -18,6 +18,11 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Google Play / FCM service account keys (never commit)
+google-service-account.json
+*service-account*.json
+play-service-account.json
+
 # Metro
 .metro-health-check*
 
