@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Updates from "expo-updates";
 
-export const BUILD_TAG = "v138-pinch-pan-while-zoom";
+export const BUILD_TAG = "v139-photo-double-rotate-fix";
 
 // The provider tree above this banner mounts twice on roughly half of all
 // launches, so without a module-level guard the update check ran twice per

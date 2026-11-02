@@ -58,38 +58,18 @@ describe("leaving already-upright photos alone", () => {
 });
 
 describe("baking rotation into pixels", () => {
-  it("rotates Orientation=6 by 90 degrees clockwise", async () => {
-    // This is the case the audit actually found in the bucket.
-    const out = await normalizeOrientation(URI, 6);
-    expect(out).toBe(`${URI}.rotated`);
-    expect(lastActions()).toEqual([{ rotate: 90 }]);
-  });
-
-  it("rotates Orientation=8 by 270 degrees clockwise", async () => {
-    await normalizeOrientation(URI, 8);
-    expect(lastActions()).toEqual([{ rotate: 270 }]);
-  });
-
-  it("rotates Orientation=3 by 180 degrees", async () => {
-    await normalizeOrientation(URI, 3);
-    expect(lastActions()).toEqual([{ rotate: 180 }]);
-  });
-
-  it("handles the mirrored orientations with a rotate plus a flip", async () => {
-    await normalizeOrientation(URI, 5);
-    expect(lastActions()).toEqual([{ rotate: 90 }, { flip: "horizontal" }]);
-
-    await normalizeOrientation(URI, 7);
-    expect(lastActions()).toEqual([{ rotate: 270 }, { flip: "horizontal" }]);
-  });
-
-  it("handles pure mirroring", async () => {
-    await normalizeOrientation(URI, 2);
-    expect(lastActions()).toEqual([{ flip: "horizontal" }]);
-
-    await normalizeOrientation(URI, 4);
-    expect(lastActions()).toEqual([{ flip: "vertical" }]);
-  });
+  // v139: manipulateAsync applies the EXIF tag itself on decode. v134 also
+  // passed an explicit rotate, which turned every iPhone portrait shot
+  // (always tagged 6 by expo-camera) sideways and landscape-left shots
+  // (tagged 3) upside down.
+  it.each([2, 3, 4, 5, 6, 7, 8])(
+    "re-encodes Orientation=%i with no extra rotate or flip",
+    async (tag) => {
+      const out = await normalizeOrientation(URI, tag);
+      expect(out).toBe(`${URI}.rotated`);
+      expect(lastActions()).toEqual([]);
+    },
+  );
 
   it("re-encodes without compressing, so normalizing costs no quality", async () => {
     await normalizeOrientation(URI, 6);

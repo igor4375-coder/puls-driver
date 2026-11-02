@@ -9,7 +9,7 @@
  * decoder loads the full bitmap into memory).
  */
 
-import { manipulateAsync, SaveFormat, FlipType } from "expo-image-manipulator";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { Platform } from "react-native";
 // #region agent log
 import { addBreadcrumb } from "./crash-reporter";
@@ -36,33 +36,20 @@ let waiting = 0;
 let compressSeq = 0;
 // #endregion
 
-/**
- * EXIF Orientation tag -> the transform needed to display the image upright.
- * Values are the eight defined by the EXIF spec; rotation is clockwise.
- */
-const EXIF_TRANSFORMS: Record<number, { rotate?: number; flip?: FlipType }> = {
-  1: {},
-  2: { flip: FlipType.Horizontal },
-  3: { rotate: 180 },
-  4: { flip: FlipType.Vertical },
-  5: { rotate: 90, flip: FlipType.Horizontal },
-  6: { rotate: 90 },
-  7: { rotate: 270, flip: FlipType.Horizontal },
-  8: { rotate: 270 },
-};
+/** EXIF Orientation values (2-8) that need a rotate or flip to display upright. */
+const ROTATING_EXIF_ORIENTATIONS = new Set([2, 3, 4, 5, 6, 7, 8]);
 
 /**
  * Bakes an EXIF orientation tag into the actual pixels.
  *
- * Most of the camera's output already has rotation baked in and carries no
- * tag, in which case this is a no-op. But when a tag does survive — and
- * roughly 3% of uploaded photos had one — the image is stored sideways and
- * only renders upright in a viewer that reads EXIF. Dispatch's pipeline
- * doesn't, so those arrive rotated and have to be fixed by hand.
+ * When a tag survives into the upload, the image only renders upright in a
+ * viewer that reads EXIF. Dispatch's pipeline doesn't, so those arrive
+ * rotated and have to be fixed by hand.
  *
- * Doing it here rather than relying on the server means correctness no longer
- * depends on the stamp request completing, and it survives a failed
- * compression (which uploads the original untouched).
+ * manipulateAsync applies the tag itself while decoding (iOS runs
+ * ImageFixOrientationTransformer first; Android decodes through Glide, which
+ * honours EXIF), so the re-encode needs no rotate/flip actions. Adding one
+ * rotates the photo a second time.
  *
  * @param exifOrientation The raw `Orientation` value from `takePictureAsync`.
  * @returns A URI with upright pixels, or the original if nothing was needed.
@@ -73,22 +60,11 @@ export async function normalizeOrientation(
 ): Promise<string> {
   if (Platform.OS === "web") return uri;
   if (typeof exifOrientation !== "number") return uri;
-
-  const transform = EXIF_TRANSFORMS[exifOrientation];
-  // Unknown value, or 1 (already upright) — leave the file alone. Rotating on
-  // a guess would break the 97% of photos that are already correct.
-  if (!transform || (transform.rotate === undefined && transform.flip === undefined)) {
-    return uri;
-  }
-
-  const actions: Parameters<typeof manipulateAsync>[1] = [];
-  if (transform.rotate !== undefined) actions.push({ rotate: transform.rotate });
-  if (transform.flip !== undefined) actions.push({ flip: transform.flip });
+  if (!ROTATING_EXIF_ORIENTATIONS.has(exifOrientation)) return uri;
 
   try {
-    // manipulateAsync writes a fresh file without EXIF, so the tag can't be
-    // applied a second time by a viewer that does honour it.
-    const result = await manipulateAsync(uri, actions, {
+    // The output carries no EXIF, so a viewer that honours tags can't rotate it again.
+    const result = await manipulateAsync(uri, [], {
       compress: 1,
       format: SaveFormat.JPEG,
     });
