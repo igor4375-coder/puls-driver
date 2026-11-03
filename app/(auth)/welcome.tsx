@@ -112,7 +112,7 @@ export default function WelcomeScreen() {
 
   return (
     <ScreenContainer
-      edges={["top", "left", "right", "bottom"]}
+      edges={["top", "left", "right"]}
       containerClassName="bg-primary"
       safeAreaClassName="bg-primary"
     >
@@ -120,8 +120,8 @@ export default function WelcomeScreen() {
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          // Room for the absolute version banner above the title.
-          { paddingTop: compact ? 28 : 36, paddingBottom: Math.max(insets.bottom, 12) },
+          // Room for the absolute version banner above the logo.
+          compact && { paddingTop: 40 },
         ]}
         bounces={false}
         showsVerticalScrollIndicator={false}
@@ -164,6 +164,7 @@ export default function WelcomeScreen() {
           style={[
             styles.card,
             compact && styles.cardCompact,
+            compact && { paddingBottom: Math.max(insets.bottom, 8) + 16 },
             { backgroundColor: colors.surface },
           ]}
         >
@@ -298,16 +299,14 @@ const styles = StyleSheet.create({
   card: {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 28,
-    paddingTop: 28,
-    paddingBottom: 16,
+    padding: 28,
+    paddingBottom: 40,
   },
   cardCompact: {
     borderTopLeftRadius: 22,
     borderTopRightRadius: 22,
     paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 8,
   },
   cardTitle: {
     fontSize: 22,
