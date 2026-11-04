@@ -29,9 +29,6 @@ import {
   setVINLaunchContext,
   type VINDecodeResult,
 } from "@/lib/vin-store";
-import { VehicleInspectionModal, type InspectionResult } from "@/components/vehicle-inspection-modal";
-import { cameraSessionStore } from "@/lib/camera-session-store";
-
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface DamageItem {
@@ -154,14 +151,12 @@ function VehicleCard({
   onUpdate,
   onRemove,
   onScanVIN,
-  onStartInspection,
 }: {
   vehicle: FormVehicle;
   index: number;
   onUpdate: (id: string, field: keyof FormVehicle, value: string) => void;
   onRemove: (id: string) => void;
   onScanVIN: (vehicleId: string) => void;
-  onStartInspection: (vehicleId: string) => void;
 }) {
   const colors = useColors();
   const [lookingUp, setLookingUp] = useState(false);
@@ -273,34 +268,6 @@ function VehicleCard({
           </View>
         ) : null}
 
-        {/* ── Inspection Button / Badge ── */}
-        {vehicle.inspectionComplete ? (
-          <View style={[styles.inspectionCompleteBadge, { backgroundColor: colors.success + "15", borderColor: colors.success + "50" }]}>
-            <IconSymbol name="checkmark.seal.fill" size={16} color={colors.success} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.inspectionCompleteTitle, { color: colors.success }]}>Inspection Complete</Text>
-              <Text style={[styles.inspectionCompleteDetail, { color: colors.muted }]}>
-                {vehicle.inspectionDamages.length} damage{vehicle.inspectionDamages.length !== 1 ? "s" : ""} · {vehicle.inspectionPhotos.length} photo{vehicle.inspectionPhotos.length !== 1 ? "s" : ""}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={[styles.editInspectionBtn, { borderColor: colors.success }]}
-              onPress={() => onStartInspection(vehicle.id)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.editInspectionBtnText, { color: colors.success }]}>Edit</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.startInspectionBtn, { backgroundColor: colors.primary + "12", borderColor: colors.primary }]}
-            onPress={() => onStartInspection(vehicle.id)}
-            activeOpacity={0.85}
-          >
-            <IconSymbol name="magnifyingglass" size={16} color={colors.primary} />
-            <Text style={[styles.startInspectionBtnText, { color: colors.primary }]}>Start Pickup Inspection</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </View>
   );
@@ -403,47 +370,6 @@ export default function AddLoadScreen() {
   const [saving, setSaving] = useState(false);
   const [pickupLocating, setPickupLocating] = useState(false);
   const [deliveryLocating, setDeliveryLocating] = useState(false);
-
-  // Inspection modal state
-  const [inspectionVehicleId, setInspectionVehicleId] = useState<string | null>(null);
-  const inspectionVehicle = vehicles.find((v) => v.id === inspectionVehicleId) ?? null;
-
-  // Photo session — navigates to dedicated /camera-session route to avoid iOS nested-modal blocking
-  const handleRequestPhotoSession = React.useCallback((addPhotos: (uris: string[]) => void) => {
-    cameraSessionStore.open(addPhotos, {
-      vehicleId: inspectionVehicle?.vin,
-      inspectionType: "pickup",
-    });
-    router.push("/camera-session");
-  }, [inspectionVehicle?.vin])
-
-  const handleStartInspection = (vehicleId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setInspectionVehicleId(vehicleId);
-  };
-
-  const handleSaveInspection = (result: InspectionResult) => {
-    if (!inspectionVehicleId) return;
-    setVehicles((prev) =>
-      prev.map((v) =>
-        v.id === inspectionVehicleId
-          ? {
-              ...v,
-              inspectionComplete: true,
-              inspectionPhotos: result.photos,
-              inspectionDamages: result.damages,
-              inspectionNotes: result.notes,
-            }
-          : v
-      )
-    );
-    setInspectionVehicleId(null);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  };
-
-  const handleCancelInspection = () => {
-    setInspectionVehicleId(null);
-  };
 
   // Register VIN callback so scanner can deliver results back to this screen
   React.useEffect(() => {
@@ -617,7 +543,9 @@ export default function AddLoadScreen() {
 
       addLoad(newLoad);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      router.back();
+      // Pickup inspection happens on the load screen, the same as for an
+      // assigned load.
+      router.replace(`/load/${newLoad.id}` as any);
     } catch {
       Alert.alert("Error", "Could not save the load. Please try again.");
     } finally {
@@ -706,7 +634,6 @@ export default function AddLoadScreen() {
                   onUpdate={handleUpdateVehicle}
                   onRemove={handleRemoveVehicle}
                   onScanVIN={handleScanVIN}
-                  onStartInspection={handleStartInspection}
                 />
               ))}
               <TouchableOpacity
@@ -960,27 +887,6 @@ export default function AddLoadScreen() {
           <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
-
-      {/* ── Per-vehicle Inspection Modal ── */}
-      {inspectionVehicle && (
-        <VehicleInspectionModal
-          visible={!!inspectionVehicleId}
-          vehicleLabel={
-            [inspectionVehicle.year, inspectionVehicle.make, inspectionVehicle.model]
-              .filter(Boolean)
-              .join(" ") || `Vehicle`
-          }
-          vin={inspectionVehicle.vin}
-          initialData={{
-            photos: inspectionVehicle.inspectionPhotos,
-            damages: inspectionVehicle.inspectionDamages,
-            notes: inspectionVehicle.inspectionNotes,
-          }}
-          onSave={handleSaveInspection}
-          onCancel={handleCancelInspection}
-          onRequestPhotoSession={handleRequestPhotoSession}
-        />
-      )}
 
     </ScreenContainer>
   );
