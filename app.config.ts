@@ -66,6 +66,9 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: false,
     package: env.androidPackage,
     permissions: ["POST_NOTIFICATIONS", "ACCESS_BACKGROUND_LOCATION", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION"],
+    // expo-audio's library manifest adds this; we never play media in the
+    // background, and Play requires a declaration for every foreground type.
+    blockedPermissions: ["android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"],
     intentFilters: [
       {
         action: "VIEW",
