@@ -149,13 +149,11 @@ function VehicleCard({
   vehicle,
   index,
   onUpdate,
-  onRemove,
   onScanVIN,
 }: {
   vehicle: FormVehicle;
   index: number;
   onUpdate: (id: string, field: keyof FormVehicle, value: string) => void;
-  onRemove: (id: string) => void;
   onScanVIN: (vehicleId: string) => void;
 }) {
   const colors = useColors();
@@ -196,9 +194,6 @@ function VehicleCard({
             ? `${vehicle.year} ${vehicle.make} ${vehicle.model}`
             : `Vehicle ${index + 1}`}
         </Text>
-        <TouchableOpacity onPress={() => onRemove(vehicle.id)} activeOpacity={0.7} style={styles.removeVehicleBtn}>
-          <IconSymbol name="trash.fill" size={15} color={colors.error} />
-        </TouchableOpacity>
       </View>
 
       <View style={styles.vehicleCardBody}>
@@ -395,19 +390,6 @@ export default function AddLoadScreen() {
 
   const handleUpdateVehicle = (id: string, field: keyof FormVehicle, value: string) => {
     setVehicles((prev) => prev.map((v) => v.id === id ? { ...v, [field]: value } : v));
-  };
-
-  const handleAddVehicle = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setVehicles((prev) => [...prev, emptyVehicle()]);
-  };
-
-  const handleRemoveVehicle = (id: string) => {
-    if (vehicles.length === 1) {
-      Alert.alert("Cannot Remove", "A load must have at least one vehicle.");
-      return;
-    }
-    setVehicles((prev) => prev.filter((v) => v.id !== id));
   };
 
   const handleScanVIN = (vehicleId: string) => {
@@ -632,18 +614,9 @@ export default function AddLoadScreen() {
                   vehicle={v}
                   index={i}
                   onUpdate={handleUpdateVehicle}
-                  onRemove={handleRemoveVehicle}
                   onScanVIN={handleScanVIN}
                 />
               ))}
-              <TouchableOpacity
-                style={[styles.addVehicleBtn, { borderColor: colors.primary }]}
-                onPress={handleAddVehicle}
-                activeOpacity={0.8}
-              >
-                <IconSymbol name="plus" size={16} color={colors.primary} />
-                <Text style={[styles.addVehicleBtnText, { color: colors.primary }]}>Add Another Vehicle</Text>
-              </TouchableOpacity>
             </View>
           )}
 
