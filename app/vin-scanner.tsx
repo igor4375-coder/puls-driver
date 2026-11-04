@@ -235,7 +235,7 @@ export default function VINScannerScreen() {
       Animated.timing(noMatchOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
     ]).start(() => {
       setTimeout(() => {
-        router.replace({ pathname: "/add-load", params: prefillParams } as any);
+        router.replace({ pathname: "/field-pickup-report", params: prefillParams } as any);
       }, 900);
     });
   }, [noMatchOpacity, noMatchScale]);
@@ -397,15 +397,17 @@ export default function VINScannerScreen() {
         return;
       }
 
+      // Same report-then-inspect flow as exclusive drivers, so every field
+      // pickup uses the full inspection screen assigned loads use.
       showNoMatchToast({
-        prefillVin: result.vin,
-        prefillYear: result.year,
-        prefillMake: result.make,
-        prefillModel: result.model,
-        prefillBodyType: result.bodyType,
-        prefillEngineSize: result.engineSize,
-        prefillTrim: result.trim,
-        prefillIsPartial: result.isPartial ? "1" : "0",
+        vin: result.vin,
+        year: result.year,
+        make: result.make,
+        model: result.model,
+        bodyType: result.bodyType,
+        engineSize: result.engineSize,
+        trim: result.trim,
+        isPartial: result.isPartial ? "1" : "0",
       });
     } else {
       deliverVINResult(result);
@@ -665,7 +667,7 @@ export default function VINScannerScreen() {
             ]}
           >
             <IconSymbol name="exclamationmark.triangle.fill" size={20} color="#FFFFFF" />
-            <Text style={styles.matchToastText}>No matching load — adding as new</Text>
+            <Text style={styles.matchToastText}>No matching load — reporting as field pickup</Text>
           </Animated.View>
         ) : null}
       </View>

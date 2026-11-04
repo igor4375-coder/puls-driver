@@ -33,6 +33,7 @@ export default function FieldPickupReportScreen() {
     bodyType: string;
     engineSize: string;
     trim: string;
+    isPartial?: string;
   }>();
   const { driver } = useAuth();
   const { addLoad } = useLoads();
@@ -290,9 +291,32 @@ export default function FieldPickupReportScreen() {
                 <Text style={[styles.gpsText, { color: colors.muted }]}>Loading your companies...</Text>
               </View>
             ) : companies.length === 0 ? (
-              <Text style={[styles.gpsText, { color: colors.muted, paddingVertical: 10 }]}>
-                You are not linked to any company yet.
-              </Text>
+              <View style={{ paddingVertical: 10, gap: 10 }}>
+                <Text style={[styles.gpsText, { color: colors.muted }]}>
+                  You are not linked to any company yet.
+                </Text>
+                <TouchableOpacity
+                  onPress={() =>
+                    router.replace({
+                      pathname: "/add-load",
+                      params: {
+                        prefillVin: params.vin ?? "",
+                        prefillYear: params.year ?? "",
+                        prefillMake: params.make ?? "",
+                        prefillModel: params.model ?? "",
+                        prefillBodyType: params.bodyType ?? "",
+                        prefillEngineSize: params.engineSize ?? "",
+                        prefillTrim: params.trim ?? "",
+                        prefillIsPartial: params.isPartial ?? "0",
+                      },
+                    } as any)
+                  }
+                >
+                  <Text style={{ color: colors.primary, fontSize: 15, fontWeight: "600" }}>
+                    Add as my own load instead
+                  </Text>
+                </TouchableOpacity>
+              </View>
             ) : (
               companies.map((c, index) => {
                 const selected = c.company.companyOrgId === selectedOrgId;
