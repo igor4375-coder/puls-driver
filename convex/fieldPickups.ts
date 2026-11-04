@@ -20,6 +20,8 @@ export const save = mutation({
     gpsLat: v.optional(v.float64()),
     gpsLng: v.optional(v.float64()),
     gpsAddress: v.optional(v.string()),
+    companyOrgId: v.optional(v.string()),
+    companyName: v.optional(v.string()),
     reportedAt: v.string(),
   },
   handler: async (ctx, args) => {
@@ -106,6 +108,7 @@ export const resend = action({
         gpsLng: record.gpsLng,
         gpsAddress: record.gpsAddress,
         reportedAt: record.reportedAt,
+        orgId: record.companyOrgId,
       });
     } catch (err) {
       throw new Error(`Platform sync failed: ${err instanceof Error ? err.message : String(err)}`);

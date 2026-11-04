@@ -481,6 +481,7 @@ export const reportFieldPickup = action({
     gpsLng: v.optional(v.number()),
     gpsAddress: v.optional(v.string()),
     reportedAt: v.string(),
+    orgId: v.optional(v.string()),
   },
   handler: async (_ctx, args) => {
     if (!BASE_URL) throw new Error("Company platform URL not configured");

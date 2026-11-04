@@ -147,6 +147,8 @@ export default defineSchema({
     gpsLat: v.optional(v.float64()),
     gpsLng: v.optional(v.float64()),
     gpsAddress: v.optional(v.string()),
+    companyOrgId: v.optional(v.string()),
+    companyName: v.optional(v.string()),
     status: v.union(
       v.literal("pending_sync"),
       v.literal("synced"),

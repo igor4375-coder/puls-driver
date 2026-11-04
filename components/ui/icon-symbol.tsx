@@ -32,6 +32,7 @@ const MAPPING = {
   // Actions
   "checkmark": "check",
   "checkmark.circle.fill": "check-circle",
+  "circle": "radio-button-unchecked",
   "plus": "add",
   "pencil": "edit",
   "trash.fill": "delete",

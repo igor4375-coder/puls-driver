@@ -14,7 +14,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import * as Haptics from "expo-haptics";
 import * as Location from "expo-location";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useColors } from "@/hooks/use-colors";
 import { useAuth } from "@/lib/auth-context";
@@ -42,6 +42,21 @@ export default function FieldPickupReportScreen() {
   const markFailed = useMutation(api.fieldPickups.markFailed);
 
   const driverCode = driver?.platformDriverCode ?? driver?.driverCode ?? "";
+
+  const myConnections = useQuery(
+    api.companies.getMyCompaniesByClerkUserId,
+    driver?.id ? { clerkUserId: driver.id } : "skip",
+  );
+  const companies = (myConnections ?? []).filter((c) => !!c.company.companyOrgId);
+  const companiesLoading = myConnections === undefined && !!driver?.id;
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const selectedCompany = companies.find((c) => c.company.companyOrgId === selectedOrgId) ?? null;
+
+  useEffect(() => {
+    if (!selectedOrgId && companies.length === 1) {
+      setSelectedOrgId(companies[0].company.companyOrgId ?? null);
+    }
+  }, [companies, selectedOrgId]);
 
   const [color, setColor] = useState("");
   const [notes, setNotes] = useState("");
@@ -139,6 +154,11 @@ export default function FieldPickupReportScreen() {
       Alert.alert("Error", "VIN is missing.");
       return;
     }
+    if (!selectedCompany) {
+      Alert.alert("Choose a company", "Select which company should receive this field pickup.");
+      return;
+    }
+    const companyName = selectedCompany.company.name;
 
     setSubmitting(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -157,16 +177,19 @@ export default function FieldPickupReportScreen() {
       gpsAddress: gps?.address,
       reportedAt: new Date().toISOString(),
     };
+    const orgId = selectedCompany.company.companyOrgId;
 
     const localId = await saveLocally({
       ...reportData,
       clerkUserId: driver?.id ?? "",
+      companyOrgId: orgId,
+      companyName,
     });
 
     const showInspectionChoice = (fieldPickupId?: string) => {
       Alert.alert(
         "Reported",
-        `${vehicleLabel} has been reported to your company.\n\nWould you like to start the pickup inspection now?`,
+        `${vehicleLabel} has been reported to ${companyName}.\n\nWould you like to start the pickup inspection now?`,
         [
           {
             text: "Start Inspection",
@@ -191,7 +214,7 @@ export default function FieldPickupReportScreen() {
     };
 
     try {
-      await reportToCompany(reportData);
+      await reportToCompany({ ...reportData, orgId });
       await markSynced({ id: localId });
       showInspectionChoice(localId as unknown as string);
     } catch (err) {
@@ -202,7 +225,7 @@ export default function FieldPickupReportScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [driverCode, params, color, notes, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed, createFieldPickupLoad, addLoad, startInspection]);
+  }, [driverCode, params, selectedCompany, color, notes, gps, driver?.id, vehicleLabel, saveLocally, reportToCompany, markSynced, markFailed, createFieldPickupLoad, addLoad, startInspection]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -258,6 +281,44 @@ export default function FieldPickupReportScreen() {
             )}
           </View>
 
+          {/* Company */}
+          <Text style={[styles.formLabel, { color: colors.muted }]}>SEND TO COMPANY</Text>
+          <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border, paddingVertical: 4 }]}>
+            {companiesLoading ? (
+              <View style={[styles.gpsRow, { paddingVertical: 10 }]}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={[styles.gpsText, { color: colors.muted }]}>Loading your companies...</Text>
+              </View>
+            ) : companies.length === 0 ? (
+              <Text style={[styles.gpsText, { color: colors.muted, paddingVertical: 10 }]}>
+                You are not linked to any company yet.
+              </Text>
+            ) : (
+              companies.map((c, index) => {
+                const selected = c.company.companyOrgId === selectedOrgId;
+                return (
+                  <TouchableOpacity
+                    key={c.linkId}
+                    onPress={() => setSelectedOrgId(c.company.companyOrgId ?? null)}
+                    style={[
+                      styles.companyRow,
+                      index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+                    ]}
+                  >
+                    <IconSymbol
+                      name={selected ? "checkmark.circle.fill" : "circle"}
+                      size={22}
+                      color={selected ? colors.primary : colors.muted}
+                    />
+                    <Text style={[styles.companyName, { color: colors.text }]} numberOfLines={1}>
+                      {c.company.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+
           {/* Color */}
           <Text style={[styles.formLabel, { color: colors.muted }]}>VEHICLE COLOR</Text>
           <TextInput
@@ -284,7 +345,7 @@ export default function FieldPickupReportScreen() {
 
           {/* Submit */}
           <TouchableOpacity
-            style={[styles.submitBtn, { backgroundColor: colors.primary, opacity: submitting ? 0.6 : 1 }]}
+            style={[styles.submitBtn, { backgroundColor: colors.primary, opacity: submitting || !selectedCompany ? 0.6 : 1 }]}
             onPress={handleSubmit}
             disabled={submitting}
           >
@@ -293,13 +354,15 @@ export default function FieldPickupReportScreen() {
             ) : (
               <>
                 <IconSymbol name="paperplane.fill" size={18} color="#fff" />
-                <Text style={styles.submitBtnText}>Report to Company</Text>
+                <Text style={styles.submitBtnText} numberOfLines={1}>
+                  {selectedCompany ? `Report to ${selectedCompany.company.name}` : "Choose a company"}
+                </Text>
               </>
             )}
           </TouchableOpacity>
 
           <Text style={[styles.disclaimer, { color: colors.muted }]}>
-            Your company will receive this report and can create a formal load assignment from it.
+            Only the company you choose will receive this report and can create a formal load assignment from it.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -345,6 +408,8 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 12, fontWeight: "600", letterSpacing: 0.5, marginBottom: 8 },
   gpsRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   gpsText: { fontSize: 14, flex: 1 },
+  companyRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 12 },
+  companyName: { fontSize: 15, fontWeight: "600", flex: 1 },
   formLabel: {
     fontSize: 12,
     fontWeight: "600",
