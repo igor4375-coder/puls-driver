@@ -385,6 +385,30 @@ async function ensureNativeTaskAlive(): Promise<void> {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+export const LOCATION_DISCLOSURE_TITLE = "Location sharing with dispatch";
+export const LOCATION_DISCLOSURE_MESSAGE =
+  "Puls Driver collects your location to show your position to your dispatch company on the live tracking map while you are on duty, " +
+  "including when the app is closed or not in use. It is also used to stamp inspection photos with where they were taken.\n\n" +
+  "Your location is never used for advertising. You can turn this off anytime in Profile → Share Location.";
+
+/**
+ * Google Play requires this in-app disclosure before the system location
+ * prompt whenever the app reads location in the background.
+ */
+function showLocationDisclosure(): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      LOCATION_DISCLOSURE_TITLE,
+      LOCATION_DISCLOSURE_MESSAGE,
+      [
+        { text: "No thanks", style: "cancel", onPress: () => resolve(false) },
+        { text: "Continue", onPress: () => resolve(true) },
+      ],
+      { cancelable: false },
+    );
+  });
+}
+
 export async function startLocationTracking(
   driverCode: string,
   getApiBase: () => string,
@@ -411,6 +435,16 @@ export async function startLocationTracking(
       await Location.enableNetworkProviderAsync();
       servicesEnabled = true;
     } catch {}
+  }
+
+  const existing = await Location.getForegroundPermissionsAsync().catch(() => null);
+  if (existing?.status !== "granted" && existing?.canAskAgain !== false) {
+    const accepted = await showLocationDisclosure();
+    if (!accepted) {
+      _driverCode = null;
+      setStatus({ mode: "off", foregroundGranted: false, servicesEnabled, lastError: "Location sharing declined" });
+      return false;
+    }
   }
 
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
