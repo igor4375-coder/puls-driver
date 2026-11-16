@@ -18,6 +18,7 @@ import MlkitOcr from "rn-mlkit-ocr";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { CameraPermissionScreen } from "@/components/camera-permission-screen";
 import {
   deliverVINResult,
   getVINLaunchContext,
@@ -163,7 +164,7 @@ function DecodedCard({
 
 export default function VINScannerScreen() {
   const colors = useColors();
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [decoding, setDecoding] = useState(false);
   const [decodedResult, setDecodedResult] = useState<VINDecodeResult | null>(null);
@@ -591,23 +592,13 @@ export default function VINScannerScreen() {
 
   if (!permission.granted) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <IconSymbol name="camera.fill" size={48} color={colors.muted} />
-        <Text style={[styles.permTitle, { color: colors.foreground }]}>Camera Access Needed</Text>
-        <Text style={[styles.permSubtitle, { color: colors.muted }]}>
-          Puls Dispatch needs camera access to scan VIN barcodes.
-        </Text>
-        <TouchableOpacity
-          style={[styles.permBtn, { backgroundColor: colors.primary }]}
-          onPress={requestPermission}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.permBtnText}>Grant Camera Access</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.cancelLink} onPress={() => router.back()} activeOpacity={0.7}>
-          <Text style={[styles.cancelLinkText, { color: colors.muted }]}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
+      <CameraPermissionScreen
+        permission={permission}
+        onContinue={requestPermission}
+        onBack={() => router.back()}
+        onRefresh={getPermission}
+        message="Puls Driver uses the camera to scan the VIN barcode on a vehicle, so you can match it to your load."
+      />
     );
   }
 

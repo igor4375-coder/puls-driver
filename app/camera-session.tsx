@@ -37,6 +37,7 @@ import { router } from "expo-router";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { CameraPermissionScreen } from "@/components/camera-permission-screen";
 import { photoQueue, type PhotoQueueEntry, type StampMeta } from "@/lib/photo-queue";
 import { normalizeOrientation } from "@/lib/image-compress";
 import { cameraSessionStore } from "@/lib/camera-session-store";
@@ -74,7 +75,7 @@ export default function CameraSessionScreen() {
   }
   // #endregion
   const cameraRef = useRef<CameraView>(null);
-  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [camPerm, requestCamPerm, getCamPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
   const { driver } = useAuth();
 
@@ -409,26 +410,17 @@ export default function CameraSessionScreen() {
 
   if (!camPerm.granted) {
     return (
-      <View style={[s.root, s.permScreen]}>
-        <IconSymbol name="camera.fill" size={56} color="#fff" />
-        <Text style={s.permTitle}>Camera Access Required</Text>
-        <Text style={s.permSub}>
-          Puls Dispatch needs camera access to capture inspection photos and videos.
-        </Text>
-        <TouchableOpacity
-          style={s.permBtn}
-          onPress={async () => {
-            await requestCamPerm();
-            if (mode === "video") await requestMicPerm();
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={s.permBtnText}>Grant Camera Access</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={s.permCancel} onPress={handleCancel} activeOpacity={0.7}>
-          <Text style={s.permCancelText}>Cancel</Text>
-        </TouchableOpacity>
-      </View>
+      <CameraPermissionScreen
+        dark
+        permission={camPerm}
+        onContinue={async () => {
+          await requestCamPerm();
+          if (mode === "video") await requestMicPerm();
+        }}
+        onBack={handleCancel}
+        onRefresh={getCamPerm}
+        message="Puls Driver uses the camera to take inspection photos and videos of a vehicle's condition at pickup and delivery."
+      />
     );
   }
 

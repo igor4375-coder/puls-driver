@@ -393,17 +393,21 @@ export const LOCATION_DISCLOSURE_MESSAGE =
 
 /**
  * Google Play requires this in-app disclosure before the system location
- * prompt whenever the app reads location in the background.
+ * prompt whenever the app reads location in the background. App Store
+ * guideline 5.1.1(iv) forbids a decline button on it: on iOS the only choice
+ * is "Continue", and the system prompt is where the driver says no.
  */
 function showLocationDisclosure(): Promise<boolean> {
   return new Promise((resolve) => {
     Alert.alert(
       LOCATION_DISCLOSURE_TITLE,
       LOCATION_DISCLOSURE_MESSAGE,
-      [
-        { text: "No thanks", style: "cancel", onPress: () => resolve(false) },
-        { text: "Continue", onPress: () => resolve(true) },
-      ],
+      IS_ANDROID
+        ? [
+            { text: "No thanks", style: "cancel", onPress: () => resolve(false) },
+            { text: "Continue", onPress: () => resolve(true) },
+          ]
+        : [{ text: "Continue", onPress: () => resolve(true) }],
       { cancelable: false },
     );
   });

@@ -52,6 +52,7 @@ import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/use-colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { CameraPermissionScreen } from "@/components/camera-permission-screen";
 import { photoQueue, PhotoQueueEntry } from "@/lib/photo-queue";
 
 type SessionMode = "photo" | "video";
@@ -79,7 +80,7 @@ interface Props {
 export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, onCancel }: Props) {
   const colors = useColors();
   const cameraRef = useRef<CameraView>(null);
-  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [camPerm, requestCamPerm, getCamPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -240,29 +241,22 @@ export function PhotoSessionModal({ visible, initialPhotos = [], meta, onDone, o
 
   // ── Permission screens ─────────────────────────────────────────────────────
 
-  const renderPermissionScreen = () => (
-    <View style={[s.root, { backgroundColor: "#000", justifyContent: "center", alignItems: "center", padding: 32 }]}>
-      <IconSymbol name="camera.fill" size={56} color="#fff" />
-      <Text style={{ color: "#fff", fontSize: 22, fontWeight: "700", textAlign: "center", marginTop: 20 }}>
-        Camera Access Required
-      </Text>
-      <Text style={{ color: "#aaa", fontSize: 15, textAlign: "center", marginTop: 10, lineHeight: 22 }}>
-        Puls Dispatch needs camera access to capture inspection photos and videos.
-      </Text>
-      <TouchableOpacity
-        style={{ backgroundColor: colors.primary, paddingHorizontal: 32, paddingVertical: 14, borderRadius: 14, marginTop: 28 }}
-        onPress={async () => {
+  const renderPermissionScreen = () =>
+    camPerm ? (
+      <CameraPermissionScreen
+        dark
+        permission={camPerm}
+        onContinue={async () => {
           await requestCamPerm();
           if (mode === "video") await requestMicPerm();
         }}
-      >
-        <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>Grant Camera Access</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={{ marginTop: 16, paddingVertical: 10 }} onPress={onCancel}>
-        <Text style={{ color: "#aaa", fontSize: 15 }}>Cancel</Text>
-      </TouchableOpacity>
-    </View>
-  );
+        onBack={onCancel}
+        onRefresh={getCamPerm}
+        message="Puls Driver uses the camera to take inspection photos and videos of a vehicle's condition at pickup and delivery."
+      />
+    ) : (
+      <View style={[s.root, { backgroundColor: "#000" }]} />
+    );
 
   // ── Main camera UI ─────────────────────────────────────────────────────────
 
