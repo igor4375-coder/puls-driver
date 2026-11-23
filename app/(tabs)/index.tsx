@@ -44,6 +44,7 @@ import { useSettings } from "@/lib/settings-context";
 import { usePhotoQueue } from "@/hooks/use-photo-queue";
 import { photoQueue } from "@/lib/photo-queue";
 import { pickupHighlightStore } from "@/lib/pickup-highlight-store";
+import { BUILD_VERSION } from "@/components/update-version-banner";
 
 type TabFilter = LoadStatus | "all";
 
@@ -979,7 +980,7 @@ export default function LoadsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenContainer containerClassName="bg-background">
-        {/* Header — single line: greeting + name + ID pill */}
+        {/* Header — greeting on the left, short build version on the right */}
         <View style={[styles.header, { backgroundColor: colors.primary }]}>
           <Text style={styles.headerGreeting} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
             Welcome back, <Text style={styles.headerNameInline}>{driver?.name ?? "Driver"}</Text>
@@ -987,6 +988,7 @@ export default function LoadsScreen() {
               <Text style={styles.headerDriverId}>  ·  {displayDriverCode}</Text>
             ) : null}
           </Text>
+          <Text style={styles.headerVersion}>{BUILD_VERSION}</Text>
         </View>
 
         {/* Tab Filter */}
@@ -1570,10 +1572,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 20,
     paddingVertical: 10,
+    gap: 12,
   },
   headerGreeting: {
+    flex: 1,
     fontSize: 15,
     color: "rgba(255,255,255,0.85)",
     fontWeight: "500",
@@ -1587,6 +1593,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "rgba(255,255,255,0.6)",
     fontWeight: "500",
+  },
+  headerVersion: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.55)",
+    letterSpacing: 0.3,
   },
   companyBadge: {
     paddingHorizontal: 12,
